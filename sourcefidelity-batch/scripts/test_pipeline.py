@@ -692,6 +692,15 @@ class ReportModeTests(unittest.TestCase):
         text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
         self.assertIn("Hyperlinks missing: 3 (no link 1; broken 1; preview only 1).", text)
 
+    def test_measured_word_counts_override_the_paper_record(self):
+        findings = self._findings()
+        findings["word_counts"] = {"total": 10, "text": 8, "references": 2}
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
+        summary = rr.render_summary(self._paper(), findings, rr.counts(findings),
+                                    {}, {}, "/tmp")
+        self.assertIn("Word counts: total 10; text 8; references 2.", text)
+        self.assertEqual(summary["word_counts"]["references"], 2)
+
     def test_summary_ends_with_the_counts_line(self):
         findings = self._findings()
         findings["summary"] = {"category_a": ["one", "two"], "category_b": ["three"]}

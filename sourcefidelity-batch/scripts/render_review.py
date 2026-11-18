@@ -185,7 +185,7 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     lines.append(f"**Review date:** {findings.get('date', '')}  ")
     lines.append(f"**Status:** {findings.get('status', 'complete')}  ")
     lines.append("")
-    wc = paper["word_counts"]
+    wc = findings.get("word_counts") or paper["word_counts"]
     summary = findings.get("summary", {})
     lines.append("## Review scope and counts")
     lines.append("")
@@ -371,7 +371,7 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
     result = {
         "schema_version": "4",
         "paper_id": paper["paper_id"],
-        "word_counts": paper["word_counts"],
+        "word_counts": findings.get("word_counts") or paper["word_counts"],
         "occurrences": occ_counts,
         "references": {
             "total": len(refs),
