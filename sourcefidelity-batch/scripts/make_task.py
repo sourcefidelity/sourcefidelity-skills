@@ -221,6 +221,11 @@ def main():
 
     root = os.path.abspath(args.batch)
     work = os.path.join(root, "_work", args.paper)
+    failure = load(os.path.join(work, "extraction_failed.json"))
+    if failure:
+        raise SystemExit(
+            f"extraction failed for {args.paper}: "
+            f"{str(failure.get('error', ''))[:200]}; rerun prepare_batch.py")
     cand = load(os.path.join(work, "candidates.json"))
     if not cand:
         raise SystemExit(f"no candidates.json for {args.paper}; run prepare_batch.py")

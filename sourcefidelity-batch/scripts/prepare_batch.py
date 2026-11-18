@@ -15,6 +15,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,7 +72,7 @@ def main():
     if args.limit:
         files = files[: args.limit]
 
-    rows, summary = [], []
+    rows, summary, failed = [], [], []
     seen = {}
     for path in files:
         pid = paper_id_for(path)
@@ -85,11 +86,24 @@ def main():
         except Exception as exc:
             counts = {"error": str(exc), "total": 0, "text": 0, "references": 0,
                       "warnings": [str(exc)]}
+        candidates_path = os.path.join(folder, "candidates.json")
+        failure_path = os.path.join(folder, "extraction_failed.json")
         try:
             candidates = extract_candidates.build(path, pid)
-            json.dump(candidates, open(os.path.join(folder, "candidates.json"), "w",
+            json.dump(candidates, open(candidates_path, "w",
                                        encoding="utf-8"), ensure_ascii=False, indent=1)
+            if os.path.exists(failure_path):
+                os.remove(failure_path)
         except Exception as exc:
+            # A stale candidate file from an earlier run must not survive a
+            # failed extraction, and downstream commands must see the failure.
+            if os.path.exists(candidates_path):
+                shutil.move(candidates_path,
+                            os.path.join(folder, "candidates.pre-failure.json"))
+            json.dump({"paper_id": pid, "error": str(exc)[:500]},
+                      open(failure_path, "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=1)
+            failed.append(pid)
             candidates = {"paper_id": pid, "error": str(exc), "paragraphs": [],
                           "citations": [], "references": [], "quotes": [],
                           "uncited_candidates": [], "ambiguity": {
@@ -117,6 +131,7 @@ def main():
             },
             "reference_heading": candidates.get("reference_heading", ""),
             "ambiguity": candidates.get("ambiguity", {}),
+            "status": "extraction_failed" if pid in failed else "prepared",
         }
         json.dump(paper, open(os.path.join(folder, "paper.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
@@ -131,12 +146,14 @@ def main():
         writer.writerow(["paper_id", "participant_dir", "filename", "total_words"])
         writer.writerows(rows)
     flagged = [p["paper_id"] for p in summary if p["ambiguity"].get("needs_extraction_pass")]
-    json.dump({"papers": summary, "skipped": skipped, "flagged_for_extraction": flagged},
+    json.dump({"papers": summary, "skipped": skipped, "flagged_for_extraction": flagged,
+               "extraction_failed": failed},
               open(os.path.join(out, "prep_summary.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     print(json.dumps({
         "papers": len(summary), "skipped": len(skipped),
         "flagged_for_extraction": flagged,
+        "extraction_failed": failed,
         "work_dir": work,
     }, ensure_ascii=False, indent=1))
     return 0

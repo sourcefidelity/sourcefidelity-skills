@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import sys
+import subprocess
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -623,6 +624,42 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class PrepareFailureTests(unittest.TestCase):
+    def _run(self, script, *args):
+        return subprocess.run([sys.executable, "-I", os.path.join(HERE, script), *args],
+                              capture_output=True, text=True)
+
+    def test_failed_extraction_removes_stale_candidates_and_blocks_tasks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            papers = os.path.join(tmp, "papers", "participant-1")
+            os.makedirs(papers)
+            open(os.path.join(papers, "P1.docx"), "w").write("not a real docx")
+            out = os.path.join(tmp, "batch")
+            os.makedirs(os.path.join(out, "_work", "P1"))
+            stale = os.path.join(out, "_work", "P1", "candidates.json")
+            json.dump({"paper_id": "P1", "citations": [{"id": "X1"}],
+                       "references": []}, open(stale, "w", encoding="utf-8"))
+
+            prep = self._run("prepare_batch.py", "--papers",
+                             os.path.join(tmp, "papers"), "--out", out)
+            self.assertEqual(prep.returncode, 0, prep.stderr)
+
+            self.assertFalse(os.path.exists(stale))
+            self.assertTrue(os.path.exists(os.path.join(out, "_work", "P1",
+                                                        "extraction_failed.json")))
+            paper = json.load(open(os.path.join(out, "_work", "P1", "paper.json"),
+                                   encoding="utf-8"))
+            self.assertEqual(paper["status"], "extraction_failed")
+            summary = json.load(open(os.path.join(out, "prep_summary.json"),
+                                     encoding="utf-8"))
+            self.assertIn("P1", summary["extraction_failed"])
+
+            task = self._run("make_task.py", "--batch", out, "--paper", "P1",
+                             "--out", os.path.join(tmp, "task.json"))
+            self.assertNotEqual(task.returncode, 0)
+            self.assertIn("extraction failed", task.stderr)
 
 
 class PaperIndexTests(unittest.TestCase):
