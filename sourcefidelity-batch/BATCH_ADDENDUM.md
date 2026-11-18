@@ -13,7 +13,7 @@ Inventory `.docx` and `.pdf` papers. Skip `*AI.pdf`, `*.docx.pdf`, Turnitin repo
 Batch-level artifacts written at the output root:
 
 - `batch_report.md` — the aggregate report.
-- `cohort_signals.json` — machine-readable authorship-signal and pattern output.
+- `cohort_signals.json` — machine-readable cohort text-overlap output.
 - `acquisition_list.md` — works to obtain, ranked.
 - `batch_index.md` (recommended) — inventory, skipped files, and run log.
 
@@ -21,7 +21,7 @@ Batch-level artifacts written at the output root:
 
 - Use one **separate subagent context per paper**. The subagent receives only its assigned paper, the source folder, the protocol and this addendum, and its output subfolder. It must not inspect other papers, other subfolders, or an existing batch report.
 - The main agent inventories the folder, spawns the subagents, waits for them, reads only the `summary.json` files, and writes the batch-level artifacts. It does not review papers itself and does not rewrite individual judgments.
-- Cohort authorship signals (S2, S3) are computed by the main agent from the finished papers and summaries. This is aggregation, not review: it must not alter a per-paper judgment.
+- Cohort text overlap is computed by the main agent from the finished papers and summaries. It is evidence to review, not a finding about authorship. This is aggregation, not review: it must not alter a per-paper judgment.
 - The individual reviews remain the independent artifacts. The batch report is a later aggregate, not a replacement for those reviews and not a misconduct determination.
 
 ## Adapter pre-flight
@@ -108,52 +108,6 @@ The worker must use the general-purpose agent type, because it writes files. The
       "edition": "string"
     }
   ],
-  "authorship_signals": {
-    "S1_reference_profile": {
-      "refs_total": 0,
-      "nonexistent": 0,
-      "unverifiable": 0,
-      "fabricated_share": 0.0,
-      "fires": false,
-      "note": "string"
-    },
-    "S4_document_metadata": {
-      "creator": "string",
-      "last_modified_by": "string",
-      "created": "string",
-      "modified": "string",
-      "total_editing_minutes": 0,
-      "revision": 0,
-      "words": 0,
-      "anomaly": "string or empty",
-      "fires": false,
-      "strong": false
-    },
-    "S5_style_profile": {
-      "words": 0,
-      "families": {
-        "ai_vocabulary": {"count": 0, "rate": 0.0, "threshold": 4.0, "fires": false, "evidence": []},
-        "copula_avoidance": {"count": 0, "rate": 0.0, "threshold": 1.5, "fires": false},
-        "negative_parallelism": {"count": 0, "rate": 0.0, "threshold": 2.0, "fires": false},
-        "rule_of_three": {"count": 0, "rate": 0.0, "threshold": 1.5, "fires": false, "supporting_only": true},
-        "transition_monotony": {"count": 0, "rate": 0.0, "threshold": 0.20, "fires": false},
-        "low_burstiness": {"count": 0, "rate": 0.0, "threshold": 0.35, "fires": false}
-      },
-      "families_firing": [],
-      "fires": false
-    },
-    "generation": {
-      "producer": "word | library | external_editor | unknown",
-      "application": "string",
-      "rsid_attributes": 0,
-      "rsid_root": true,
-      "zip_normalized": true,
-      "placeholders": 0,
-      "facts": ["string"],
-      "signature": false
-    }
-  },
-  "replacement_profile": false,
   "misrepresented_sources": [
     {
       "source": "D23 (2026, June 18) Tom Hanks/Tim Allen interview",
@@ -189,7 +143,6 @@ The worker must use the general-purpose agent type, because it writes files. The
   "flags": {
     "misrepresentation": false,
     "fabrication_risk": false,
-    "authorship_signal_risk": false
   },
   "review_path": "absolute path",
   "ledger_path": "absolute path",
@@ -212,57 +165,26 @@ The worker must use the general-purpose agent type, because it writes files. The
 
 Rules for the fields:
 
-- `schema_version`: `"3"` for this schema. Readers must accept older summaries without `sources`, `authorship_signals` or `formatting_notes`, record the missing fields and the schema difference as a limitation, and continue. Do not compare category counts across schema versions without saying that schema-2 counts include unverifiable sources in Category B.
+- `schema_version`: `"3"` for this schema. Readers must accept older summaries without `sources` or `formatting_notes`, record the missing fields and the schema difference as a limitation, and continue. Do not compare category counts across schema versions without saying that schema-2 counts include unverifiable sources in Category B.
 - `source_key`: a stable lowercase key for grouping across papers, made from author/organization, year, and a short title, e.g. `zhang-2026-record-screening`, `d23-2026-tom-hanks-interview`. Use the same key for the same work across papers.
 - `sources`: **one entry for every cited work**, not only the problematic ones. `retrieval` is the controlled vocabulary that makes acquisition possible; do not leave it to prose. Use `retrieved` only when a usable full text was inspected; `identity_only` when the work was identified but no text was available; `unverifiable` when the work could not be located; `nonexistent` only where the review found affirmative evidence. `citation_count` is the number of C occurrences citing the work.
-- `sources[].identity_outcome`: the eight-value vocabulary from the protocol. `unlocated_after_search` may be reported as `unverifiable`; `nonexistent_as_cited` is reported as `nonexistent_sources` and counts toward the fabrication flag, and requires the evidence tier defined in the protocol's "Proving a work does not exist". `possible_match`, `bibliographic_conflict`, `insufficient_metadata` and `search_incomplete` are recorded states, not absences, and are excluded from the unverifiable count and from S1. `bibliographic_conflict` requires that the cited work exists; an entry that cannot describe any existing work is `nonexistent_as_cited`.
-- `sources[].search_status`: `searched | partial | not_searched`, per the protocol's adapter rule. Only `searched` may be recorded as `unverifiable`. A work left `partial` or `not_searched` because an adapter was rate-limited, circuit-broken or unreachable is a review limitation, not a finding about the work, and it is excluded from the acquisition ranking and from S1.
+- `sources[].identity_outcome`: the eight-value vocabulary from the protocol. `unlocated_after_search` may be reported as `unverifiable`; `nonexistent_as_cited` is reported as `nonexistent_sources` and counts toward the fabrication flag, and requires the evidence tier defined in the protocol's "Proving a work does not exist". `possible_match`, `bibliographic_conflict`, `insufficient_metadata` and `search_incomplete` are recorded states, not absences, and are excluded from the unverifiable count. `bibliographic_conflict` requires that the cited work exists; an entry that cannot describe any existing work is `nonexistent_as_cited`.
+- `sources[].search_status`: `searched | partial | not_searched`, per the protocol's adapter rule. Only `searched` may be recorded as `unverifiable`. A work left `partial` or `not_searched` because an adapter was rate-limited, circuit-broken or unreachable is a review limitation, not a finding about the work, and it is excluded from the acquisition ranking.
 - `adapter_failures`: one entry per adapter that prevented a search, with the service name, its state at the time (`rate_limited`, `down`, `auth_required`, `slow`), the timestamp, and the `source_key`s left unanswered. Optional for older summaries; when present it drives the report's availability section.
 - `review_metrics`: optional coordinator-owned provenance. `runs` holds one entry per review or reappraisal run with `phase`, `model`, `duration_ms`, `started_at`, `completed_at`, `usage` (`input_tokens`, `output_tokens`, `cache_read_tokens`, `total_tokens`), `cost_status` and `estimated_cost_usd`. Missing usage is `not_recorded`, never zero. The review block and batch aggregate are rendered from this object; the worker does not self-report it.
 - `formatting_notes`: the count of uncategorised formatting notes recorded in the review (heading wording, indent depth, dash style, spacing, `&` versus `and`, *et al.*, initials, place of publication, a missing in-text citation for analyzed media). This field never feeds the A or B counts.
 - `category_a_findings` and `category_b`: counts of the protocol's Category A and Category B findings. `category_b.citation_findings` covers citation- and reference-level B findings and **excludes** unverifiable sources, which are recorded in `unverifiable_sources` instead. `category_b.uncited_passages` equals `uncited_passages`.
-- `authorship_signals.S1_reference_profile`: computed by the subagent from its own reference audit. `fabricated_share` = (nonexistent + unverifiable) ÷ the number of references whose `search_status` is `searched`. Works left `partial` or `not_searched` are excluded from both the numerator and the denominator, so an adapter outage cannot raise the share. `fires` is true only when the searched reference count meets `MIN_REFS_FOR_PROFILE` and `fabricated_share >= FABRICATED_SHARE_THRESHOLD`. This is an authorship-screen metric; it does not make unverifiable a Category B finding.
-- `authorship_signals.S4_document_metadata`: copied from `scripts/authorship_signals.py paper`. Do not hand-edit the values; `anomaly` may be set by the subagent where the metadata is implausible for the paper's length. `fires` is true only when an anomaly is recorded. For a `.pdf`, `revision` and `total_editing_minutes` are absent rather than zero, `generation.state` is `not_applicable`, and a `metadata_notes` entry says so: a missing field is not a signal, and the DOCX generation tests do not transfer to PDF.
 - `misrepresented_sources`: only confirmed **source-content misrepresentation** or misquotation: the cited source does not contain the attributed claim, or the paper quotes it inaccurately. Do **not** include patchwriting, uncited paraphrase, missing links, or ordinary Qualified/Mixed judgments here.
 - `nonexistent_sources`: only works affirmatively shown not to exist (publisher/index confirmation, impossible bibliographic details). Missing access is not nonexistence.
 - `unverifiable_sources`: works that could not be located after a documented search but might exist. Record the search and the limitation. **This is not a Category B finding and does not count toward the fabrication flag.** It is retained for the acquisition list and the S1 signal.
 - `flags`: the subagent's provisional flags. The main agent recomputes all flags from the thresholds below; the subagent's flags are advisory.
 - `status`: `complete` when the protocol's completion criteria are met; `partial` when a genuine limit prevents completion; `failed` when the review could not be produced.
 
-## Cohort authorship signals
+## Cohort text overlap
 
-The primary cohort check. Its purpose is to surface papers whose **reference list and document properties are more consistent with generated text than with consulted sources**. It is a screening aid for human verification. It does not detect AI use, does not establish intent, and must never be reported as a finding about authorship.
+The cohort check compares finished papers for shared distinctive wording: rare 8-grams, near-identical heading templates, and shared sentences. Generic structural headings (introduction, methods, results, discussion, conclusion and similar) are excluded before comparison. It reports evidence for an instructor to follow up — including whether two papers share a source — and never a finding about authorship.
 
-Four independent signal classes plus one composite. S1 and S4 are scored by the paper's own subagent; S2 and S3 across the batch by the main agent; S5 is computed by `authorship_signals.py` and never counts on its own.
-
-| Class | What it measures | Computed by |
-| --- | --- | --- |
-| **S1** Reference-fabrication profile | Share of the reference list that is nonexistent or unverifiable, gated on a minimum list size | Per-paper subagent |
-| **S2** Invented-venue fingerprint | Nonexistent journal, publisher or conference names recurring across papers | Main agent (`authorship_signals.py cohort`) |
-| **S3** Cross-paper text overlap | Shared rare n-grams and near-identical, distinctive heading templates across papers; generic section headings excluded | Main agent (`authorship_signals.py cohort`) |
-| **S4** Document metadata | Creator, last-modified-by, created/modified timestamps, total editing time, revision count | Per-paper script, judged by subagent |
-| **S5** Style profile | Six countable families from the documented signs of generated prose. **Reported for description only; it does not gate any flag.** | Script |
-| **Generation signature** | Package and metadata evidence that the file was produced by a document library rather than typed: no `Application` field with zero revision-save IDs, or under ten revision-save IDs with non-Word ZIP timestamps and no editing time for a long text, or placeholder text with no editing time, or a long text created and last modified in the same minute, or an identical creation timestamp across papers | Main agent (`authorship_signals.py cohort`) |
-| **replacement_profile** | The generation signature. It fires the authorship flag on its own. | Main agent |
-
-Rules for reporting signals:
-
-- Cite the evidence for every signal: the count and share for S1, the venue name and the papers sharing it for S2, the overlapping phrase or heading sequence with both paper IDs for S3, the actual metadata values for S4.
-- A class counts only when it is **independently evidenced**. Do not count the same fact twice under two class names.
-- Report signals at paper level as a list of classes. Never write "this paper was written by an AI".
-- A high fabricated-reference share in a paper with fewer than `MIN_REFS_FOR_PROFILE` references does not fire S1; report the raw counts instead.
-- Metadata can be inherited from a template or a supervisor's machine. A S4-only signal is the weakest case and must say so. `last_modified_by` may name the instructor, an editor, or a shared account: a mismatch between `creator` and `last_modified_by` describes how the file was handled, not who wrote the prose. Never report a metadata name as the author of the text.
-- S2 counts a venue only where the review shows the **venue itself** does not exist. A real journal named in a nonexistent article is not an invented venue: a recurring real venue is recorded as an observation, not a signal.
-- S3 ignores generic structural headings entirely: introduction, background, literature review, methods, methodology, findings, results, analysis, discussion, limitations, contribution, conclusion, and combinations such as "Findings and Analysis". They are too common in student papers to indicate anything, and are removed before any comparison. Heading overlap is computed only when each paper retains at least two distinctive headings. Exclude reference lists and quoted material. Shared sentences and rare phrasing carry the signal; structure alone does not.
-- S3 must not attribute shared text to a shared source without evidence: if both papers quote the same passage, that is the source, not the student.
-- S5 excludes the reference list and quoted spans, so a source's style is never counted as the student's. It is reported for description only. A calibration against three raw harness outputs and three pre-AI papers found no family separated the groups, so it must not gate a flag.
-- **The generation signature** is the strongest indicator of a **replaced** paper. Word stamps dozens to hundreds of `w:rsid` revision-save IDs as a document is edited and normalises ZIP part timestamps to 1980; a document library does neither. Record the producer (`word`, `library`, `external_editor`, `unknown`), the rsid count, whether ZIP timestamps are normalised, and every fact that fired.
-- A known external editor (Google Docs, LibreOffice, Pages, WPS, OnlyOffice) also lacks revision-save IDs. Record it as `external_editor` and **do not** treat its package alone as a signature; it needs placeholder text or a cohort fact to count. This is the one systematic false-positive path, and it must be stated when it applies.
-- A long text whose `created` and `modified` stamps fall in the same minute, with two minutes or less of recorded editing and at most two revisions, cannot have been typed in that file. The content may have been pasted from elsewhere — including the student's own earlier draft — so the finding establishes replacement of this document, not its origin.
-- A creation-timestamp collision is **decisive only with sub-second precision**: two people cannot create a file in the same millisecond. Word writes `created` at minute precision, where a collision is ordinary (about 26% among 30 papers created on one day), so a minute-level match is supporting only. Report every group and its precision.
-- A **shared creator string** across different students' files is supporting only. It is also what a shared lab machine, a default account ("Microsoft Office User", "Admin") or an instructor who re-saved the file produces, so it never decides on its own. Record it and say which it could be.
-- A **shared styles.xml hash** is informational, not a signal: a course template produces it legitimately. Report the group size, no more.
-- `replacement_profile` must be reported as "replacement profile — for human verification", never "AI-written". The signature establishes that Word did not produce the document, not who or what did.
+The report shows each pair with its basis, the shared headings, an example shared sentence and the count of shared n-grams. A pair whose only shared material is a quoted passage from the same source is not evidence of copying between the papers.
 
 ## Source-level patterns (secondary)
 
@@ -276,22 +198,13 @@ These constants live in this section so they can be changed before a run. The ba
 MISREPRESENTATION_THRESHOLD = 3
 FABRICATION_NONEXISTENT_THRESHOLD = 2
 SOURCE_PATTERN_THRESHOLD = 3          # secondary tier
-FABRICATED_SHARE_THRESHOLD = 0.50     # S1
-MIN_REFS_FOR_PROFILE = 5              # S1 gate
-VENUE_PATTERN_THRESHOLD = 2           # S2, distinct papers
 SHARED_TEMPLATE_JACCARD = 0.60        # S3, heading sets
 SHARED_NGRAM = 8                      # S3, words
-SIGNAL_CLASSES_FOR_FLAG = 2           # authorship flag
-S5_MIN_WORDS = 800                    # S5 and signature: long-text gate
-S5_MIN_FAMILIES = 2                   # S5 description only
-GENERATION_RSID_WORD = 20             # >= this suggests a typed Word document
-GENERATION_RSID_LOW = 10              # < this in a converted package is a fact
 ACQUISITION_TOP_N = 6
 ```
 
 - **Misrepresentation flag:** at least `MISREPRESENTATION_THRESHOLD` distinct sources in `misrepresented_sources` (distinct by `source_key`). Patchwriting and uncited passages are counted separately and do not trigger this flag.
 - **Fabrication-risk flag:** at least `FABRICATION_NONEXISTENT_THRESHOLD` distinct `nonexistent_sources`. Unverifiable sources do not count toward this flag: the flag is a claim about invented works, and a work that could not be reached may exist. The report labels the two counts separately and says "flagged for human verification", not "fabricated".
-- **Authorship-signal flag:** a `replacement_profile`, or at least `SIGNAL_CLASSES_FOR_FLAG` independent signal classes firing for that paper. Label it "authorship signals — for human verification" or "replacement profile — for human verification". Never "AI-written".
 - **Source-level pattern:** a source appearing in the flagged lists of at least `SOURCE_PATTERN_THRESHOLD` papers.
 
 The batch report shows the raw counts for every paper, so near-threshold cases remain visible. A flag is a request for human review, not a finding of intent or misconduct.
@@ -335,13 +248,14 @@ Write `batch_report.md` in the output root:
 - **Misrepresented sources:** ...
 - **Nonexistent sources:** ...
 - **Unverifiable sources (not counted toward the flag):** ...
-- **Formatting notes:** ...
 - **Review:** [review.md](absolute path)
 
-## Cohort authorship signals
+## Cohort text overlap
 
-| Paper | S1 fabricated share | S2 venue | S3 overlap | S4 metadata | Classes firing |
-| --- | --- | --- | --- | --- | --- |
+| Papers | Basis | Shared headings | Shared sentences | Shared n-grams |
+| --- | --- | --- | --- | --- |
+
+Shared distinctive wording is evidence for an instructor to review, including whether two papers used the same source. It is never a finding about authorship.
 
 ## Source-level patterns (secondary)
 
@@ -375,17 +289,17 @@ Probe results per group, and any work left unsearched:
 - Thresholds used: ...
 - Independence: ...
 - Access limitations: ...
-- Authorship signals are screening aids for human verification. They do not establish authorship, intent, a formal misconduct determination, or a sanction.
+- Cohort text overlap is evidence to review. It does not establish authorship, intent, a formal misconduct determination, or a sanction.
 ```
 
-Flag column values: `—`, `misrepresentation`, `fabrication risk`, `authorship signal`, or a combination joined with `+` (for example `fabrication risk + authorship signal`). For a paper with no flag, use `—` but keep its raw counts and signal classes in the table. Do not omit near-threshold papers.
+Flag column values: `—`, `misrepresentation`, `fabrication risk`, or both joined with `+`. For a paper with no flag, use `—` but keep its raw counts in the table. Do not omit near-threshold papers.
 
 ## Aggregation rules
 
 1. Probe the adapters and write `adapter_status.json` before the first group, per "Adapter pre-flight".
 2. Read every `summary.json`. Validate the required fields. If a JSON is missing or invalid, ask the subagent to repair it once; if it still fails, mark the paper `failed` with the reason.
-2. Recompute the flags from the raw lists using the thresholds; do not rely solely on the subagent's `flags`. Recompute the authorship flag from the fired signal classes after S2 and S3 are computed.
-3. Run `python3 -I scripts/authorship_signals.py cohort <output root> <papers folder>` to produce S2 and S3 and `cohort_signals.json`.
+2. Recompute the flags from the raw lists using the thresholds; do not rely solely on the subagent's `flags`.
+3. Run `python3 -I scripts/authorship_signals.py cohort <output root> <papers folder>` to produce the cohort text-overlap report and `cohort_signals.json`.
 4. Group source-level patterns by `source_key`. If two entries clearly refer to the same work but have different keys, normalize them and record the merge.
 5. Do not alter the individual review/ledger judgments. If a summary count contradicts its review, record the discrepancy in "Incomplete or limited reviews" and use the review's evidence for the flag, not the summary alone.
 6. Run `python3 -I scripts/acquisition_list.py --batch <output root> --top <N>` and include the result.
@@ -406,21 +320,6 @@ Each subagent runs the current skill's `scripts/word_count.py` (or an equivalent
 ## Reappraisal after sources are acquired
 
 Acquiring a source does not by itself change a completed review. Use the companion skill `sourcefidelity-reappraise` to re-assess only the citation occurrences that cite the newly supplied works, update the affected entries in `review.md` and `ledger.md`, and record every changed judgment in a reappraisal log. Reappraisal is a revision pass, not an independent review, and must be labelled as such.
-
-## Calibrating S5
-
-`python3 -I scripts/authorship_signals.py calibrate FOLDER LABELS.json` scores every `.docx` in the folder and reports:
-
-- per paper: word count, editing minutes, revision, strong S4, the six family values, families firing, and the S5 and replacement-profile outcomes;
-- per-family separation between the labelled groups (mean and range), and whether the ranges overlap;
-- the composite rule's confusion counts.
-
-Rules for using it:
-
-- Supply neutral filenames and keep `labels.json` (`{"p01": "human", "p02": "ai"}`) aside until the table is written, so the scoring is blind.
-- The calibration **never changes thresholds**. It reports separation; moving a threshold is a separate, recorded change.
-- State the sample size beside every conclusion. Three papers per group can show that features fire and that the groups differ; it cannot estimate a false-positive rate, and one false positive in such a set is an anecdote, not a rate.
-- Raw model output written straight into a document tests the easy end. It does not test an AI draft that the student then edited, which is the case the composite is not meant to flag.
 
 ## What the batch report is not
 

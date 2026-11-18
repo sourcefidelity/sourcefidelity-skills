@@ -965,43 +965,23 @@ class FetchPolicyTests(unittest.TestCase):
         self.assertEqual(out["limitation"], "content_type")
 
 
-class CohortS1Tests(unittest.TestCase):
+class CohortOverlapTests(unittest.TestCase):
     def _summary(self):
-        return {
-            "paper_id": "P1",
-            "references": {"total": 10},
-            "sources": [{"source_key": f"k{i}", "search_status": "searched",
-                         "retrieval": "retrieved"} for i in range(5)],
-            "nonexistent_sources": [{"source_key": "k0"}, {"source_key": "k1"},
-                                    {"source_key": "k2"}],
-            "unverifiable_sources": [],
-            "authorship_signals": {},
-            "flags": {},
-        }
+        return {"paper_id": "P1", "references": {"total": 10},
+                "sources": [{"source_key": "k", "search_status": "searched"}],
+                "nonexistent_sources": [], "unverifiable_sources": [],
+                "flags": {}}
 
-    def test_cohort_uses_the_searched_denominator_for_legacy_summaries(self):
+    def test_cohort_reports_overlap_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "P1"))
             json.dump(self._summary(), open(os.path.join(tmp, "P1", "summary.json"),
                                             "w", encoding="utf-8"))
             data = ats.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
-        s1 = data["papers"]["P1"]["S1"]
-        self.assertEqual(s1["fabricated_share"], 0.6)
-        self.assertTrue(s1["fires"])
-
-    def test_cohort_reuses_the_per_paper_s1_when_present(self):
-        summary = self._summary()
-        summary["authorship_signals"]["S1_reference_profile"] = {
-            "refs_total": 10, "searched": 5, "nonexistent": 3, "unverifiable": 0,
-            "fabricated_share": 0.6, "fires": True}
-        with tempfile.TemporaryDirectory() as tmp:
-            os.makedirs(os.path.join(tmp, "P1"))
-            json.dump(summary, open(os.path.join(tmp, "P1", "summary.json"),
-                                    "w", encoding="utf-8"))
-            data = ats.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
-        s1 = data["papers"]["P1"]["S1"]
-        self.assertEqual(s1["fabricated_share"], 0.6)
-        self.assertTrue(s1["fires"])
+        self.assertEqual(set(data["papers"]["P1"]), {"S3"})
+        for absent in ("duplicates", "venue_patterns", "venue_observations", "profiles"):
+            self.assertNotIn(absent, data)
+        self.assertIn("Cohort text overlap", ats.markdown(data))
 
 
 class PageMapOffsetTests(unittest.TestCase):

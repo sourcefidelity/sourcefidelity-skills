@@ -20,8 +20,8 @@ import sys
 
 REQUIRED = ["schema_version", "paper_id", "word_counts", "occurrences",
             "references", "works_discussed", "uncited_passages",
-            "category_a_findings", "formatting_notes", "category_b",
-            "sources", "authorship_signals", "flags", "status"]
+            "category_a_findings", "category_b",
+            "sources", "flags", "status"]
 ID_OUT = {"confirmed", "confirmed_with_minor_differences", "possible_match",
           "bibliographic_conflict", "nonexistent_as_cited",
           "unlocated_after_search", "insufficient_metadata", "search_incomplete"}

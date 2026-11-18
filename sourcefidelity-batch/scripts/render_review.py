@@ -337,27 +337,9 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
                     by_key[key]["c_ids"].append(occ["id"])
                 by_key[key]["citation_count"] += 1
 
-    profile = profile or {}
-    meta = dict(profile.get("document_metadata") or paper.get("document_metadata") or {})
-    s4 = meta
-    s4["anomaly"] = "; ".join(profile.get("metadata_flags", []) or [])
-    s4["fires"] = bool(s4["anomaly"])
-    try:
-        s4["strong"] = authorship_signals.strong_s4(profile)
-    except Exception:
-        s4["strong"] = False
-    s5 = profile.get("style") or {"words": 0, "families": {}, "families_firing": [], "fires": False}
-    generation = profile.get("generation") or {
-        "producer": "unknown", "application": "", "rsid_attributes": 0,
-        "rsid_root": False, "zip_normalized": False, "placeholders": 0,
-        "facts": [], "signature": False}
     misrepresented = as_records(findings.get("misrepresented", []), "misrepresented")
     nonexistent = as_records(findings.get("nonexistent", []), "nonexistent")
     unverifiable = as_records(findings.get("unverifiable", []), "unverifiable")
-    searched = sum(1 for s in by_key.values() if s.get("search_status") == "searched")
-    share = round((len(nonexistent) + len(unverifiable)) / searched, 3) if searched else 0.0
-    s1_fires = bool(searched >= 5 and share >= 0.5)
-    replacement = bool(generation.get("signature"))
     folder = os.path.join(root, paper["paper_id"])
     result = {
         "schema_version": "3",
@@ -378,20 +360,6 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
             "uncited_passages": len(findings.get("uncited", [])),
         },
         "sources": list(by_key.values()),
-        "authorship_signals": {
-            "S1_reference_profile": {
-                "refs_total": len(refs),
-                "nonexistent": len(nonexistent),
-                "unverifiable": len(unverifiable),
-                "fabricated_share": share,
-                "fires": s1_fires,
-                "note": f"{searched} references with search_status=searched",
-            },
-            "S4_document_metadata": s4,
-            "S5_style_profile": s5,
-            "generation": generation,
-        },
-        "replacement_profile": replacement,
         "misrepresented_sources": misrepresented,
         "nonexistent_sources": nonexistent,
         "unverifiable_sources": unverifiable,
@@ -399,7 +367,6 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
         "flags": {
             "misrepresentation": len({m.get("source_key") for m in misrepresented}) >= 3,
             "fabrication_risk": len(nonexistent) >= 2,
-            "authorship_signal_risk": replacement,
         },
         "review_path": os.path.join(folder, "review.md"),
         "ledger_path": os.path.join(folder, "ledger.md"),

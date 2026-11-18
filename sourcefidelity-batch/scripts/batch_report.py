@@ -72,14 +72,12 @@ def flags(r):
     return len(mr) >= MISREP_THRESHOLD, len(nx) >= FAB_NONEXISTENT_THRESHOLD
 
 
-def flag_label(mis, fab, auth):
+def flag_label(mis, fab):
     parts = []
     if mis:
         parts.append("misrepresentation")
     if fab:
         parts.append("fabrication risk")
-    if auth:
-        parts.append("authorship signal")
     return " + ".join(parts) if parts else "—"
 
 
@@ -204,8 +202,7 @@ def main():
     failed = sum(1 for r in rows if r["status"] == "failed")
 
     def sig_for(pid):
-        s = signals.get(pid, {})
-        return s.get("classes", []), bool(s.get("flags"))
+        return [], False
 
     out = []
     w = out.append
@@ -224,8 +221,8 @@ def main():
     w("## Paper summary\n")
     w("| Paper | Total words | Text words | Ref words | C | Supports | Qualified | Contradicts "
       "| Not supported | Not judged | Misrep. sources | Nonexistent | Unverifiable | Not searched "
-      "| Missing links | Formatting notes | Signals | Flag |")
-    w("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+      "| Missing links | Flag |")
+    w("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in rows:
         o, ref = r["occurrences"], r["references"]
         pid = r["paper_id"]
@@ -238,8 +235,7 @@ def main():
           f"{o['contradicts']} | {o['not_supported']} | {o['not_judged']} | "
           f"{len(r['misrepresented_sources'])} | {len(r['nonexistent_sources'])} | "
           f"{len(r.get('unverifiable_sources', []))} | {unsearched} | {ref['missing_links']} | "
-          f"{r.get('formatting_notes', 0)} | "
-          f"{','.join(classes) if classes else '—'} | {flag_label(mis, fab, auth)} |")
+          f"{flag_label(mis, fab)} |")
     w("")
 
     w("## Flagged papers\n")
@@ -254,7 +250,7 @@ def main():
         w("None.\n")
     for r, classes, auth, mis, fab in flagged:
         pid = r["paper_id"]
-        w(f"### {pid} — {flag_label(mis, fab, auth)}\n")
+        w(f"### {pid} — {flag_label(mis, fab)}\n")
         reasons = []
         if mis:
             reasons.append(f"{len(r['misrepresented_sources'])} distinct misrepresented source(s) "
@@ -315,69 +311,22 @@ def main():
               f"See the review for the entries affected.")
         w(f"- **Review:** [{pid}/review.md]({r['review_path']})\n")
 
-    w("## Cohort authorship signals\n")
-    if not signals:
-        w("Not computed for this batch: no `cohort_signals.json` and no papers folder supplied.\n")
+    w("## Cohort text overlap\n")
+    pairs = cohort.get("overlap_pairs") or []
+    if not pairs:
+        w("No shared distinctive wording found across this cohort.\n")
     else:
-        w("| Paper | S1 fabricated share | S2 venue | S3 overlap | S4 metadata | Gen | S5 style | Classes firing |")
-        w("| --- | --- | --- | --- | --- | --- | --- | --- |")
-        for pid, s in sorted(signals.items()):
-            s1 = s.get("S1", {})
-            share = s1.get("fabricated_share", 0)
-            s1s = f"{s1.get('nonexistent', 0)}+{s1.get('unverifiable', 0)}/{s1.get('refs_total', 0)} = {share:.0%}"
-            s2s = "yes" if s.get("S2", {}).get("fires") else "—"
-            pairs = s.get("S3", {}).get("pairs", [])
-            s3s = ", ".join(pairs) if pairs else "—"
-            s4s = s.get("S4", {}).get("anomaly") or "—"
-            if s.get("S4", {}).get("strong"):
-                s4s += " (strong)"
-            s5 = s.get("S5", {})
-            firing = s5.get("families_firing") or []
-            s5s = f"{len(firing)}/6" + (" fires" if s5.get("fires") else "") if firing else "—"
-            gen = s.get("generation", {})
-            gens = gen.get("producer", "?")
-            if gen.get("signature"):
-                gens += " SIGNATURE"
-            classes = ", ".join(s.get("classes", [])) or "—"
-            if s.get("replacement_profile"):
-                classes = (classes + " + replacement profile") if classes != "—" else "replacement profile"
-            w(f"| {pid} | {s1s} | {s2s} | {s3s} | {s4s} | {gens} | {s5s} | {classes} |")
+        w("Shared distinctive wording is evidence to review, not a finding about "
+          "authorship. Check whether both papers used the same source.\n")
+        w("| Papers | Basis | Shared headings | Shared sentences | Shared n-grams |")
+        w("| --- | --- | --- | --- | --- |")
+        for pair in pairs:
+            sentences = pair.get("shared_sentences") or []
+            w(f"| {', '.join(pair.get('papers', []))} | {pair.get('basis', '')} | "
+              f"{', '.join(pair.get('shared_headings', [])[:5]) or '—'} | "
+              f"{(sentences[0][:120] if sentences else '—')} | "
+              f"{pair.get('shared_ngram_count', 0)} |")
         w("")
-        dups = cohort.get("duplicates") or {}
-        if any(dups.get(k) for k in ("created", "creator", "template")):
-            w("Cohort duplicates:")
-            for group in dups.get("created", []):
-                strength = "decisive" if group.get("subsecond") else "supporting only"
-                w(f"- Creation timestamp ({strength}): {', '.join(group.get('papers', []))}")
-            for group in dups.get("creator", []):
-                w(f"- Shared creator name: {', '.join(group)}")
-            for group in dups.get("template", []):
-                w(f"- Same styles.xml hash (often just the course template): {', '.join(group)}")
-            w("")
-        venues = cohort.get("venue_patterns", [])
-        if venues:
-            w("Recurring invented venues:")
-            for v in venues:
-                w(f"- {v['venue']} — {', '.join(v['papers'])}")
-            w("")
-        observations = cohort.get("venue_observations", [])
-        if observations:
-            w("Venues recurring without evidence that the venue itself is invented "
-              "(recorded, not a signal):")
-            for v in observations:
-                w(f"- {v['venue']} — {', '.join(v['papers'])}")
-            w("")
-        overlaps = cohort.get("overlap_pairs", [])
-        if overlaps:
-            w("Cross-paper overlaps:")
-            for o in overlaps:
-                detail = (o["shared_sentences"][0] if o.get("shared_sentences") else
-                          (o["shared_ngram_examples"][0] if o.get("shared_ngram_examples")
-                           else "; ".join(o.get("shared_headings", [])[:3])))
-                w(f"- {o['papers'][0]} / {o['papers'][1]} — {o['basis']}: “{detail}”")
-            w("")
-        w("Signals are screening aids for human verification. They do not establish authorship, "
-          "intent, a formal misconduct determination, or a sanction.\n")
 
     w("## Source-level patterns (secondary)\n")
     pattern = {}

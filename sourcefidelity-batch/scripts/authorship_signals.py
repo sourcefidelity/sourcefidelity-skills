@@ -805,152 +805,34 @@ def cohort(root, papers_dir):
 
     # Cohort duplicate: two submissions cannot share a creation timestamp to the
     # millisecond. Same creator string is weaker and only supports a signature.
-    by_created = defaultdict(list)
-    for pid, r in result.items():
-        created = (r["S4"].get("created") or "").strip()
-        if created:
-            by_created[created].append(pid)
-    for created, pids in by_created.items():
-        if len(pids) > 1:
-            # Word writes created at minute precision, where a collision is common
-            # (26% among 30 papers on one day). Only a sub-second timestamp can be
-            # decisive; a minute match is supporting.
-            subsecond = bool(re.search(r"T\d{2}:\d{2}:\d{2}\.\d", created))
-            for pid in pids:
-                r = result[pid]
-                r["generation"]["cohort_duplicate"] = sorted(pids)
-                if subsecond:
-                    r["generation"]["facts"] = list(r["generation"].get("facts", [])) + [
-                        f"identical creation timestamp to the sub-second across "
-                        f"{', '.join(sorted(pids))}"]
-                    r["generation"]["signature"] = True
-                else:
-                    r["generation"]["facts"] = list(r["generation"].get("facts", [])) + [
-                        f"same creation minute as {', '.join(sorted(set(pids) - {pid}))} "
-                        f"(supporting only)"]
-
-    # Shared creator string: suspicious across different students, but a lab machine
-    # or a default account produces it innocently, so it supports and never decides.
-    by_creator = defaultdict(list)
-    by_template = defaultdict(list)
-    for pid, r in result.items():
-        creator = (r["S4"].get("creator") or "").strip()
-        if creator and creator.lower() not in {"microsoft office user", "un-named", "admin", "user"}:
-            by_creator[creator].append(pid)
-        template = (profiles.get(pid, {}).get("package", {}) or {}).get("styles_hash")
-        if template:
-            by_template[template].append(pid)
-
-    for creator, pids in by_creator.items():
-        if len(pids) > 1:
-            for pid in pids:
-                gen = result[pid]["generation"]
-                gen["shared_creator"] = sorted(pids)
-                others = ", ".join(sorted(set(pids) - {pid}))
-                gen["facts"] = list(gen.get("facts", [])) + [
-                    f"creator {creator!r} also appears on {others}"]
-
-    for template, pids in by_template.items():
-        if len(pids) > 1:
-            for pid in pids:
-                result[pid]["generation"]["shared_template"] = sorted(pids)
-
-    for pid, r in result.items():
-        classes = [c for c in ("S1", "S2", "S3", "S4") if r[c]["fires"]]
-        replacement = bool(r["generation"].get("signature"))
-        r["generation_signature"] = replacement
-        r["classes"] = classes
-        # The generation signature stands on its own: a package Word did not
-        # produce is not a document the student typed, and a retrieval-capable
-        # model may leave no fabricated references for S1 to catch.
-        r["flags"] = bool(replacement or len(classes) >= 2)
-
     out = {
         "generated": "script:authorship_signals.py",
-        "thresholds": {"S1_share": S1_SHARE, "S1_min_refs": S1_MIN_REFS,
-                       "S2_papers": S2_PAPERS, "S3_jaccard": S3_JACCARD,
-                       "S3_ngram": S3_NGRAM, "S5": S5_THRESHOLDS,
-                       "S5_min_words": S5_MIN_WORDS, "S5_min_families": S5_MIN_FAMILIES},
-        "papers": result,
-        "venue_patterns": s2_patterns,
-        "venue_observations": s2_observations,
-        "duplicates": {
-            "created": [
-                {"papers": sorted(pids),
-                 "subsecond": bool(re.search(r"T\d{2}:\d{2}:\d{2}\.\d", ts))}
-                for ts, pids in by_created.items() if len(pids) > 1],
-            "creator": [sorted(v) for v in by_creator.values() if len(v) > 1],
-            "template": [sorted(v) for v in by_template.values() if len(v) > 1],
-        },
+        "thresholds": {"S3_jaccard": S3_JACCARD, "S3_ngram": S3_NGRAM},
+        "papers": {pid: {"S3": r["S3"]} for pid, r in result.items()},
         "overlap_pairs": overlap_pairs,
-        "profiles": {pid: {k: v for k, v in p.items() if k != "sentences" and k != "ngrams"}
-                     for pid, p in profiles.items()},
         "notes": notes,
     }
     return out
 
 
 def markdown(data):
-    lines = ["## Cohort authorship signals", "",
-             "| Paper | S1 fabricated share | S2 venue | S3 overlap | S4 metadata | Gen | S5 style | Classes firing |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
-    for pid, r in sorted(data["papers"].items()):
-        s1 = r["S1"]
-        s1s = f"{s1['nonexistent']}+{s1['unverifiable']}/{s1['refs_total']} = {s1['fabricated_share']:.0%}"
-        s2s = "yes" if r["S2"]["fires"] else "—"
-        s3s = ", ".join(r["S3"]["pairs"]) if r["S3"]["pairs"] else "—"
-        s4s = (r["S4"].get("anomaly") or "—") + (" (strong)" if r["S4"].get("strong") else "")
-        s5 = r.get("S5", {})
-        firing = s5.get("families_firing") or []
-        s5s = f"{len(firing)}/6" + (" fires" if s5.get("fires") else "") if firing else "—"
-        gen = r.get("generation", {})
-        gens = gen.get("producer", "?")
-        if gen.get("signature"):
-            gens += " SIGNATURE"
-        classes = ", ".join(r["classes"]) if r["classes"] else "—"
-        if r.get("replacement_profile"):
-            classes = (classes + " + replacement profile") if classes != "—" else "replacement profile"
-        lines.append(f"| {pid} | {s1s} | {s2s} | {s3s} | {s4s} | {gens} | {s5s} | {classes} |")
+    lines = ["## Cohort text overlap", "",
+             "| Papers | Basis | Shared headings | Shared sentences | Shared n-grams |",
+             "| --- | --- | --- | --- | --- |"]
+    pairs = data.get("overlap_pairs") or []
+    for pair in pairs:
+        sentences = pair.get("shared_sentences") or []
+        lines.append(
+            "| {papers} | {basis} | {headings} | {sentence} | {grams} |".format(
+                papers=", ".join(pair.get("papers", [])),
+                basis=pair.get("basis", ""),
+                headings=", ".join(pair.get("shared_headings", [])[:5]) or "—",
+                sentence=(sentences[0][:120] if sentences else "—"),
+                grams=pair.get("shared_ngram_count", 0)))
+    if not pairs:
+        lines.append("| — | No shared distinctive wording found. | — | — | — |")
     lines.append("")
-    if data["venue_patterns"]:
-        lines.append("Recurring invented venues:")
-        for v in data["venue_patterns"]:
-            lines.append(f"- {v['venue']} — {', '.join(v['papers'])}")
-        lines.append("")
-    dups = data.get("duplicates") or {}
-    if any(dups.get(k) for k in ("created", "creator", "template")):
-        lines.append("Cohort duplicates:")
-        for group in dups.get("created", []):
-            strength = "decisive" if group.get("subsecond") else "supporting only"
-            lines.append(f"- Creation timestamp ({strength}): {', '.join(group.get('papers', []))}")
-        for group in dups.get("creator", []):
-            lines.append(f"- Shared creator name: {', '.join(group)}")
-        for group in dups.get("template", []):
-            lines.append(f"- Same styles.xml hash (often just the course template): "
-                         f"{', '.join(group)}")
-        lines.append("")
-    if data.get("venue_observations"):
-        lines.append("Venues recurring without evidence that the venue itself is invented "
-                     "(recorded, not a signal):")
-        for v in data["venue_observations"]:
-            lines.append(f"- {v['venue']} — {', '.join(v['papers'])}")
-        lines.append("")
-    if data["overlap_pairs"]:
-        lines.append("Cross-paper overlaps:")
-        for o in data["overlap_pairs"]:
-            detail = o["shared_sentences"][0] if o["shared_sentences"] else (
-                o["shared_ngram_examples"][0] if o["shared_ngram_examples"] else
-                "; ".join(o["shared_headings"][:3]))
-            lines.append(f"- {o['papers'][0]} / {o['papers'][1]} — {o['basis']}: “{detail}”")
-        lines.append("")
-    if data["notes"]:
-        lines.append("Notes:")
-        for n in data["notes"]:
-            lines.append(f"- {n}")
-        lines.append("")
-    lines.append("Signals are screening aids for human verification, not findings about authorship.")
     return "\n".join(lines)
-
 
 def calibrate(folder, labels_path):
     """Score a labelled set and report separation. Never changes thresholds."""
