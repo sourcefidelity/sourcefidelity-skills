@@ -262,6 +262,34 @@ def needs_enrichment(record, only, refresh=False):
         str(record.get("work_kind", "")).startswith("chapter")
 
 
+def cache_key_for(identity):
+    """Cache key for one identity: the DOI when present, else title and surname."""
+    doi = (identity.get("doi") or "").strip()
+    return doi or (sr.norm(identity.get("title", ""))[:200] + "|" +
+                   sr.surname_of(identity.get("author", "")))
+
+
+def plan_dry_run(registry, root, *, limit=0, refresh=False, only="all"):
+    """What enrich() would look up, with no provider call and no write."""
+    cache = load_cache(root)
+    rows = []
+    for key, record in sorted(registry.items()):
+        if limit and len(rows) >= limit:
+            break
+        if not needs_enrichment(record, only, refresh):
+            continue
+        identity = record.get("identity", {})
+        cached = cache.get(cache_key_for(identity))
+        hit = bool(cached and not refresh and
+                   time.time() - cached.get("_timestamp", 0) < CACHE_TTL)
+        rows.append({"key": key, "doi": (identity.get("doi") or "").strip(),
+                     "cache": "hit" if hit else "miss"})
+    return {"dry_run": True, "planned": len(rows),
+            "lookups": sum(1 for row in rows if row["cache"] == "miss"),
+            "cache_hits": sum(1 for row in rows if row["cache"] == "hit"),
+            "provider_calls": 0, "writes": 0, "records": rows}
+
+
 def save_sidecar(root, registry):
     common = ("search_status", "search", "provider_error",
               "identity_status", "verified_by")
@@ -286,6 +314,8 @@ def save_sidecar(root, registry):
 
 
 def enrich(registry, root, *, limit=0, refresh=False, dry_run=False, only="all"):
+    if dry_run:
+        return plan_dry_run(registry, root, limit=limit, refresh=refresh, only=only)
     cache = load_cache(root)
     stats = {"checked": 0, "enriched": 0, "conflicts": 0, "no_match": 0,
              "doi_mismatch": 0, "skipped": 0, "errors": 0}
@@ -297,8 +327,7 @@ def enrich(registry, root, *, limit=0, refresh=False, dry_run=False, only="all")
             continue
         identity = record["identity"]
         doi = (identity.get("doi") or "").strip()
-        cache_key = doi or (sr.norm(identity.get("title", ""))[:200] + "|" +
-                            sr.surname_of(identity.get("author", "")))
+        cache_key = cache_key_for(identity)
         cached = cache.get(cache_key)
         if cached and not refresh:
             age = time.time() - cached.get("_timestamp", 0)
@@ -364,8 +393,7 @@ def enrich(registry, root, *, limit=0, refresh=False, dry_run=False, only="all")
                 stats["conflicts"] += 1
         else:
             stats["no_match"] += 1
-    if not dry_run:
-        stats["sidecar_records"] = save_sidecar(root, registry)
+    stats["sidecar_records"] = save_sidecar(root, registry)
     return stats
 
 

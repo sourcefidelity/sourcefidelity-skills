@@ -28,6 +28,7 @@ import audit_tasks as at  # noqa: E402
 import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
+import enrich_registry as er  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
@@ -628,6 +629,50 @@ class PaperPathTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ra.apply_all(folder, task, judgments, "2026-11-18")
             self.assertEqual(open(target, encoding="utf-8").read(), "elsewhere")
+
+
+class EnrichTests(unittest.TestCase):
+    def _registry(self):
+        return {
+            "smith-2020-digital-media": {
+                "identity": {"title": "Digital Media and Cultural Change",
+                             "author": "Smith, J.", "doi": "10.1/abc"},
+                "work_kind": "chapter",
+            },
+            "jones-2021-another-work": {
+                "identity": {"title": "Another Work Title", "author": "Jones, A."},
+                "work_kind": "other",
+            },
+        }
+
+    def test_dry_run_plans_without_calls_or_writes(self):
+        registry = self._registry()
+        before_registry = json.loads(json.dumps(registry))
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            before = sorted(os.listdir(tmp))
+            with mock.patch.object(er, "fetch",
+                                   side_effect=lambda *a, **k: calls.append(a)):
+                stats = er.enrich(registry, tmp, dry_run=True)
+            after = sorted(os.listdir(tmp))
+        self.assertEqual(calls, [])
+        self.assertEqual(before, after)
+        self.assertEqual(registry, before_registry)
+        self.assertEqual(stats["planned"], 2)
+        self.assertEqual(stats["lookups"], 2)
+        self.assertEqual(stats["provider_calls"], 0)
+        self.assertEqual(stats["writes"], 0)
+
+    def test_normal_mode_still_calls_the_provider(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            def boom(*args, **kwargs):
+                calls.append(args)
+                raise RuntimeError("network down")
+            with mock.patch.object(er, "fetch", side_effect=boom):
+                stats = er.enrich(self._registry(), tmp)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(stats["errors"], 2)
 
 
 class ReappraiseApplyTests(unittest.TestCase):
