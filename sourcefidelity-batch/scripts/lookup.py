@@ -14,8 +14,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import evidence_window  # noqa: E402
 
 BLOCK = re.compile(r"^=== PDF p(\d+) \| printed p([^|]*)\|", re.M)
 
@@ -73,8 +79,16 @@ def main():
             if args.max_page and number > args.max_page:
                 start = match.end()
                 continue
-        left = max(0, pos - args.window)
-        right = min(len(text), pos + len(match.group(0)) + args.window)
+        if args.min_page or args.max_page:
+            page_range = [args.min_page or 0, args.max_page or 9999]
+        else:
+            page_range = None
+        bounds = evidence_window.bounded(text, pos, len(match.group(0)),
+                                         args.window, marks, page_range)
+        if bounds is None:
+            start = match.end()
+            continue
+        left, right = bounds
         hits.append({
             "printed_page": printed,
             "pdf_page": pdf,

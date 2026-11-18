@@ -22,6 +22,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import evidence_window  # noqa: E402
 import source_registry  # noqa: E402
 
 PAGE_BLOCK = re.compile(r"^=== PDF p(\d+) \| printed p([^|]*)\|", re.M)
@@ -157,8 +158,10 @@ def windows(text, marks, pages, phrases, width, page_range=None,
         if (pdf, printed) in seen_pages:
             continue
         seen_pages.add((pdf, printed))
-        start = max(0, pos - width)
-        end = min(len(text), pos + len(needle) + width)
+        bounds = evidence_window.bounded(text, pos, len(needle), width, marks, page_range)
+        if bounds is None:
+            continue
+        start, end = bounds
         out.append({
             "query": phrase[:120],
             "printed_page": printed,

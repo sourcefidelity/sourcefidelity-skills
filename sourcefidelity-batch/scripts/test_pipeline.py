@@ -30,6 +30,7 @@ import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import enrich_registry as er  # noqa: E402
+import evidence_window as ew  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
@@ -624,6 +625,53 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class EvidenceWindowTests(unittest.TestCase):
+    TEXT = ("=== PDF p19 | printed p9 |\n"
+            "END OF CHAPTER NINE sentinel text here\n"
+            "=== PDF p20 | printed p10 |\n"
+            "the cited phrase appears in chapter ten\n"
+            "=== PDF p21 | printed p11 |\n"
+            "chapter eleven follows\n")
+
+    def _marks(self):
+        return [(m.start(), int(m.group(1)), m.group(2).strip())
+                for m in mt.PAGE_BLOCK.finditer(self.TEXT)]
+
+    def test_a_window_stops_at_the_previous_page(self):
+        marks = self._marks()
+        pos = self.TEXT.index("cited phrase")
+        bounds = ew.bounded(self.TEXT, pos, len("cited phrase"), 240, marks, [10, 12])
+        self.assertIsNotNone(bounds)
+        start, end = bounds
+        self.assertNotIn("END OF CHAPTER NINE", self.TEXT[start:end])
+
+    def test_a_match_spanning_a_disallowed_boundary_is_dropped(self):
+        marks = self._marks()
+        pos = self.TEXT.index("sentinel text")
+        self.assertIsNone(ew.bounded(self.TEXT, pos, len("sentinel text"), 40,
+                                     marks, [10, 12]))
+
+    def test_task_windows_stay_inside_the_cited_chapter(self):
+        marks = self._marks()
+        out = mt.windows(self.TEXT, marks, {}, ["cited phrase appears in chapter ten"],
+                         240, [10, 12])
+        self.assertTrue(out)
+        self.assertNotIn("END OF CHAPTER NINE", out[0]["text"])
+
+    def test_lookup_cli_stays_inside_the_page_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "text.txt")
+            open(path, "w", encoding="utf-8").write(self.TEXT)
+            proc = subprocess.run(
+                [sys.executable, "-I", os.path.join(HERE, "lookup.py"),
+                 "--text", path, "--query", "cited phrase", "--window", "240",
+                 "--min-page", "10", "--max-page", "12"],
+                capture_output=True, text=True)
+            hits = json.loads(proc.stdout)["hits"]
+        self.assertTrue(hits)
+        self.assertNotIn("END OF CHAPTER NINE", hits[0]["text"])
 
 
 class PrepareFailureTests(unittest.TestCase):
