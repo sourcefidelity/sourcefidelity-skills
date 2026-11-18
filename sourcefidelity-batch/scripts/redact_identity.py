@@ -61,6 +61,10 @@ def mask_ranges(text):
             spans.append((start, end))
     for regex in (EMAIL, LONG_NUMBER):
         for match in regex.finditer(text):
+            value = match.group(0)
+            if regex is LONG_NUMBER and re.fullmatch(
+                    r"(?:19|20)\d{2}(?:19|20)\d{2}", value):
+                continue  # two years run together by a lost dash, not an ID
             spans.append((match.start(), match.end()))
     spans.sort()
     merged = []

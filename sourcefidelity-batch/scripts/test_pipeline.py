@@ -1020,6 +1020,23 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("2023123456", document)
         self.assertIn("in the cohort.", document)
 
+    def test_a_dashless_year_range_is_not_masked_as_an_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["The films (20022016) were released."]])
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            document = self._read(out, "word/document.xml")
+        self.assertIn("20022016", document)
+        self.assertNotIn("********", document)
+
+    def test_a_student_number_is_still_masked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Student 2023123456 in the cohort."]])
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            document = self._read(out, "word/document.xml")
+        self.assertNotIn("2023123456", document)
+
     def test_tier_two_warns_when_no_label_is_found(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = self._docx(tmp, [["An essay with no title block."]])
