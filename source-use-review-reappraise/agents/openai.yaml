@@ -1,0 +1,4 @@
+interface:
+  display_name: "Source-use Review Reappraisal"
+  short_description: "Reassess citations in a completed review after new sources are acquired"
+  default_prompt: "Use $source-use-review-reappraise to reassess the citations in this completed review using the newly supplied sources, updating only the affected entries."

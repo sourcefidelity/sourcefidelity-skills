@@ -1,0 +1,4 @@
+interface:
+  display_name: "Source-use Review"
+  short_description: "Review papers against original sources and APA 7"
+  default_prompt: "Use $source-use-review to review this paper against the supplied academic source folder and produce a complete evidence-based Markdown review."

@@ -1,0 +1,21 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.zcode/
+*.log
+
+# Review working data and student records
+batch-*/
+review-output/
+student-data/
+_sources/
+_work/
+*.docx
+*.pdf
+
+# Local credentials
+.zcode_env
+.env
+.env.*
