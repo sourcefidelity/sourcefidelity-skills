@@ -41,8 +41,23 @@ def _norm_heading(text):
 WORD_RE = re.compile(r"\S+")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(os.path.dirname(HERE), ".venv", "bin", "python")
-PDF_QUALITY = os.path.join(HERE, "pdf_quality.py")
+
+
+def _extraction_layer():
+    """(python, pdf_quality.py) beside this skill, else its review sibling.
+
+    The same file is installed in all three skills, but only the review skill
+    ships pdf_quality.py; resolving the sibling keeps the batch and reappraisal
+    copies from silently falling back to bare pypdf.
+    """
+    skill = os.path.dirname(HERE)
+    candidates = [skill, os.path.join(os.path.dirname(skill), "sourcefidelity-review")]
+    for base in candidates:
+        python = os.path.join(base, ".venv", "bin", "python")
+        quality = os.path.join(base, "scripts", "pdf_quality.py")
+        if os.path.exists(python) and os.path.exists(quality):
+            return python, quality
+    return "", ""
 
 
 def _text(node):
@@ -103,11 +118,12 @@ def pdf_extract(path):
     system interpreter that the review invokes. Returns None when the layer is
     unavailable, so the caller can fall back to bare pypdf.
     """
-    if not (os.path.exists(VENV_PYTHON) and os.path.exists(PDF_QUALITY)):
+    python, quality = _extraction_layer()
+    if not python:
         return None
     try:
         proc = subprocess.run(
-            [VENV_PYTHON, "-I", PDF_QUALITY, "extract", path],
+            [python, "-I", quality, "extract", path],
             capture_output=True, timeout=900,
         )
     except (subprocess.SubprocessError, OSError):
@@ -164,11 +180,13 @@ def count(path, ref_start_block=None, ref_heading=None):
         raise ValueError("use only one of --ref-start-block and --ref-heading")
     lower = path.lower()
     extraction = None
+    pdf_fallback = False
     if lower.endswith(".docx"):
         blocks = docx_blocks(path)
         method = "docx body paragraphs and table text; whitespace-delimited tokens"
     elif lower.endswith(".pdf"):
         blocks, extraction = pdf_blocks(path)
+        pdf_fallback = extraction is None
         engine = (extraction or {}).get("engine") or "pypdf"
         method = f"pdf text lines via {engine}; whitespace-delimited tokens"
     elif lower.endswith((".txt", ".md")):
@@ -247,6 +265,14 @@ def count(path, ref_start_block=None, ref_heading=None):
     total = text_words + ref_words
     if total == 0:
         warnings.append("no extractable text; the file may be image-only or empty")
+        if pdf_fallback:
+            warnings.append(
+                "OCR unavailable: no skill .venv with PyMuPDF, so image-only pages "
+                "are not counted and counts_available is false")
+    elif pdf_fallback:
+        warnings.append(
+            "PDF extraction layer unavailable; counts come from bare pypdf and "
+            "may be partial")
 
     result = {
         "source": path,
@@ -273,6 +299,16 @@ def count(path, ref_start_block=None, ref_heading=None):
         if available is False:
             warnings.append("counts unavailable: too little text was extracted to "
                             "report a word count; report the reason instead of a number")
+    else:
+        result["counts_available"] = False if total == 0 else "unknown"
+        result["counts_complete"] = None
+        result["extraction"] = {
+            "engine": "pypdf fallback",
+            "ocr_pages": [],
+            "missing_text_pages": [],
+            "unavailable_reason": "extraction layer not available "
+                                  "(no skill .venv with PyMuPDF)",
+        }
     return result
 
 

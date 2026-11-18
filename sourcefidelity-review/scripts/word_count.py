@@ -41,8 +41,23 @@ def _norm_heading(text):
 WORD_RE = re.compile(r"\S+")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VENV_PYTHON = os.path.join(os.path.dirname(HERE), ".venv", "bin", "python")
-PDF_QUALITY = os.path.join(HERE, "pdf_quality.py")
+
+
+def _extraction_layer():
+    """(python, pdf_quality.py) beside this skill, else its review sibling.
+
+    The same file is installed in all three skills, but only the review skill
+    ships pdf_quality.py; resolving the sibling keeps the batch and reappraisal
+    copies from silently falling back to bare pypdf.
+    """
+    skill = os.path.dirname(HERE)
+    candidates = [skill, os.path.join(os.path.dirname(skill), "sourcefidelity-review")]
+    for base in candidates:
+        python = os.path.join(base, ".venv", "bin", "python")
+        quality = os.path.join(base, "scripts", "pdf_quality.py")
+        if os.path.exists(python) and os.path.exists(quality):
+            return python, quality
+    return "", ""
 
 
 def _text(node):
@@ -103,11 +118,12 @@ def pdf_extract(path):
     system interpreter that the review invokes. Returns None when the layer is
     unavailable, so the caller can fall back to bare pypdf.
     """
-    if not (os.path.exists(VENV_PYTHON) and os.path.exists(PDF_QUALITY)):
+    python, quality = _extraction_layer()
+    if not python:
         return None
     try:
         proc = subprocess.run(
-            [VENV_PYTHON, "-I", PDF_QUALITY, "extract", path],
+            [python, "-I", quality, "extract", path],
             capture_output=True, timeout=900,
         )
     except (subprocess.SubprocessError, OSError):

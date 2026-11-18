@@ -630,6 +630,19 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class ExtractionLayerTests(unittest.TestCase):
+    def test_a_skill_without_pdf_quality_uses_the_review_sibling(self):
+        with mock.patch.object(wc.os.path, "exists",
+                               side_effect=lambda path: "sourcefidelity-review" in path):
+            python, quality = wc._extraction_layer()
+        self.assertIn("sourcefidelity-review", python)
+        self.assertTrue(quality.endswith("pdf_quality.py"))
+
+    def test_no_layer_when_nothing_is_installed(self):
+        with mock.patch.object(wc.os.path, "exists", return_value=False):
+            self.assertEqual(wc._extraction_layer(), ("", ""))
+
+
 class FetchPolicyTests(unittest.TestCase):
     class Response:
         def __init__(self, status, headers, body, url):

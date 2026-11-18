@@ -761,22 +761,30 @@ def cohort(root, papers_dir):
             })
     s2_observations.sort(key=lambda x: (-len(x["papers"]), x["venue_key"]))
 
-    # S3: heading Jaccard and shared sentences / 8-grams.
+    # S3: heading Jaccard and shared sentences / 8-grams. The normalized sets
+    # are built once per paper; the pairwise loop only intersects them.
     overlap_pairs = []
     ids = [p for p in profiles]
+    prepared = {
+        pid: {
+            "headings": set(profiles[pid].get("headings") or []),
+            "sentences": {re.sub(r"\s+", " ", s.lower()).strip(" .,;:")
+                          for s in profiles[pid].get("sentences") or []},
+            "ngrams": set(profiles[pid].get("ngrams") or []),
+        }
+        for pid in ids
+    }
     for i, a in enumerate(ids):
         for b in ids[i + 1:]:
-            ha, hb = set(profiles[a]["headings"]), set(profiles[b]["headings"])
+            ha, hb = prepared[a]["headings"], prepared[b]["headings"]
             # Only compare heading sets when both papers have enough distinctive
             # headings left; a single shared title would otherwise score 1.0.
             if len(ha) >= MIN_DISTINCTIVE_HEADINGS and len(hb) >= MIN_DISTINCTIVE_HEADINGS:
                 jac = len(ha & hb) / len(ha | hb)
             else:
                 jac = 0.0
-            sa = {re.sub(r"\s+", " ", s.lower()).strip(" .,;:") for s in profiles[a]["sentences"]}
-            sb = {re.sub(r"\s+", " ", s.lower()).strip(" .,;:") for s in profiles[b]["sentences"]}
-            shared_sents = sorted(sa & sb)
-            ga, gb = set(profiles[a]["ngrams"]), set(profiles[b]["ngrams"])
+            shared_sents = sorted(prepared[a]["sentences"] & prepared[b]["sentences"])
+            ga, gb = prepared[a]["ngrams"], prepared[b]["ngrams"]
             shared_grams = sorted(ga & gb)
             fires = jac >= S3_JACCARD or len(shared_sents) >= 1 or len(shared_grams) >= 3
             if fires:
