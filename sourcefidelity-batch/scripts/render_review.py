@@ -152,26 +152,29 @@ def as_records(items, kind):
     return out
 
 
-def render_md(paper, findings, occ_counts, registry, metrics=None):
+def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
+    """The review document. ``mode="short"`` omits counts and the audit trail."""
+    short = mode == "short"
     lines = [f"# Source-use review — {paper['paper_id']}", ""]
     lines.append(f"**Paper:** {findings.get('title', '')} (`{os.path.basename(paper['path'])}`)  ")
     lines.append(f"**Paper ID:** {paper['paper_id']}  ")
     lines.append(f"**Review date:** {findings.get('date', '')}  ")
     lines.append(f"**Status:** {findings.get('status', 'complete')}  ")
     lines.append("")
-    wc = paper["word_counts"]
-    counts_note = ""
-    if wc.get("counts_available") not in (None, True, "unknown"):
-        counts_note = " (counts unavailable; see export)"
-    elif wc.get("counts_available") == "unknown":
-        counts_note = " (counts from the pypdf fallback; may be partial)"
-    lines.append(f"Word counts: total {wc['total']}; text {wc['text']}; "
-                 f"references {wc['references']}.{counts_note}")
-    lines.append("")
-    block = review_metrics.render_block(metrics or {})
-    if block:
-        lines.extend(block)
+    if not short:
+        wc = paper["word_counts"]
+        counts_note = ""
+        if wc.get("counts_available") not in (None, True, "unknown"):
+            counts_note = " (counts unavailable; see export)"
+        elif wc.get("counts_available") == "unknown":
+            counts_note = " (counts from the pypdf fallback; may be partial)"
+        lines.append(f"Word counts: total {wc['total']}; text {wc['text']}; "
+                     f"references {wc['references']}.{counts_note}")
         lines.append("")
+        block = review_metrics.render_block(metrics or {})
+        if block:
+            lines.extend(block)
+            lines.append("")
     lines.append("## Summary of academic-integrity findings")
     lines.append("")
     summary = findings.get("summary", {})
@@ -186,20 +189,26 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append(hl)
     lines.append("")
 
-    lines.append("## 1. Findings, counts, and limitations")
-    lines.append("")
-    lines.append(f"**Citation occurrences.** {occ_counts['total']} inventoried. Supports {occ_counts['supports']}; "
-                 f"Qualified or Mixed {occ_counts['qualified']}; Contradicts {occ_counts['contradicts']}; "
-                 f"Not Supported {occ_counts['not_supported']}; Not Judged {occ_counts['not_judged']}.")
     refs = findings.get("references", [])
-    lines.append(f"**References.** {len(refs)} entries. Works discussed: {len(findings.get('works', []))}. "
-                 f"Uncited substantive passages: {len(findings.get('uncited', []))}. "
-                 f"Missing links: {len(summary.get('hyperlinks_missing', []) or [])}. "
-                 f"Formatting notes: {len(summary.get('formatting_notes', []) or [])}.")
-    if findings.get("limitations"):
+    if short:
+        if findings.get("limitations"):
+            lines.append(f"**Limitations.** {findings['limitations']}")
+            lines.append("")
+    else:
+        lines.append("## 1. Findings, counts, and limitations")
         lines.append("")
-        lines.append(f"**Limitations.** {findings['limitations']}")
-    lines.append("")
+        lines.append(f"**Citation occurrences.** {occ_counts['total']} inventoried. Supports {occ_counts['supports']}; "
+                     f"Qualified or Mixed {occ_counts['qualified']}; Contradicts {occ_counts['contradicts']}; "
+                     f"Not Supported {occ_counts['not_supported']}; Not Judged {occ_counts['not_judged']}.")
+        refs = findings.get("references", [])
+        lines.append(f"**References.** {len(refs)} entries. Works discussed: {len(findings.get('works', []))}. "
+                     f"Uncited substantive passages: {len(findings.get('uncited', []))}. "
+                     f"Missing links: {len(summary.get('hyperlinks_missing', []) or [])}. "
+                     f"Formatting notes: {len(summary.get('formatting_notes', []) or [])}.")
+        if findings.get("limitations"):
+            lines.append("")
+            lines.append(f"**Limitations.** {findings['limitations']}")
+        lines.append("")
 
     lines.append("## 2. Numbered citation entries, in paper order")
     lines.append("")
@@ -267,15 +276,16 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
                      f"Category B ({item.get('type', 'uncited claim')}).")
     lines.append("")
 
-    lines.append("## 5. Unresolved items and audit")
-    lines.append("")
-    audit = findings.get("audit", {})
-    for key in ("checks", "services", "unresolved", "human_decisions"):
-        if audit.get(key):
-            lines.append(f"**{key.replace('_', ' ').title()}.** {audit[key]}")
-            lines.append("")
-    lines.append("The structural audit is complete; it is not proof that every judgment is correct.")
-    lines.append("")
+    if not short:
+        lines.append("## 5. Unresolved items and audit")
+        lines.append("")
+        audit = findings.get("audit", {})
+        for key in ("checks", "services", "unresolved", "human_decisions"):
+            if audit.get(key):
+                lines.append(f"**{key.replace('_', ' ').title()}.** {audit[key]}")
+                lines.append("")
+        lines.append("The structural audit is complete; it is not proof that every judgment is correct.")
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -497,6 +507,8 @@ def main():
     ap.add_argument("--findings", required=True)
     ap.add_argument("--inventory", default="",
                     help="validated inventory.json to reconcile IDs against")
+    ap.add_argument("--mode", default="short", choices=("short", "full"),
+                    help="short report by default; full adds counts, audit and ledger")
     args = ap.parse_args()
     root = os.path.abspath(args.batch)
     work = batch_paths.artifact(os.path.join(root, "_work"), args.paper)
@@ -517,9 +529,10 @@ def main():
     folder = batch_paths.paper_folder(root, args.paper)
     os.makedirs(folder, exist_ok=True)
     open(os.path.join(folder, "review.md"), "w", encoding="utf-8").write(
-        render_md(paper, findings, occ_counts, registry, metrics))
-    open(os.path.join(folder, "ledger.md"), "w", encoding="utf-8").write(
-        render_ledger(paper, findings, occ_counts))
+        render_md(paper, findings, occ_counts, registry, metrics, mode=args.mode))
+    if args.mode == "full":
+        open(os.path.join(folder, "ledger.md"), "w", encoding="utf-8").write(
+            render_ledger(paper, findings, occ_counts))
     json.dump(render_summary(paper, findings, occ_counts, registry, profile, root, metrics),
               open(os.path.join(folder, "summary.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)

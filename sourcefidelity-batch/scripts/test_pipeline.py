@@ -633,6 +633,41 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class ReportModeTests(unittest.TestCase):
+    def _paper(self):
+        return {"paper_id": "P1", "path": "/tmp/a.docx",
+                "word_counts": {"total": 5, "text": 5, "references": 0}}
+
+    def _findings(self):
+        return {"title": "T", "date": "2026-11-18", "status": "complete",
+                "summary": {}, "occurrences": [], "references": [], "works": [],
+                "uncited": [{"id": "U1", "locator": "\u00b63",
+                             "statement": "Uncited claim about media.",
+                             "source_status": "no source", "search": "searched",
+                             "type": "uncited claim"}],
+                "audit": {"checks": "Structural audit detail."},
+                "limitations": "Access limited to one chapter."}
+
+    def test_short_report_omits_counts_and_audit(self):
+        text = rr.render_md(self._paper(), self._findings(),
+                            rr.counts(self._findings()), {}, mode="short")
+        for absent in ("Word counts:", "## 1. Findings", "## 5. Unresolved",
+                       "Structural audit detail."):
+            self.assertNotIn(absent, text)
+
+    def test_short_report_keeps_uncited_statements_and_limitations(self):
+        text = rr.render_md(self._paper(), self._findings(),
+                            rr.counts(self._findings()), {}, mode="short")
+        self.assertIn("Uncited claim about media.", text)
+        self.assertIn("Access limited to one chapter.", text)
+
+    def test_full_report_keeps_counts_and_audit(self):
+        text = rr.render_md(self._paper(), self._findings(),
+                            rr.counts(self._findings()), {}, mode="full")
+        self.assertIn("Word counts:", text)
+        self.assertIn("## 5. Unresolved items and audit", text)
+
+
 class InstallerTests(unittest.TestCase):
     SCRIPT = os.path.join(os.path.dirname(os.path.dirname(HERE)), "install.sh")
     SKILLS = ("sourcefidelity-review", "sourcefidelity-batch", "sourcefidelity-reappraise")
