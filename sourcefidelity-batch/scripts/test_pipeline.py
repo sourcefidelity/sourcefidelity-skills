@@ -624,6 +624,72 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class SourceKeyTests(unittest.TestCase):
+    A = "Smith, J. (2020). Digital Media and Cultural Change. Journal A. doi:10.1000/aaa"
+    B = "Smith, J. (2020). Digital Media and Cultural Comparison. Journal B. doi:10.1000/bbb"
+
+    def test_distinct_dois_with_the_same_prefix_stay_distinct(self):
+        self.assertNotEqual(al.key_from_entry(self.A), al.key_from_entry(self.B))
+
+    def test_the_same_doi_in_different_formats_shares_a_key(self):
+        left = "Smith, J. (2020). Digital Media and Cultural Change. Journal A. doi:10.1000/AAA."
+        right = ("Smith, J. (2020). Digital Media and Cultural Change. Journal A. "
+                 "https://doi.org/10.1000/aaa")
+        self.assertEqual(al.key_from_entry(left), al.key_from_entry(right))
+
+    def test_identifierless_titles_sharing_a_prefix_stay_distinct(self):
+        left = "Smith, J. (2020). Digital Media and Cultural Change. Journal A."
+        right = "Smith, J. (2020). Digital Media and Cultural Comparison. Journal B."
+        self.assertNotEqual(al.key_from_entry(left), al.key_from_entry(right))
+
+    def test_identifierless_formatting_variants_share_a_key(self):
+        left = "Smith, J. (2020). Digital Media and Cultural Change. Journal A."
+        right = "Smith, J. (2020). digital media & cultural change. journal a."
+        self.assertEqual(al.key_from_entry(left), al.key_from_entry(right))
+
+    def test_candidate_sources_keeps_two_works_apart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = os.path.join(tmp, "_work", "P1")
+            os.makedirs(work)
+            json.dump({"paper_id": "P1",
+                       "references": [{"id": "R1", "verbatim": self.A},
+                                      {"id": "R2", "verbatim": self.B}]},
+                      open(os.path.join(work, "candidates.json"), "w",
+                           encoding="utf-8"))
+            works = sr.candidate_sources(tmp)
+        self.assertEqual(len(works), 2, sorted(works))
+        titles = sorted(w["entries"][0]["source"] for w in works.values())
+        self.assertIn(self.A, titles)
+        self.assertIn(self.B, titles)
+
+    def test_canonicalise_will_not_merge_conflicting_dois(self):
+        works = {
+            "smith-2020-digital-media": {"papers": {"P1"}, "citations": 1,
+                                         "entries": [{"source": self.A}]},
+            "smith-2020-digital-media-cultural": {"papers": {"P2"}, "citations": 1,
+                                                  "entries": [{"source": self.B}]},
+        }
+        aliases = sr.canonicalise(works)
+        self.assertEqual(aliases, {})
+        self.assertEqual(len(works), 2)
+
+    def test_canonicalise_merges_variants_of_the_same_doi(self):
+        variant = ("Smith, J. (2020). Digital media and cultural change. Journal A. "
+                   "doi:10.1000/aaa")
+        works = {
+            "smith-2020-digital-media": {"papers": {"P1"}, "citations": 1,
+                                         "entries": [{"source": self.A}]},
+            "smith-2020-digital-culture": {"papers": {"P2"}, "citations": 2,
+                                           "entries": [{"source": variant}]},
+        }
+        aliases = sr.canonicalise(works)
+        self.assertEqual(len(works), 1)
+        primary = next(iter(works))
+        self.assertEqual(aliases.get("smith-2020-digital-media", primary), primary)
+        self.assertEqual(works[primary]["papers"], {"P1", "P2"})
+        self.assertEqual(works[primary]["citations"], 3)
+
+
 class InventoryValidationTests(unittest.TestCase):
     def _cand(self):
         return {

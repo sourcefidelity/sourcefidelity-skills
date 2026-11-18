@@ -13,6 +13,7 @@ number of citing papers, then by total citation count. Works shown not to exist 
 listed separately: there is nothing to download.
 """
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -57,6 +58,40 @@ def summary_status_index(data):
     return idx
 
 
+def reference_title(entry):
+    """The title part of a reference-like string, if it can be split out."""
+    text = re.sub(r"[*_`]", "", entry or "").strip()
+    after = text.split("). ", 1)
+    return after[1].split(". ", 1)[0] if len(after) == 2 else ""
+
+
+def normalize_identifier(value):
+    """Comparison form of a DOI or ISBN: no prefix, separators or case."""
+    text = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "",
+                  (value or "").strip(), flags=re.I)
+    return re.sub(r"[^0-9a-z]+", "", text.casefold())
+
+
+def _short_digest(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+
+
+def discriminator(entry):
+    """A suffix that keeps distinct works apart and variants together.
+
+    Accepts a reference string or a registry entry carrying ``source``.
+    """
+    if isinstance(entry, dict):
+        entry = entry.get("source", "")
+    ids = identifiers(entry)
+    if ids["doi"]:
+        return "d" + _short_digest(normalize_identifier(ids["doi"]))
+    if ids["isbn"]:
+        return "i" + _short_digest(normalize_identifier(ids["isbn"]))
+    title = reference_title(entry).casefold().replace("&", " and ")
+    return "t" + _short_digest(re.sub(r"[^a-z0-9]+", "", title))
+
+
 def key_from_entry(entry):
     """Build a stable source_key from a reference-like string."""
     text = re.sub(r"[*_`]", "", entry or "").strip()
@@ -73,7 +108,8 @@ def key_from_entry(entry):
     if len(after) == 2:
         title = after[1].split(". ", 1)[0]
     words = [w for w in re.findall(r"[A-Za-z]{4,}", title)][:3]
-    return slug("-".join([surname, year] + words)) or "unknown"
+    base = slug("-".join([surname, year] + words)) or "unknown"
+    return f"{base}-{discriminator(entry)}"
 
 
 def identifiers(text):

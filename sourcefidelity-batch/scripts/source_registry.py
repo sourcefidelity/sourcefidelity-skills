@@ -247,13 +247,18 @@ def candidate_sources(root):
 
 
 def canonicalise(works):
-    """Merge variant keys that share author/year/first title words."""
+    """Merge variant keys for the same work, never for conflicting identities.
+
+    The signature is author, year and the entry's identifier (or a digest of
+    its full normalized title), so two works sharing a title prefix stay apart
+    while formatting variants of one DOI still merge.
+    """
     by_sig = defaultdict(list)
     for key, data in works.items():
         first = data["entries"][0] if data["entries"] else {}
         parsed = parse_source(first)
         sig = (norm(parsed["author"]).split(" ")[-1] if parsed["author"] else "",
-               parsed["year"], " ".join(tokens(parsed["title"])[:3]))
+               parsed["year"], acquisition_list.discriminator(first))
         by_sig[sig].append(key)
     aliases = {}
     for sig, keys in by_sig.items():
