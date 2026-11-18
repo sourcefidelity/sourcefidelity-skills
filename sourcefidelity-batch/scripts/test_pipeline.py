@@ -49,6 +49,7 @@ import review_metrics as rm  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
+import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 
 
@@ -717,6 +718,47 @@ class InstallerTests(unittest.TestCase):
                              env={"PATH": "/usr/bin:/bin"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
+
+
+class InterpreterResolutionTests(unittest.TestCase):
+    def _skill(self, tmp, venv=True):
+        skill = os.path.join(tmp, "sourcefidelity-review")
+        os.makedirs(os.path.join(skill, "scripts"))
+        if venv:
+            os.makedirs(os.path.join(skill, ".venv", "bin"))
+            os.symlink(sys.executable, os.path.join(skill, ".venv", "bin", "python"))
+        return skill
+
+    def test_the_skill_venv_is_preferred(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._skill(tmp)
+            result = wp.resolve(skill)
+        self.assertEqual(result["source"], "venv")
+        self.assertTrue(result["python"].endswith(os.path.join(".venv", "bin", "python")))
+        self.assertEqual(result["limitation"], "")
+
+    def test_python312_on_path_is_the_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._skill(tmp, venv=False)
+            with mock.patch.object(wp, "version_ok", return_value=True), \
+                    mock.patch.object(wp.shutil, "which",
+                                      side_effect=lambda name, path=None:
+                                      "/usr/local/bin/python3.12" if name == "python3.12" else None):
+                result = wp.resolve(skill)
+        self.assertEqual(result["source"], "path")
+        self.assertEqual(result["python"], "/usr/local/bin/python3.12")
+
+    def test_no_interpreter_reports_prompt_only_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            skill = self._skill(tmp, venv=False)
+            with mock.patch.object(wp.shutil, "which", return_value=None):
+                result = wp.resolve(skill)
+        self.assertEqual(result["python"], "")
+        self.assertIn("prompt-only", result["limitation"])
+
+    def test_windows_candidate_is_scripts_python_exe(self):
+        candidate = wp.venv_candidates("C:/skills/sourcefidelity-review", "nt")[0]
+        self.assertTrue(candidate.replace("\\", "/").endswith(".venv/Scripts/python.exe"))
 
 
 class OcrBackendTests(unittest.TestCase):

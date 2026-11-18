@@ -24,6 +24,8 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 
 ## Installation
 
+The skills run their scripts with a Python 3.12 interpreter, which the installer builds beside each skill. Do not assume the system `python3`: `scripts/which_python.py --json` reports the interpreter to use, and the skills fall back to prompt-only mode when none qualifies.
+
 Run the installer for your platform from the repository folder:
 
 ```bash

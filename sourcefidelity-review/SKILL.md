@@ -5,6 +5,8 @@ description: Review an entire student paper against original sources for source 
 
 # Source-use review
 
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+
 Read [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md) in full before starting. It is the canonical review specification and can also be used without this skill.
 
 Work from one original paper and the supplied source files or source folder. Establish the exact inputs and a private output location outside application repositories. Use read-only access to inputs; write only review artifacts and necessary temporary extraction/rendering files. Leave applications, stored sources, and existing reports unchanged. If the host exposes bibliographic MCP tools, use them for adapter metadata (identity, edition, link status); otherwise use the configured API credentials via direct HTTP. Use direct HTTP or WebFetch for full-text inspection and non-adapter sources. Never write or print keys in the review, ledger, or logs.

@@ -5,6 +5,8 @@ description: Batch-review multiple student papers and produce a batch report fla
 
 # Source-use review batch
 
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+
 Read [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md) and [BATCH_ADDENDUM.md](BATCH_ADDENDUM.md) in full before starting. The protocol is the canonical review specification; the addendum defines the batch schema, thresholds, and report.
 
 Work from a supplied papers folder and source folder. Establish a private output root outside application repositories, for example `~/Documents/source-use-reviews/batch-YYYYMMDD-HHMM/`. Process `.docx` and `.pdf` papers. Skip `*AI.pdf`, `*.docx.pdf`, Turnitin reports, and non-paper files, and record every skipped file and the reason. A `.pdf` goes through the skill's extraction layer: native text where it is usable, local OCR where it is not. Record `counts_available`, which pages OCR supplied, and any page with no usable text; a PDF page is not a printed page.

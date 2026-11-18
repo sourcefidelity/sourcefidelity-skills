@@ -26,7 +26,7 @@ You are revising a completed review after sources were supplied. This is **not**
 
 1. **Scope is absolute.** Return a judgment only for the C IDs in `entries`. Do not touch other C, R, W or U entries, word counts, or other papers.
 2. **No OCR, no PDF opening, no adapters.** Use the shared extraction and windows. If a window is insufficient, call:
-   `python3 -I ../sourcefidelity-batch/scripts/lookup.py --text <extraction> --pages <dir>/pages.csv --query "phrase" --window 240`
+   `<python> -I ../sourcefidelity-batch/scripts/lookup.py --text <extraction> --pages <dir>/pages.csv --query "phrase" --window 240`
    (relative to this skill directory).
    at most three times per C ID. A lookup miss is not proof of absence.
 3. **Evidence must be quoted** from the supplied text, with the printed page from `pages.csv` or the window. If the copy lacks folios, say so and use the section.

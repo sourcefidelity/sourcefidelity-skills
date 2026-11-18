@@ -44,6 +44,8 @@ A probe is a snapshot. A service that is `ok` at probe time can still rate-limit
 
 ## Efficient pipeline (default)
 
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+
 Run the stages in order. Scripts do everything deterministic; a worker does only adjudication and judgment.
 
 1. `prepare_batch.py --papers DIR --out ROOT` — inventory, text, word counts, candidate citations, ambiguity flags. It writes `_work/<paper>/paper.json` and `candidates.json`. A paper whose flags include `no_reference_heading`, `references_without_citations`, `reference_fused`, `unmatched_quotes`, `reference_no_year`, or two other flags is marked for a separate extraction pass.
@@ -60,7 +62,7 @@ Run the stages in order. Scripts do everything deterministic; a worker does only
 6. `validate_inventory.py --candidates ... --inventory ...` — rejects invented text, un-dispositioned candidates, unresolved IDs and coverage gaps.
 7. `render_review.py --batch ROOT --paper PID --findings FILE --inventory FILE --mode full` — renders `review.md`, `ledger.md` and `summary.json` from the findings, registry and `_work/<paper>/review_metrics.json`. The renderer reconciles the findings' C/R/W/U IDs against the validated inventory and refuses a dropped or invented ID; it also refuses empty findings unless the worker set `inventory_empty: true` with an explicit `status`. The review gets a metrics block before its academic-integrity summary, and `summary.json` gets the optional `review_metrics` object. A paper without a metrics sidecar renders exactly as before.
 8. `validate_batch.py --batch ROOT --strict` — schema, arithmetic, flags, evidence and locator checks.
-9. `test_pipeline.py` — offline regression tests for parsing, PDF structure, page-range windows, match plausibility and edition rejection. Run before changing a shared script: `python3 -I test_pipeline.py`.
+9. `test_pipeline.py` — offline regression tests for parsing, PDF structure, page-range windows, match plausibility and edition rejection. Run before changing a shared script: `<python> -I test_pipeline.py`.
 
 Run 4–5 short workers concurrently. A worker should take minutes, not hours: its input is one task, not the full protocol and not a book.
 
@@ -299,10 +301,10 @@ Flag column values: `—`, `misrepresentation`, `fabrication risk`, or both join
 1. Probe the adapters and write `adapter_status.json` before the first group, per "Adapter pre-flight".
 2. Read every `summary.json`. Validate the required fields. If a JSON is missing or invalid, ask the subagent to repair it once; if it still fails, mark the paper `failed` with the reason.
 2. Recompute the flags from the raw lists using the thresholds; do not rely solely on the subagent's `flags`.
-3. Run `python3 -I scripts/authorship_signals.py cohort <output root> <papers folder>` to produce the cohort text-overlap report and `cohort_signals.json`.
+3. Run `<python> -I scripts/authorship_signals.py cohort <output root> <papers folder>` to produce the cohort text-overlap report and `cohort_signals.json`.
 4. Group source-level patterns by `source_key`. If two entries clearly refer to the same work but have different keys, normalize them and record the merge.
 5. Do not alter the individual review/ledger judgments. If a summary count contradicts its review, record the discrepancy in "Incomplete or limited reviews" and use the review's evidence for the flag, not the summary alone.
-6. Run `python3 -I scripts/acquisition_list.py --batch <output root> --top <N>` and include the result.
+6. Run `<python> -I scripts/acquisition_list.py --batch <output root> --top <N>` and include the result.
 7. Write the batch report only after every scheduled paper has a `complete`, `partial`, or `failed` status. `scripts/batch_report.py` generates it from the summaries and `cohort_signals.json`; check its output rather than retyping numbers.
 8. Preserve the per-paper `summary.json` files as the batch audit trail.
 

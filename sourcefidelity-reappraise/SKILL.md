@@ -5,6 +5,8 @@ description: Reappraise the citations in a completed source-use review after new
 
 # Source-use review reappraisal
 
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+
 Read [REAPPRAISAL_PROTOCOL.md](REAPPRAISAL_PROTOCOL.md) in full before starting, and read [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md) for the assessment rules it invokes. This skill is a revision pass over completed reviews. It is not an independent review and must never be presented as one.
 
 Work from an existing batch output root and a folder of newly supplied sources. Establish which works the new files actually are — by identity, not filename — and then re-assess **only** the citation occurrences that cite those works. Do not re-review unaffected citations, other reference entries, other papers, or the batch's other judgments.
