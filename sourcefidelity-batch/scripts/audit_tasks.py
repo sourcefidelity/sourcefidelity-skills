@@ -13,6 +13,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import paper_index
 import subprocess
 import sys
 
@@ -20,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def paper_ids(root):
-    found = set()
+    found = set(paper_index.paper_ids(root))
     for name in os.listdir(root):
         if not name.startswith("P"):
             continue

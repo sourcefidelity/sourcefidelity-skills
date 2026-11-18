@@ -15,6 +15,7 @@ listed separately: there is nothing to download.
 import argparse
 import hashlib
 import json
+import paper_index
 import pathlib
 import re
 import sys
@@ -220,17 +221,8 @@ def parse_ledger(path):
 
 
 def summary_files(root):
-    """Both Pxxxxxx/summary.json and paper-Pxxxxxx/summary.json layouts."""
-    seen = set()
-    paths = []
-    for pattern in ("P*/summary.json", "paper-*/summary.json"):
-        for path in sorted(root.glob(pattern)):
-            real = path.resolve()
-            if real in seen:
-                continue
-            seen.add(real)
-            paths.append(path)
-    return sorted(paths)
+    """Every paper summary the batch knows about (see paper_index)."""
+    return [pathlib.Path(path) for path in paper_index.summary_paths(str(root))]
 
 
 def from_summaries(root):

@@ -10,6 +10,7 @@ cannot drift from the audit trail. Flags are recomputed from the addendum thresh
 """
 import argparse
 import json
+import paper_index
 import pathlib
 import re
 import subprocess
@@ -83,17 +84,8 @@ def flag_label(mis, fab, auth):
 
 
 def summary_files(root):
-    """Both Pxxxxxx/summary.json and paper-Pxxxxxx/summary.json layouts."""
-    seen = set()
-    paths = []
-    for pattern in ("P*/summary.json", "paper-*/summary.json"):
-        for path in sorted(root.glob(pattern)):
-            real = path.resolve()
-            if real in seen:
-                continue
-            seen.add(real)
-            paths.append(path)
-    return sorted(paths)
+    """Every paper summary the batch knows about (see paper_index)."""
+    return [pathlib.Path(path) for path in paper_index.summary_paths(str(root))]
 
 
 def aggregate_review_metrics(rows):
@@ -221,6 +213,9 @@ def main():
     w(f"**Date:** {__import__('datetime').date.today().isoformat()}  ")
     w(f"**Batch:** `{root}`  ")
     w(f"**Papers processed:** {n} (complete {complete}, partial {partial}, failed {failed})  ")
+    missing = paper_index.missing_summaries(str(root))
+    if missing:
+        w(f"**Scheduled papers without a summary:** {len(missing)} ({', '.join(missing)})  ")
     w("**Independence:** each paper was reviewed in a separate subagent context; this report "
       "aggregates the per-paper summary JSON only.\n")
 

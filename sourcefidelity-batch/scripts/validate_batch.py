@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import paper_index
 import json
 import os
 import sys
@@ -96,7 +97,7 @@ def main():
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args()
     root = os.path.abspath(args.batch)
-    raw = glob.glob(os.path.join(root, "paper-*", "summary.json")) + glob.glob(os.path.join(root, "P*", "summary.json"))
+    raw = paper_index.summary_paths(root)
     files = sorted({os.path.realpath(path) for path in raw})
     if not files:
         print("no paper-*/summary.json found")

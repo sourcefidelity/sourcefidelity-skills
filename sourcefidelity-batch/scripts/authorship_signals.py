@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import paper_index
 import pathlib
 import re
 import statistics
@@ -652,7 +653,7 @@ def find_paper_file(papers_dir, paper_id):
 
 def cohort(root, papers_dir):
     summaries = {}
-    dirs = sorted(set(root.glob("paper-*")) | set(root.glob("P*")))
+    dirs = [pathlib.Path(path) for path in paper_index.paper_dirs(str(root))]
     for d in dirs:
         if d.is_dir():
             s = load_summary(root, d.name)

@@ -32,6 +32,7 @@ import enrich_registry as er  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
+import paper_index as pi  # noqa: E402
 import reappraise_apply as ra  # noqa: E402
 import reappraise_prepare as rp  # noqa: E402
 import record_metrics as rec  # noqa: E402
@@ -622,6 +623,51 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class PaperIndexTests(unittest.TestCase):
+    def _batch(self, tmp, ids, manifest=None):
+        for pid in ids:
+            folder = os.path.join(tmp, pid)
+            os.makedirs(folder)
+            json.dump({"paper_id": pid}, open(os.path.join(folder, "summary.json"), "w"))
+        if manifest is not None:
+            with open(os.path.join(tmp, "batch_manifest.tsv"), "w", encoding="utf-8") as fh:
+                fh.write("paper_id\tparticipant_dir\tfilename\ttotal_words\n")
+                for pid in manifest:
+                    fh.write(f"{pid}\tparticipant-1\t{pid}.docx\t100\n")
+
+    def test_manifest_ids_cover_a_non_participant_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["essay", "P1"], manifest=["essay", "P1"])
+            self.assertEqual(pi.paper_ids(tmp), ["P1", "essay"])
+
+    def test_legacy_layout_without_a_manifest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["P1", "paper-P2"])
+            self.assertEqual(pi.paper_ids(tmp), ["P1", "paper-P2"])
+
+    def test_batch_report_finds_every_manifest_paper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["essay", "P1"], manifest=["essay", "P1"])
+            names = sorted(os.path.basename(os.path.dirname(p)) for p in br.summary_files(pathlib.Path(tmp)))
+        self.assertEqual(names, ["P1", "essay"])
+
+    def test_task_audit_finds_a_non_paper_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["essay"], manifest=["essay"])
+            self.assertIn("essay", at.paper_ids(tmp))
+
+    def test_missing_summaries_lists_a_scheduled_paper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["P1"], manifest=["P1", "P2"])
+            self.assertEqual(pi.missing_summaries(tmp), ["P2"])
+
+    def test_a_scheduled_paper_without_a_summary_is_visible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp, ["P1"], manifest=["P1", "P2"])
+            self.assertEqual([os.path.basename(os.path.dirname(p)) for p in pi.summary_paths(tmp)],
+                             ["P1"])
 
 
 class ReappraiseIdentityTests(unittest.TestCase):

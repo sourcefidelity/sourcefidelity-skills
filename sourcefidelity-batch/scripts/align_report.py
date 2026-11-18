@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import paper_index
 import os
 import shutil
 import sys
@@ -31,12 +32,7 @@ SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 def load_rows(root):
     seen = set()
     rows = []
-    for name in sorted(os.listdir(root)):
-        if not (name.startswith("P") or name.startswith("paper-")):
-            continue
-        path = os.path.join(root, name, "summary.json")
-        if not os.path.exists(path):
-            continue
+    for path in paper_index.summary_paths(root):
         real = os.path.realpath(path)
         if real in seen:
             continue

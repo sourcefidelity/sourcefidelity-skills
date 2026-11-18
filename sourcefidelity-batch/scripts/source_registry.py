@@ -22,6 +22,7 @@ import argparse
 import csv
 import glob
 import json
+import paper_index
 import os
 import re
 import subprocess
@@ -220,7 +221,7 @@ def parse_source(entry):
 
 def summary_sources(root):
     works = defaultdict(lambda: {"papers": set(), "citations": 0, "entries": []})
-    for path in sorted(glob.glob(os.path.join(root, "paper-*", "summary.json"))):
+    for path in paper_index.summary_paths(root):
         try:
             data = json.load(open(path, encoding="utf-8"))
         except ValueError:
@@ -703,7 +704,7 @@ def main():
     args = ap.parse_args()
 
     root = os.path.abspath(args.batch)
-    has_summaries = bool(glob.glob(os.path.join(root, "paper-*", "summary.json")))
+    has_summaries = bool(paper_index.summary_paths(root))
     works = summary_sources(root) if has_summaries else candidate_sources(root)
     aliases = canonicalise(works)
 
