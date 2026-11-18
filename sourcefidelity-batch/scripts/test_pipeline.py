@@ -633,6 +633,23 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class FormattingRemovalTests(unittest.TestCase):
+    def _paper(self):
+        return {"paper_id": "P1", "path": "/tmp/a.docx",
+                "word_counts": {"total": 5, "text": 5, "references": 0}}
+
+    def test_formatting_notes_no_longer_render_or_export(self):
+        findings = {"title": "T", "date": "2026-11-18", "status": "complete",
+                    "summary": {"formatting_notes": ["hyphen instead of en dash"]},
+                    "occurrences": [], "references": [], "works": [], "uncited": [],
+                    "inventory_empty": True}
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
+        summary = rr.render_summary(self._paper(), findings, rr.counts(findings),
+                                    {}, {}, "/tmp")
+        self.assertNotIn("Formatting notes", text)
+        self.assertNotIn("formatting_notes", summary)
+
+
 class ReportModeTests(unittest.TestCase):
     def _paper(self):
         return {"paper_id": "P1", "path": "/tmp/a.docx",

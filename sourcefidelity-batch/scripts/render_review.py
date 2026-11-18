@@ -182,8 +182,6 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
         lines.append("Category A academic integrity violation: " + "; ".join(summary["category_a"]) + ".")
     if summary.get("category_b"):
         lines.append("Category B academic integrity violation: " + "; ".join(summary["category_b"]) + ".")
-    if summary.get("formatting_notes"):
-        lines.append("Formatting notes (not categorised): " + "; ".join(summary["formatting_notes"]) + ".")
     hl = link_line(findings)
     if hl:
         lines.append(hl)
@@ -204,7 +202,7 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
         lines.append(f"**References.** {len(refs)} entries. Works discussed: {len(findings.get('works', []))}. "
                      f"Uncited substantive passages: {len(findings.get('uncited', []))}. "
                      f"Missing links: {len(summary.get('hyperlinks_missing', []) or [])}. "
-                     f"Formatting notes: {len(summary.get('formatting_notes', []) or [])}.")
+                     )
         if findings.get("limitations"):
             lines.append("")
             lines.append(f"**Limitations.** {findings['limitations']}")
@@ -261,12 +259,6 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
     lines.append("")
     lines.append(summary.get("hyperlink_note", "Hyperlink status is recorded per reference entry."))
     lines.append("")
-    if summary.get("formatting_notes"):
-        lines.append("### Formatting notes (not categorised)")
-        lines.append("")
-        for note in summary["formatting_notes"]:
-            lines.append(f"- {note}")
-        lines.append("")
 
     lines.append("## 4. Uncited substantive passages and other attribution concerns")
     lines.append("")
@@ -381,7 +373,6 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
         "works_discussed": len(findings.get("works", [])),
         "uncited_passages": len(findings.get("uncited", [])),
         "category_a_findings": len(findings.get("summary", {}).get("category_a", []) or []),
-        "formatting_notes": len(findings.get("summary", {}).get("formatting_notes", []) or []),
         "category_b": {
             "citation_findings": len(findings.get("summary", {}).get("category_b_citation", []) or []),
             "uncited_passages": len(findings.get("uncited", [])),

@@ -84,7 +84,7 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
   "findings": {
     "paper_id": "P240907", "status": "complete", "date": "2026-11-16",
     "summary": {"category_a": [], "category_b": [], "category_b_citation": [],
-                "formatting_notes": [], "hyperlinks_missing": [], "hyperlink_note": ""},
+                "hyperlinks_missing": [], "hyperlink_note": ""},
     "occurrences": [{"id": "C1", "locator": "P2", "marker": "(Jenkins, 2006)",
                      "statement": "...", "judgment": "Supports",
                      "sources": [{"source_key": "jenkins-2006-convergence-culture",
