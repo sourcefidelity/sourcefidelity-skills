@@ -633,6 +633,39 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class InstallerTests(unittest.TestCase):
+    SCRIPT = os.path.join(os.path.dirname(os.path.dirname(HERE)), "install.sh")
+    SKILLS = ("sourcefidelity-review", "sourcefidelity-batch", "sourcefidelity-reappraise")
+
+    def _run(self, *args, env=None):
+        environment = {**os.environ, **(env or {})}
+        return subprocess.run(["bash", self.SCRIPT, *args], capture_output=True,
+                              text=True, env=environment)
+
+    def test_dry_run_lists_every_skill_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "skills")
+            proc = self._run("--dry-run", "--target", target)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            for skill in self.SKILLS:
+                self.assertIn(f"would install: {skill}", proc.stdout)
+            self.assertFalse(os.path.exists(target))
+
+    def test_a_missing_target_is_explained(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = self._run(env={"HOME": tmp})
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("--target", proc.stderr)
+
+    def test_absent_python_reports_prompt_only_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "skills")
+            proc = self._run("--dry-run", "--target", target,
+                             env={"PATH": "/usr/bin:/bin"})
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("prompt-only", proc.stdout)
+
+
 class RedactionTests(unittest.TestCase):
     CONTENT_TYPES = ('<?xml version="1.0" encoding="UTF-8"?>'
                      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
