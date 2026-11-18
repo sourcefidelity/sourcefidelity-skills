@@ -49,12 +49,16 @@ def load(path, default=None):
         return default
 
 
+BOUNDARY_RE = re.compile(r"(?m)^(?=## |### |\*\*C\d+\b)")
+
+
 def block_span(text, cid):
+    """Span of one C entry, ending at the next heading of any kind."""
     match = re.search(r"(?m)^(?:\*\*|### )" + re.escape(cid) + r"\b[^\n]*", text)
     if not match:
         return None
-    nxt = re.search(r"(?m)^(?:\*\*|### )C\d+\b", text[match.end():])
-    end = match.end() + nxt.start() if nxt else len(text)
+    nxt = BOUNDARY_RE.search(text, match.end())
+    end = nxt.start() if nxt else len(text)
     return match.start(), end
 
 
@@ -72,8 +76,55 @@ def set_judgment(block, new):
     return block.replace("\n\n", f"\n\n{replacement}\n\n", 1)
 
 
+def shift_counts(counts, changes):
+    """Occurrence counts after applying the judgment changes."""
+    counts = dict(counts)
+    for change in changes:
+        old_key = JUDGMENT_KEYS.get(change.get("prior", ""))
+        new_key = JUDGMENT_KEYS.get(change.get("new", ""))
+        if old_key:
+            counts[old_key] = max(0, int(counts.get(old_key, 0) or 0) - 1)
+        if new_key:
+            counts[new_key] = int(counts.get(new_key, 0) or 0) + 1
+    return counts
+
+
+def sync_occurrence_line(text, counts):
+    """Rewrite the visible occurrence counts from the summary they must match."""
+    line = (f"**Citation occurrences.** {int(counts.get('total', 0) or 0)} inventoried. "
+            f"Supports {int(counts.get('supports', 0) or 0)}; "
+            f"Qualified or Mixed {int(counts.get('qualified', 0) or 0)}; "
+            f"Contradicts {int(counts.get('contradicts', 0) or 0)}; "
+            f"Not Supported {int(counts.get('not_supported', 0) or 0)}; "
+            f"Not Judged {int(counts.get('not_judged', 0) or 0)}.")
+    pattern = re.compile(r"(?m)^\*\*Citation occurrences\.\*\*[^\n]*$")
+    if not pattern.search(text):
+        return text
+    return pattern.sub(line, text, count=1)
+
+
+def validate_rewrite(original, updated):
+    """Refuse a rewrite that drops a heading from the review.
+
+    A reappraisal changes judgments and appends log rows; it never removes a
+    section or an entry. Losing a heading means the rewrite is wrong, so raise
+    and let the caller keep the previous file.
+    """
+    def headings(t):
+        return [line.strip() for line in t.splitlines()
+                if line.startswith("## ") or line.startswith("### ")
+                or re.match(r"\*\*C\d+\b", line)]
+
+    present = set(headings(updated))
+    missing = [h for h in headings(original) if h not in present]
+    if missing:
+        raise SystemExit("reappraisal would drop review section(s): "
+                         + "; ".join(missing[:3]))
+
+
 def apply_review(path, task, judgments, day):
     text = open(path, encoding="utf-8").read()
+    original = text
     scoped = {e["id"] for e in task.get("entries", [])}
     log_rows = []
     for change in judgments.get("changes", []):
@@ -143,6 +194,11 @@ def apply_review(path, task, judgments, day):
         text = text[:end].rstrip() + "\n" + rows_text + "\n" + text[end:]
     else:
         text = text.rstrip() + "\n\n" + log + rows_text
+    validate_rewrite(original, text)
+    summary = load(os.path.join(os.path.dirname(path), "summary.json"), {})
+    if summary.get("occurrences"):
+        text = sync_occurrence_line(
+            text, shift_counts(summary["occurrences"], judgments.get("changes", [])))
     open(path, "w", encoding="utf-8").write(text)
     return log_rows
 
@@ -191,13 +247,7 @@ def apply_ledger(path, changes, day):
 def apply_summary(path, task, judgments, day):
     data = load(path, {})
     counts = data.setdefault("occurrences", {})
-    for change in judgments.get("changes", []):
-        old_key = JUDGMENT_KEYS.get(change.get("prior", ""))
-        new_key = JUDGMENT_KEYS.get(change.get("new", ""))
-        if old_key:
-            counts[old_key] = max(0, int(counts.get(old_key, 0)) - 1)
-        if new_key:
-            counts[new_key] = int(counts.get(new_key, 0)) + 1
+    counts.update(shift_counts(counts, judgments.get("changes", [])))
     for key, info in task.get("sources", {}).items():
         aliases = {key}
         aliases.update(info.get("aliases", []) or [])

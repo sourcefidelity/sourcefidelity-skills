@@ -608,6 +608,156 @@ class ReappraiseApplyTests(unittest.TestCase):
         self.assertIn("**Supports.**", text)
         self.assertIn("**Reappraisal (2026-11-17):**", text)
 
+    def test_apply_review_preserves_sections_after_final_entry(self):
+        """SF-01: reappraising the last citation must not truncate the review."""
+        review = (
+            "## 1. Findings, counts, and limitations\n\n"
+            "**Citation occurrences.** 2 inventoried. Supports 1; Qualified or Mixed 0; "
+            "Contradicts 0; Not Supported 0; Not Judged 1.\n\n"
+            "## 2. Numbered citation entries, in paper order\n\n"
+            "### C1 — ¶1 — (Smith, 2020)\n\n"
+            "**Statement:** “first”.\n\n"
+            "**Overall judgment: Supports.**\n\n"
+            "Evidence for the first claim.\n\n"
+            "### C2 — ¶2 — (Jones, 2021)\n\n"
+            "**Statement:** “second”.\n\n"
+            "**Overall judgment: Not Judged.**\n\n"
+            "Old assessment of the second claim.\n\n"
+            "## 3. Bibliography review, in submitted order\n\n"
+            "### R1 — Smith 2020\n\n"
+            "**Identity:** verified.\n\n"
+            "## 4. Uncited substantive passages and other attribution concerns\n\n"
+            "None.\n\n"
+            "## 5. Unresolved items and audit\n\n"
+            "- Audit trail line that must survive.\n")
+        summary = {"occurrences": {"total": 2, "supports": 1, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 1}}
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote",
+                                  "locator": "printed p. 2"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w",
+                                    encoding="utf-8"))
+            ra.apply_review(path, task, judgments, "2026-11-17")
+            text = open(path, encoding="utf-8").read()
+
+        self.assertIn("## 3. Bibliography review, in submitted order", text)
+        self.assertIn("### R1 — Smith 2020", text)
+        self.assertIn("## 5. Unresolved items and audit", text)
+        self.assertIn("Audit trail line that must survive.", text)
+        self.assertIn("**Citation occurrences.** 2 inventoried. Supports 2;", text)
+        self.assertIn("Not Judged 0.", text)
+        self.assertIn("| 2026-11-17 |", text)
+
+    def test_apply_review_keeps_prior_log_rows(self):
+        """SF-01: a second reappraisal must append, not replace, the log."""
+        review = (
+            "## 2. Numbered citation entries, in paper order\n\n"
+            "### C1 — ¶1 — (Smith, 2020)\n\n"
+            "**Overall judgment: Qualified or Mixed.**\n\n"
+            "Body.\n\n"
+            "### C2 — ¶2 — (Jones, 2021)\n\n"
+            "**Overall judgment: Not Judged.**\n\n"
+            "Body.\n\n"
+            "## 3. Bibliography review, in submitted order\n\n"
+            "### R1 — Smith 2020\n\n"
+            "**Identity:** verified.\n\n"
+            "## Reappraisal log\n\n"
+            "| Date | Source | C/R | Prior judgment | New judgment | Evidence | Locator |\n"
+            "| --- | --- | --- | --- | --- | --- | --- |\n"
+            "| 2026-10-01 | smith-2020 | C1 | Supports | Qualified or Mixed | earlier | p. 1 |\n")
+        summary = {"occurrences": {"total": 2, "supports": 0, "qualified": 1,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 1}}
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "later quote",
+                                  "locator": "printed p. 2"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w",
+                                    encoding="utf-8"))
+            ra.apply_review(path, task, judgments, "2026-11-17")
+            text = open(path, encoding="utf-8").read()
+
+        self.assertIn("| 2026-10-01 | smith-2020 | C1 | Supports | Qualified or Mixed | earlier | p. 1 |", text)
+        self.assertIn("| 2026-11-17 |", text)
+        self.assertIn("## 3. Bibliography review, in submitted order", text)
+        self.assertEqual(text.count("| 2026-"), 2)
+
+    def test_apply_review_on_renderer_output_keeps_all_sections(self):
+        """SF-01 acceptance: the final citation, in real renderer output."""
+        paper = {"paper_id": "P1", "path": "/tmp/a.docx",
+                 "word_counts": {"total": 10, "text": 8, "references": 2}}
+        findings = {
+            "title": "T", "date": "2026-11-17", "status": "complete",
+            "summary": {}, "works": [], "uncited": [], "audit": {},
+            "occurrences": [
+                {"id": "C1", "locator": "¶1", "marker": "(Smith, 2020)",
+                 "statement": "first", "judgment": "Supports"},
+                {"id": "C2", "locator": "¶2", "marker": "(Jones, 2021)",
+                 "statement": "second", "judgment": "Not Judged"}],
+            "references": [{"id": "R1", "short": "Smith 2020",
+                            "verbatim": "Smith, J. (2020). A work. Journal."}],
+        }
+        occ_counts = rr.counts(findings)
+        review = rr.render_md(paper, findings, occ_counts, {})
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote",
+                                  "locator": "printed p. 2"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            json.dump({"occurrences": dict(occ_counts)},
+                      open(os.path.join(tmp, "summary.json"), "w", encoding="utf-8"))
+            ra.apply_review(path, task, judgments, "2026-11-17")
+            text = open(path, encoding="utf-8").read()
+
+        self.assertIn("## 3. Bibliography review, in submitted order", text)
+        self.assertIn("### R1 — Smith 2020", text)
+        self.assertIn("## 4. Uncited substantive passages", text)
+        self.assertIn("## 5. Unresolved items and audit", text)
+        self.assertIn("The structural audit is complete", text)
+        self.assertIn("**Citation occurrences.** 2 inventoried. Supports 2;", text)
+        self.assertIn("Not Judged 0.", text)
+
+    def test_apply_review_refuses_to_write_a_truncated_review(self):
+        """SF-01: a rewrite that loses a section must leave the file untouched."""
+        review = ("### C1 — ¶1\n\n**Overall judgment: Not Judged.**\n\nbody\n\n"
+                  "## 3. Bibliography review, in submitted order\n\n### R1 — x\n")
+        task = {"entries": [{"id": "C1", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C1", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            with mock.patch.object(ra, "block_span", return_value=(0, len(review))):
+                with self.assertRaises(SystemExit):
+                    ra.apply_review(path, task, judgments, "2026-11-17")
+            text = open(path, encoding="utf-8").read()
+        self.assertEqual(review, text)
+
+    def test_validate_rewrite_rejects_lost_section(self):
+        before = "## 1. A\n\ntext\n\n## 3. B\n"
+        after = "## 1. A\n\ntext\n"
+        with self.assertRaises(SystemExit):
+            ra.validate_rewrite(before, after)
+
+    def test_validate_rewrite_rejects_lost_bold_entry(self):
+        before = "**C1 — ¶1**\n\n**Supports.**\n\n**C2 — ¶2**\n\n**Not Judged.**\n"
+        after = "**C1 — ¶1**\n\n**Supports.**\n"
+        with self.assertRaises(SystemExit):
+            ra.validate_rewrite(before, after)
+
+    def test_validate_rewrite_allows_body_changes(self):
+        before = "## 1. A\n\n### C1 — x\n\n**Overall judgment: Not Judged.**\n"
+        after = "## 1. A\n\n### C1 — x\n\n**Overall judgment: Supports.**\n"
+        ra.validate_rewrite(before, after)
+
     def test_ledger_updates_r_row_and_pending(self):
         ledger = (
             "| C1 | ¶1 | marker | statement | R1 | old | old | old | none |\n"
