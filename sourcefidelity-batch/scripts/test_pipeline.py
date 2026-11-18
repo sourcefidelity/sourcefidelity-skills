@@ -1241,6 +1241,16 @@ class FetchPolicyTests(unittest.TestCase):
                        resolver=lambda h: {"10.0.0.5"})
         self.assertEqual(out["limitation"], "private_host")
 
+    def test_a_proxy_fake_ip_is_not_a_private_host(self):
+        out = sf.fetch("https://example.com/x", network=self._transport({}, []),
+                       resolver=lambda h: {"198.18.0.7"})
+        self.assertNotEqual(out["limitation"], "private_host")
+
+    def test_a_real_private_address_is_still_refused(self):
+        out = sf.fetch("https://example.com/x", network=self._transport({}),
+                       resolver=lambda h: {"192.168.1.5"})
+        self.assertEqual(out["limitation"], "private_host")
+
     def test_rechecks_each_redirect(self):
         calls = []
         routes = {"https://example.com/a": (302, {"Location": "http://127.0.0.1/b"}, b"")}

@@ -26,6 +26,10 @@ import sys
 import urllib.parse
 import urllib.request
 
+# Local proxy clients (Clash and similar) answer DNS with addresses in this
+# IANA benchmark range. It is not a private network, so it is not an SSRF path.
+PROXY_FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
+
 ALLOWED_TYPES = ("text/html", "text/plain", "application/xhtml+xml",
                  "application/pdf")
 MAX_REDIRECTS = 5
@@ -61,6 +65,8 @@ def refusal(url, resolver):
         except OSError:
             return "unresolvable_host"
     for address in addresses:
+        if address in PROXY_FAKE_IP:
+            continue  # proxy fake-IP, not a reachable LAN address
         if (address.is_private or address.is_loopback or address.is_link_local
                 or address.is_reserved or address.is_multicast
                 or address.is_unspecified):
