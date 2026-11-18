@@ -170,3 +170,50 @@ supersedes that reference with a verifiable commit.
 - Classification-only providers (HathiTrust, LoC catalogue, Open Library,
   Google Books) never supply quotation windows; they tell the report whether a
   work is identified and where a legal copy exists.
+
+## Discipline-general architecture (2026-11-18 revision)
+
+The skill is published on GitHub for instructors in any discipline, so the
+defaults must be discipline-neutral. Film-studies providers are one optional
+pack, never the core.
+
+**Core, enabled by default, keyless**
+
+| Provider | Role |
+|---|---|
+| Crossref | DOI and article identity (already used) |
+| OpenAlex | identity plus OA locations, subsuming Unpaywall, arXiv and DOAJ |
+| OpenAIRE | European OA aggregator and repository links |
+| Zenodo | OA repository records and files (keyless REST) |
+| Internet Archive (fulltext, catalogue, Scholar/fatcat) | books, periodicals, OA scholarship |
+| Wayback Machine | cited pages that moved or died |
+| Open Library, Google Books, HathiTrust bibliographic | book identity; HathiTrust classifies full-view vs search-only |
+| Project Gutenberg, Wikisource | public-domain full text |
+| Generic OAI-PMH harness | one adapter, any institutional repository the instructor names; OAI-PMH metadata is open and anonymous (e.g. https://ddd.uab.cat/oai2d), so a course can add its library endpoint without code |
+
+**Optional packs, off unless the syllabus enables them**
+
+| Pack | Providers | Access |
+|---|---|---|
+| Law | CourtListener | keyless |
+| Economics | RePEc/IDEAS | keyless JSON |
+| Latin America | SciELO ArticleMeta | keyless |
+| Medicine and life sciences | Europe PMC, PubMed Central via OAI-PMH | keyless |
+| Preprints (STEM, social science) | bioRxiv/medRxiv, OSF preprint servers | keyless |
+| Education | ERIC | keyless |
+| Film and media | Lantern/MHDL, Media History Archive, BnF Gallica, Europeana | keyless |
+| US history and culture | Library of Congress, Chronicling America, DPLA | keyless; DPLA needs a free self-service key |
+| Aggregators | CORE, BASE, Semantic Scholar, Trove | key or registration; disabled by default |
+
+**Configuration.** One `retrieval.toml` in the skill directory: enabled core
+providers, enabled packs, optional key environment variables, contact email for
+polite user agents (required by Crossref and Unpaywall-style etiquette), and a
+per-instructor OAI-PMH endpoint list. Any provider that is not enabled or not
+reachable becomes a recorded limitation, never a silent absence.
+
+**Why not just ship every provider enabled.** A 70-paper batch with all
+adapters on would exceed every public rate limit at once; the plan's pacing
+layer enforces per-provider budgets, and the default set is the one that works
+without registration. An instructor who teaches law enables the law pack; one
+who teaches film enables the film pack. Nothing in the core assumes a
+discipline.
