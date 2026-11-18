@@ -198,16 +198,22 @@ def match_refs(citation, refs):
         source = ref.get("verbatim", "")
         surname = source_registry.surname_of(parsed["author"])
         score = 0
+        named = False
         if surname and surname in normalized_marker:
             score += 2
+            named = True
         elif surname and any(source_registry.close_surname(word, surname)
                              for word in marker_words):
             score += 1
+            named = True
         if year and year == parsed["year"]:
             score += 2
         if source_registry.norm(source)[:40] and source_registry.norm(source)[:40] in normalized_marker:
             score += 1
-        if score >= 2:
+            named = True
+        # A shared year alone must not bind a citation to a work: two works
+        # from one year would otherwise lend each other's text as evidence.
+        if named and score >= 2:
             scored.append((score, ref.get("id")))
     scored.sort(reverse=True)
     return [rid for _, rid in scored[:2]]

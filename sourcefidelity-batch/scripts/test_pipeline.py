@@ -820,6 +820,21 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("prompt-only", proc.stdout)
 
 
+class TaskMatchingTests(unittest.TestCase):
+    REFS = [
+        {"id": "R2", "verbatim": "Hardy, J. (2010). Dynamics and varieties of cross-media promotion. In Cross-media promotion (pp. 3-32). Peter Lang."},
+        {"id": "R4", "verbatim": "York, A.E. (2010). From chick flicks to millennial blockbusters. The Journal of Popular Culture, 43(1), 3-25."},
+    ]
+
+    def test_a_shared_year_does_not_bind_another_work(self):
+        citation = {"marker": "Hardy’s (2010)", "sentence": "Drawing on Hardy’s (2010) idea.", "year": "2010"}
+        self.assertEqual(mt.match_refs(citation, self.REFS), ["R2"])
+
+    def test_a_surname_still_binds(self):
+        citation = {"marker": "(York, 2010)", "sentence": "Franchising (York, 2010).", "year": "2010"}
+        self.assertEqual(mt.match_refs(citation, self.REFS), ["R4"])
+
+
 class ScriptBootstrapTests(unittest.TestCase):
     SCRIPTS = ("source_registry.py", "batch_report.py", "acquisition_list.py",
                "validate_batch.py", "audit_tasks.py", "align_report.py")
