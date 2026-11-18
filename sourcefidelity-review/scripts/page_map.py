@@ -127,7 +127,11 @@ def read_pages(path):
 
 
 def infer_offset(pages):
-    """Return {arabic_offset, coverage, method} for a constant printed-page offset."""
+    """Return {arabic_offset, coverage, corroborated, method} for an offset.
+
+    Coverage is the share of observed arabic folios that agree with the mode.
+    One observation agrees with itself, so corroboration needs at least two.
+    """
     deltas = {}
     for page in pages:
         if page.get("folio_kind") == "arabic" and page.get("folio_value"):
@@ -135,30 +139,47 @@ def infer_offset(pages):
             deltas[delta] = deltas.get(delta, 0) + 1
     total = sum(deltas.values())
     if not total:
-        return {"arabic_offset": None, "coverage": 0.0, "method": "no arabic folios"}
+        return {"arabic_offset": None, "coverage": 0.0, "observed": 0,
+                "corroborated": False, "method": "no arabic folios"}
     delta, count = max(deltas.items(), key=lambda kv: kv[1])
+    corroborated = count >= 2 and count / total >= 0.8
     return {
         "arabic_offset": delta,
         "coverage": round(count / total, 3),
+        "observed": total,
+        "corroborated": corroborated,
         "method": f"mode of pdf_page - folio over {total} folios",
         "deltas": dict(sorted(deltas.items())),
     }
 
 
+def assign_printed(pages, offset):
+    """Label each page's printed number and where it came from.
+
+    A folio visible on the page always wins. An inferred number is written only
+    when the offset is corroborated; ambiguous pages stay explicitly unmapped.
+    """
+    reliable = bool(offset.get("corroborated")) and offset.get("arabic_offset") is not None
+    shift = offset.get("arabic_offset") or 0
+    for page in pages:
+        has_folio = bool(page.get("folio")) and page.get("folio_kind") in ("arabic", "roman")
+        if has_folio:
+            page["printed"] = page["folio"]
+            page["printed_source"] = "observed"
+        elif reliable:
+            candidate = page["pdf_page"] - shift
+            page["printed"] = str(candidate) if candidate >= 1 else ""
+            page["printed_source"] = "inferred" if page["printed"] else "unmapped"
+        else:
+            page["printed"] = ""
+            page["printed_source"] = "unmapped"
+    return pages
+
+
 def build(path):
     pages = read_pages(path)
     offset = infer_offset(pages)
-    reliable = offset["arabic_offset"] is not None and offset["coverage"] >= 0.8
-    for page in pages:
-        if reliable:
-            candidate = page["pdf_page"] - offset["arabic_offset"]
-            page["printed"] = str(candidate) if candidate >= 1 else ""
-        elif page.get("folio_kind") == "arabic" and page.get("folio_value"):
-            page["printed"] = str(page["folio_value"])
-        elif page.get("folio_kind") == "roman":
-            page["printed"] = page["folio"]
-        else:
-            page["printed"] = ""
+    assign_printed(pages, offset)
     return {
         "pdf": path,
         "sha256": sha256_file(path),

@@ -628,6 +628,47 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class PageMapOffsetTests(unittest.TestCase):
+    def _page(self, pdf, folio, kind="arabic"):
+        return {"pdf_page": pdf, "folio": "" if folio is None else str(folio),
+                "folio_kind": kind if folio is not None else "none",
+                "folio_value": folio}
+
+    def test_one_folio_is_not_corroboration(self):
+        offset = page_map.infer_offset([self._page(1, 5)])
+        self.assertFalse(offset["corroborated"])
+
+    def test_a_stable_offset_is_corroborated(self):
+        pages = [self._page(n, n + 4) for n in range(1, 6)]
+        offset = page_map.infer_offset(pages)
+        self.assertTrue(offset["corroborated"])
+        self.assertEqual(offset["coverage"], 1.0)
+
+    def test_a_pagination_reset_is_not_corroborated(self):
+        pages = [self._page(1, 10), self._page(2, 11), self._page(3, 12),
+                 self._page(4, 1), self._page(5, 2)]
+        offset = page_map.infer_offset(pages)
+        self.assertFalse(offset["corroborated"])
+
+    def test_observed_folios_survive_and_inferred_pages_are_labelled(self):
+        pages = [self._page(1, 5), self._page(2, None), self._page(3, 7)]
+        out = page_map.assign_printed(pages, {"arabic_offset": -4,
+                                              "corroborated": True})
+        self.assertEqual(out[0]["printed"], "5")
+        self.assertEqual(out[0]["printed_source"], "observed")
+        self.assertEqual(out[1]["printed"], "6")
+        self.assertEqual(out[1]["printed_source"], "inferred")
+        self.assertEqual(out[2]["printed"], "7")
+
+    def test_an_uncorroborated_offset_leaves_unmapped_pages_empty(self):
+        pages = [self._page(1, 5), self._page(2, None)]
+        out = page_map.assign_printed(pages, {"arabic_offset": -4,
+                                              "corroborated": False})
+        self.assertEqual(out[0]["printed"], "5")
+        self.assertEqual(out[1]["printed"], "")
+        self.assertEqual(out[1]["printed_source"], "unmapped")
+
+
 class WordCountProvenanceTests(unittest.TestCase):
     def test_an_unavailable_extraction_layer_is_reported(self):
         with mock.patch.object(wc, "pdf_blocks", return_value=([], None)):
