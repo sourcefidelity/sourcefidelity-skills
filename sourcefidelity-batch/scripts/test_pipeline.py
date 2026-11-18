@@ -15,6 +15,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stdout
 from unittest import mock
 
@@ -38,6 +39,7 @@ import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
 import paper_index as pi  # noqa: E402
 import reappraise_apply as ra  # noqa: E402
+import redact_identity as ri  # noqa: E402
 import reappraise_prepare as rp  # noqa: E402
 import record_metrics as rec  # noqa: E402
 import render_review as rr  # noqa: E402
@@ -629,6 +631,117 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class RedactionTests(unittest.TestCase):
+    CONTENT_TYPES = ('<?xml version="1.0" encoding="UTF-8"?>'
+                     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                     '<Default Extension="xml" ContentType="application/xml"/></Types>')
+    RELS = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+            'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
+
+    def _docx(self, tmp, paragraphs, creator="Michael High",
+              modified_by="Administrator"):
+        path = os.path.join(tmp, "paper.docx")
+        body = "".join(
+            "<w:p>" + "".join(f'<w:r><w:t xml:space="preserve">{chunk}</w:t></w:r>'
+                              for chunk in para) + "</w:p>"
+            for para in paragraphs)
+        document = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+                    '2006/main"><w:body>' + body + "</w:body></w:document>")
+        core = ('<?xml version="1.0" encoding="UTF-8"?>'
+                '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/'
+                'metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                'xmlns:dcterms="http://purl.org/dc/terms/">'
+                f"<dc:creator>{creator}</dc:creator>"
+                f"<cp:lastModifiedBy>{modified_by}</cp:lastModifiedBy>"
+                "<dcterms:created>2026-01-01T00:00:00Z</dcterms:created>"
+                "</cp:coreProperties>")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml", self.CONTENT_TYPES)
+            archive.writestr("_rels/.rels", self.RELS)
+            archive.writestr("word/document.xml", document)
+            archive.writestr("docProps/core.xml", core)
+        return path
+
+    def _read(self, path, member):
+        with zipfile.ZipFile(path) as archive:
+            return archive.read(member).decode("utf-8")
+
+    def test_tier_one_strips_metadata_and_leaves_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Name: Michael High"], ["Body sentence stays."]])
+            out = os.path.join(tmp, "copy.docx")
+            report = ri.redact_file(source, out, tier=1)
+            core = self._read(out, "docProps/core.xml")
+            document = self._read(out, "word/document.xml")
+            original = self._read(source, "docProps/core.xml")
+        self.assertNotIn("Michael High", core)
+        self.assertNotIn("Administrator", core)
+        self.assertIn("Body sentence stays.", document)
+        self.assertIn("Michael High", original)
+        self.assertEqual(report["tier"], 1)
+
+    def test_tier_two_masks_a_labelled_identity_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Name: Michael High"], ["Body stays."]])
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            document = self._read(out, "word/document.xml")
+        self.assertNotIn("Michael", document)
+        self.assertIn("Name: " + "*" * len("Michael High"), document)
+        self.assertIn("Body stays.", document)
+
+    def test_tier_two_masks_a_name_split_across_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Name: Michael ", "High"]])
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            document = self._read(out, "word/document.xml")
+        self.assertNotIn("Michael", document)
+        self.assertNotIn(">High<", document)
+
+    def test_tier_two_masks_email_and_long_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Email: mh@example.com"],
+                                      ["Student 2023123456 in the cohort."]])
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            document = self._read(out, "word/document.xml")
+        self.assertNotIn("mh@example.com", document)
+        self.assertNotIn("2023123456", document)
+        self.assertIn("in the cohort.", document)
+
+    def test_tier_two_warns_when_no_label_is_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["An essay with no title block."]])
+            out = os.path.join(tmp, "copy.docx")
+            report = ri.redact_file(source, out, tier=2)
+        self.assertTrue(any("label" in w.lower() for w in report["warnings"]))
+
+    def test_pdf_masking_preserves_the_page_count(self):
+        import pymupdf
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "paper.pdf")
+            doc = pymupdf.open()
+            page = doc.new_page()
+            page.insert_text((72, 72), "Name: Michael High")
+            page.insert_text((72, 100), "The argument is clear.")
+            doc.save(source)
+            doc.close()
+            out = os.path.join(tmp, "copy.pdf")
+            report = ri.redact_file(source, out, tier=2)
+            masked = pymupdf.open(out)
+            text = "\n".join(page.get_text() for page in masked)
+            pages = masked.page_count
+            masked.close()
+        self.assertNotIn("Michael", text)
+        self.assertIn("argument", text)
+        self.assertEqual(pages, 1)
+        self.assertFalse(any("unavailable" in item for item in report["limitations"]))
 
 
 class ExtractionReuseTests(unittest.TestCase):
