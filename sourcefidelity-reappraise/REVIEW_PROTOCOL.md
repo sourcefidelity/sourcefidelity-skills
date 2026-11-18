@@ -324,7 +324,7 @@ Deliver a Markdown review and companion ledger.
 
 ### Word counts
 
-Every review reports three counts from the original paper at the top of the summary:
+Every review reports three counts from the original paper in the scope block at the top:
 
 - **Total:** all body text in the paper file, including title, headings, in-text citations, table text, and the reference list. Exclude headers, footers, footnotes, endnotes, comments, and text boxes.
 - **Text:** all words before the reference-list heading, including title, headings, in-text citations, and table text.
@@ -348,12 +348,16 @@ Only include a category line when at least one confirmed finding exists. Do not 
 
 ### Report order
 
-1. **Summary of academic-integrity findings.** Open with the word-count line, then the Category A/B lines and the hyperlink line. Use this block:
+1. **Review scope and counts, then the summary.** Open with the scope block: word counts; occurrences, References, works discussed, uncited passages and missing hyperlinks; and the report's review time and input/output tokens when metrics were recorded (`not recorded`, never zero, when they were not). The scope block carries counts only and uses no findings language. Then the academic-integrity summary. Use these blocks:
 
 ```markdown
-## Summary of academic-integrity findings
+## Review scope and counts
 
 Word counts: total N; text N; references N.
+Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not Supported N; Not Judged N). References: N entries. Works discussed: N. Uncited passages: N. Hyperlinks missing: N.
+Review time: Nm Ns; tokens: N in / N out.
+
+## Summary of academic-integrity findings
 
 Category A academic integrity violation: [confirmed issue types, semicolon-separated] (e.g., [author/source, short quoted phrase, p. X]).
 Category B academic integrity violation: [confirmed issue types, semicolon-separated] (e.g., [author/source, short quoted phrase, p. X]).

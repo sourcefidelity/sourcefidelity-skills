@@ -168,13 +168,50 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
             counts_note = " (counts unavailable; see export)"
         elif wc.get("counts_available") == "unknown":
             counts_note = " (counts from the pypdf fallback; may be partial)"
-        lines.append(f"Word counts: total {wc['total']}; text {wc['text']}; "
-                     f"references {wc['references']}.{counts_note}")
-        lines.append("")
+        if counts_note:
+            lines.append(counts_note.strip())
+            lines.append("")
         block = review_metrics.render_block(metrics or {})
         if block:
             lines.extend(block)
             lines.append("")
+    wc = paper["word_counts"]
+    summary = findings.get("summary", {})
+    lines.append("## Review scope and counts")
+    lines.append("")
+    lines.append(f"Word counts: total {wc.get('total', 0)}; text {wc.get('text', 0)}; "
+                 f"references {wc.get('references', 0)}.")
+    lines.append(f"Occurrences: {occ_counts['total']} inventoried "
+                 f"(Supports {occ_counts['supports']}; Qualified or Mixed "
+                 f"{occ_counts['qualified']}; Contradicts {occ_counts['contradicts']}; "
+                 f"Not Supported {occ_counts['not_supported']}; "
+                 f"Not Judged {occ_counts['not_judged']}). References: "
+                 f"{len(findings.get('references', []))} entries. Works discussed: "
+                 f"{len(findings.get('works', []))}. Uncited passages: "
+                 f"{len(findings.get('uncited', []))}. "
+                 f"Hyperlinks missing: "
+                 f"{len(summary.get('hyperlinks_missing', []) or [])}.")
+    seconds = 0
+    tokens_in = tokens_out = 0
+    have_time = have_tokens = False
+    for run in (metrics or {}).get("runs", []):
+        if run.get("duration_ms"):
+            seconds += int(run["duration_ms"]) / 1000
+            have_time = True
+        usage = run.get("usage") or {}
+        if usage.get("input_tokens") is not None:
+            tokens_in += int(usage.get("input_tokens") or 0)
+            have_tokens = True
+        if usage.get("output_tokens") is not None:
+            tokens_out += int(usage.get("output_tokens") or 0)
+            have_tokens = True
+    minutes, remainder = divmod(int(seconds), 60)
+    time_text = (f"{minutes}m {remainder}s" if minutes else f"{remainder}s") \
+        if have_time else "not recorded"
+    token_text = f"{tokens_in:,} in / {tokens_out:,} out" if have_tokens \
+        else "not recorded"
+    lines.append(f"Review time: {time_text}; tokens: {token_text}.")
+    lines.append("")
     lines.append("## Summary of academic-integrity findings")
     lines.append("")
     summary = findings.get("summary", {})

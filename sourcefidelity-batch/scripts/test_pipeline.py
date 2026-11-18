@@ -667,10 +667,12 @@ class ReportModeTests(unittest.TestCase):
                 "audit": {"checks": "Structural audit detail."},
                 "limitations": "Access limited to one chapter."}
 
-    def test_short_report_omits_counts_and_audit(self):
+    def test_short_report_keeps_a_scope_block_and_omits_the_audit(self):
         text = rr.render_md(self._paper(), self._findings(),
                             rr.counts(self._findings()), {}, mode="short")
-        for absent in ("Word counts:", "## 1. Findings", "## 5. Unresolved",
+        self.assertIn("## Review scope and counts", text)
+        self.assertIn("Word counts: total 5", text)
+        for absent in ("## 1. Findings", "## 5. Unresolved",
                        "Structural audit detail."):
             self.assertNotIn(absent, text)
 
@@ -679,6 +681,34 @@ class ReportModeTests(unittest.TestCase):
                             rr.counts(self._findings()), {}, mode="short")
         self.assertIn("Uncited claim about media.", text)
         self.assertIn("Access limited to one chapter.", text)
+
+    def test_scope_block_precedes_the_summary_and_reports_cost(self):
+        metrics = {"runs": [{"duration_ms": 65000,
+                             "usage": {"input_tokens": 1200, "output_tokens": 300}}]}
+        text = rr.render_md(self._paper(), self._findings(),
+                            rr.counts(self._findings()), {}, metrics, mode="short")
+        self.assertLess(text.index("## Review scope and counts"),
+                        text.index("## Summary of academic-integrity findings"))
+        self.assertIn("Review time: 1m 5s; tokens: 1,200 in / 300 out.", text)
+
+    def test_scope_block_says_not_recorded_without_metrics(self):
+        text = rr.render_md(self._paper(), self._findings(),
+                            rr.counts(self._findings()), {}, mode="short")
+        self.assertIn("Review time: not recorded; tokens: not recorded.", text)
+
+    def test_bare_year_parentheticals_are_not_citations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            open(path, "w", encoding="utf-8").write(
+                "Resident Evil: Welcome to Raccoon City (2021) is a film.\n"
+                "Smith (2020) argues a point. Jones supports it (Jones, 2021).\n")
+            data = ec.build(path, "P1")
+        markers = [c["marker"] for c in data["citations"]]
+        self.assertNotIn("(2021)", markers)
+        self.assertNotIn("(2020)", markers)
+        self.assertIn("(Jones, 2021)", markers)
+        mentions = [m["marker"] for m in data["year_mentions"]]
+        self.assertIn("(2021)", mentions)
 
     def test_full_report_keeps_counts_and_audit(self):
         text = rr.render_md(self._paper(), self._findings(),

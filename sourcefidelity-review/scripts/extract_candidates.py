@@ -146,6 +146,7 @@ def build(path, paper_id):
             })
 
     citations = []
+    year_mentions = []
     for p in paragraphs[: heading_index if heading_index is not None else len(paragraphs)]:
         text = p["text"]
         taken = []
@@ -155,9 +156,13 @@ def build(path, paper_id):
             taken.append((start, end))
             inside = text[start:end]
             inner = inside.strip("()[]").strip()
+            if cite_kind == "year_only":
+                year_mentions.append({"paragraph_id": p["id"], "marker": marker})
+                return  # a bare year is a film date or expression, not a citation
             if cite_kind in ("parenthetical", "bracket") and re.fullmatch(
                     r"\s*(?:" + YEAR + r")\s*(?:,\s*p{1,2}\.\s*[\d–\-]+)?\s*", inner):
-                cite_kind, confidence = "year_only", "low"
+                year_mentions.append({"paragraph_id": p["id"], "marker": marker})
+                return  # only a year inside parentheses: not an author-date citation
             citations.append({
                 "id": f"X{len(citations) + 1}",
                 "paragraph_id": p["id"],
@@ -221,6 +226,7 @@ def build(path, paper_id):
     ambiguity = ambiguity_for(paragraphs, references, citations)
     return {
         "paper_id": paper_id,
+        "year_mentions": year_mentions,
         "paper_path": os.path.abspath(path),
         "kind": kind,
         "words": sum(p["words"] for p in paragraphs),
@@ -228,6 +234,7 @@ def build(path, paper_id):
         "reference_heading": paragraphs[heading_index]["text"] if heading_index is not None else "",
         "references": references,
         "citations": citations,
+        "year_mentions": year_mentions,
         "quotes": quotes,
         "uncited_candidates": uncited,
         "ambiguity": ambiguity,
