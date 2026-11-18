@@ -36,6 +36,7 @@ NARRATIVE_RE = re.compile(
     r"(?:\s+(?:and|&|et\s+al\.?)\s+[A-Z][A-Za-z'’\-]+|\s+[A-Z][A-Za-z'’\-]+){0,5})"
     r"(?:'s|’s)?\s*\((" + YEAR + r")(?:,\s*(p{1,2}\.\s*[\d–\-]+))?\)")
 YEAR_ONLY_RE = re.compile(r"\(\s*(" + YEAR + r")\s*\)")
+ETAL_RE = re.compile(r"\b([A-Z][A-Za-z'’\-]+)\s+et\s+al\.?\s*\((" + YEAR + r")\)")
 PAGE_RE = re.compile(r"\b(p{1,2}\.\s*[\d–\-]+)")
 QUOTE_RE = re.compile(r"[“\"]([^”\"]{25,600})[”\"]")
 SENT_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z“\"(])")
@@ -111,6 +112,19 @@ def ambiguity_for(paragraphs, references, citations):
     return {"flags": sorted(set(flags)), "score": len(set(flags)), "needs_extraction_pass": needs}
 
 
+def reference_keys(references):
+    """(surname, year, R id) for matching a narrative citation to its entry."""
+    keys = []
+    for ref in references:
+        text = ref.get("verbatim", "")
+        year = YEAR_RE.search(text)
+        head = text.split("(", 1)[0]
+        for name in re.findall(r"[A-Z][A-Za-z'’\-]{1,}", head):
+            keys.append({"surname": name.casefold(),
+                         "year": year.group(0) if year else "", "id": ref["id"]})
+    return keys
+
+
 def build(path, paper_id):
     raw, kind = blocks_for(path)
     paragraphs = []
@@ -145,6 +159,7 @@ def build(path, paper_id):
                 "flags": [],
             })
 
+    ref_keys = reference_keys(references)
     citations = []
     year_mentions = []
     for p in paragraphs[: heading_index if heading_index is not None else len(paragraphs)]:
@@ -163,6 +178,32 @@ def build(path, paper_id):
                     r"\s*(?:" + YEAR + r")\s*(?:,\s*p{1,2}\.\s*[\d–\-]+)?\s*", inner):
                 year_mentions.append({"paragraph_id": p["id"], "marker": marker})
                 return  # only a year inside parentheses: not an author-date citation
+            if cite_kind in ("parenthetical", "bracket") and re.fullmatch(
+                    r"(?:19|20)\d{2}(?:19|20)\d{2}", inner.replace(" ", "")):
+                # Two years run together by a lost dash, e.g. "(20022016)".
+                year_mentions.append({"paragraph_id": p["id"], "marker": marker})
+                return
+            match_id = ""
+            flags = []
+            if cite_kind == "narrative":
+                name_part = marker.split("(", 1)[0]
+                name_part = re.sub(r"[’']s\s*$", "", name_part.strip())
+                words = re.findall(r"[A-Z][A-Za-z'’\-]+", name_part)
+                year = YEAR_RE.search(inner)
+                year = year.group(0) if year else ""
+                lowered = {word.casefold() for word in words}
+                match = next((key for key in ref_keys
+                              if key["surname"] in lowered
+                              and (not year or key["year"] == year)), None)
+                if match:
+                    match_id = match["id"]
+                elif len(words) > 1 or re.search(r"\b(?:of|to|the|and|in|on|de|van)\b",
+                                                 name_part, re.I):
+                    year_mentions.append({"paragraph_id": p["id"], "marker": marker})
+                    return  # a title followed by its year, not a citation
+                else:
+                    confidence = "low"
+                    flags.append("no_matching_reference")
             citations.append({
                 "id": f"X{len(citations) + 1}",
                 "paragraph_id": p["id"],
@@ -175,8 +216,13 @@ def build(path, paper_id):
                 "locator": locator(inside),
                 "sentence": next((s for s in sentences(text) if marker in s), ""),
                 "parts": parts or [],
-                "flags": [],
+                "flags": flags,
+                **({"reference_match": match_id} if match_id else {}),
             })
+        for m in ETAL_RE.finditer(text):
+            add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
+        for m in NARRATIVE_RE.finditer(text):
+            add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
         for m in PAREN_RE.finditer(text):
             inner = m.group(1)
             parts = [part.strip() for part in inner.split(";") if part.strip()]
@@ -189,8 +235,6 @@ def build(path, paper_id):
                 parts if len(parts) > 1 else [])
         for m in BRACKET_RE.finditer(text):
             add(m.start(), m.end(), m.group(0), "bracket", [])
-        for m in NARRATIVE_RE.finditer(text):
-            add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
         for m in YEAR_ONLY_RE.finditer(text):
             add(m.start(), m.end(), m.group(0), "year_only", [], "low")
 

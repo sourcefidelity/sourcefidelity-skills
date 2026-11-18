@@ -14,6 +14,8 @@ Return `inventory.json`. Every candidate citation (`X#`) and reference (`R#`) ge
 - `merged_into:<id>` — part of another occurrence;
 - `split_into:<id>,<id>` — a fused entry that is really several.
 
+A candidate citation with the flag `no_matching_reference` has no matching reference entry: decide from the sentence whether it is an author-year citation whose entry is missing (report the correspondence issue) or a title with a release year (record it as a year mention, not a citation).
+
 Add occurrences the candidates missed. Every occurrence needs `id` (C#), `paragraph_id`, `marker`, `statement` and `cited_r_ids`. `marker` and `statement` must be **verbatim substrings** of that paragraph; `validate_inventory.py` rejects invented text. Every final reference needs `id` (R#) and `verbatim` (the submitted entry exactly). List `works` (analysed media) and `uncited` substantive passages; list every paragraph ID in `coverage.paragraphs_scanned`.
 
 ## Step 2 — assess

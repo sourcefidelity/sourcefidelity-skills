@@ -696,6 +696,52 @@ class ReportModeTests(unittest.TestCase):
                             rr.counts(self._findings()), {}, mode="short")
         self.assertIn("Review time: not recorded; tokens: not recorded.", text)
 
+    def _paper_with_refs(self, tmp, body):
+        path = os.path.join(tmp, "paper.txt")
+        open(path, "w", encoding="utf-8").write(
+            body + "\nReferences\nSmith, J. (2020). A work. Journal.\n"
+            "Jones, K. (2021). Another work. Journal.\n")
+        return path
+
+    def test_narrative_citation_matched_to_a_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ec.build(self._paper_with_refs(tmp, "Smith (2020) argues a point.\n"), "P1")
+        citing = [c for c in data["citations"] if "Smith (2020)" in c["marker"]]
+        self.assertTrue(citing, data["citations"])
+        self.assertEqual(citing[0]["kind"], "narrative")
+        self.assertEqual(citing[0].get("reference_match"), "R1")
+
+    def test_et_al_narrative_matches_on_surname(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ec.build(self._paper_with_refs(tmp, "Smith et al. (2020) report a result.\n"), "P1")
+        citing = [c for c in data["citations"] if "Smith et al." in c["marker"]]
+        self.assertTrue(citing, data["citations"])
+        self.assertEqual(citing[0].get("reference_match"), "R1")
+
+    def test_unmatched_single_name_is_flagged_not_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ec.build(self._paper_with_refs(tmp, "Brown (2019) makes a claim.\n"), "P1")
+        citing = [c for c in data["citations"] if "Brown (2019)" in c["marker"]]
+        self.assertTrue(citing, data["citations"])
+        self.assertEqual(citing[0]["confidence"], "low")
+        self.assertIn("no_matching_reference", citing[0]["flags"])
+
+    def test_title_like_year_is_a_year_mention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ec.build(self._paper_with_refs(
+                tmp, "Welcome to Raccoon City (2021) is a film.\n"), "P1")
+        markers = [c["marker"] for c in data["citations"]]
+        self.assertFalse(any("2021" in m for m in markers), markers)
+        self.assertTrue(any("2021" in m["marker"] for m in data["year_mentions"]))
+
+    def test_a_dashless_year_range_is_a_year_mention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            open(path, "w", encoding="utf-8").write("The films (20022016) were released.\n")
+            data = ec.build(path, "P1")
+        self.assertEqual(data["citations"], [])
+        self.assertTrue(any("20022016" in m["marker"] for m in data["year_mentions"]))
+
     def test_bare_year_parentheticals_are_not_citations(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "paper.txt")
@@ -708,7 +754,7 @@ class ReportModeTests(unittest.TestCase):
         self.assertNotIn("(2020)", markers)
         self.assertIn("(Jones, 2021)", markers)
         mentions = [m["marker"] for m in data["year_mentions"]]
-        self.assertIn("(2021)", mentions)
+        self.assertTrue(any("2021" in m for m in mentions), mentions)
 
     def test_full_report_keeps_counts_and_audit(self):
         text = rr.render_md(self._paper(), self._findings(),
