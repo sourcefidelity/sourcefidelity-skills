@@ -692,15 +692,26 @@ def cohort(root, papers_dir):
         total = refs.get("total", 0) or 0
         nx = len(s.get("nonexistent_sources", []) or [])
         uv = len(s.get("unverifiable_sources", []) or [])
-        share = round((nx + uv) / total, 3) if total else 0.0
-        s1 = {
-            "refs_total": total,
-            "nonexistent": nx,
-            "unverifiable": uv,
-            "fabricated_share": share,
-            "fires": bool(total >= S1_MIN_REFS and share >= S1_SHARE),
-            "note": "" if total >= S1_MIN_REFS else f"below {S1_MIN_REFS}-reference gate",
-        }
+        profile = (s.get("authorship_signals") or {}).get("S1_reference_profile")
+        if profile:
+            # One calculation: reuse what the per-paper renderer already wrote.
+            s1 = dict(profile)
+            s1.setdefault("refs_total", total)
+            s1["note"] = profile.get("note", "")
+        else:
+            searched = sum(1 for src in s.get("sources", []) or []
+                           if src.get("search_status") == "searched")
+            share = round((nx + uv) / searched, 3) if searched else 0.0
+            s1 = {
+                "refs_total": total,
+                "searched": searched,
+                "nonexistent": nx,
+                "unverifiable": uv,
+                "fabricated_share": share,
+                "fires": bool(searched >= S1_MIN_REFS and share >= S1_SHARE),
+                "note": "" if searched >= S1_MIN_REFS
+                        else f"below {S1_MIN_REFS}-searched-reference gate",
+            }
         prof = profiles.get(pid, {})
         s4 = dict(prof.get("document_metadata", {}))
         s4["anomaly"] = "; ".join(prof.get("metadata_flags", []))

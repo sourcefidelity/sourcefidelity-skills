@@ -26,6 +26,7 @@ sys.path.insert(0, REVIEW)
 
 import acquisition_list as al  # noqa: E402
 import audit_tasks as at  # noqa: E402
+import authorship_signals as ats  # noqa: E402
 import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
@@ -626,6 +627,45 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class CohortS1Tests(unittest.TestCase):
+    def _summary(self):
+        return {
+            "paper_id": "P1",
+            "references": {"total": 10},
+            "sources": [{"source_key": f"k{i}", "search_status": "searched",
+                         "retrieval": "retrieved"} for i in range(5)],
+            "nonexistent_sources": [{"source_key": "k0"}, {"source_key": "k1"},
+                                    {"source_key": "k2"}],
+            "unverifiable_sources": [],
+            "authorship_signals": {},
+            "flags": {},
+        }
+
+    def test_cohort_uses_the_searched_denominator_for_legacy_summaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "P1"))
+            json.dump(self._summary(), open(os.path.join(tmp, "P1", "summary.json"),
+                                            "w", encoding="utf-8"))
+            data = ats.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
+        s1 = data["papers"]["P1"]["S1"]
+        self.assertEqual(s1["fabricated_share"], 0.6)
+        self.assertTrue(s1["fires"])
+
+    def test_cohort_reuses_the_per_paper_s1_when_present(self):
+        summary = self._summary()
+        summary["authorship_signals"]["S1_reference_profile"] = {
+            "refs_total": 10, "searched": 5, "nonexistent": 3, "unverifiable": 0,
+            "fabricated_share": 0.6, "fires": True}
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "P1"))
+            json.dump(summary, open(os.path.join(tmp, "P1", "summary.json"),
+                                    "w", encoding="utf-8"))
+            data = ats.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
+        s1 = data["papers"]["P1"]["S1"]
+        self.assertEqual(s1["fabricated_share"], 0.6)
+        self.assertTrue(s1["fires"])
 
 
 class PageMapOffsetTests(unittest.TestCase):
