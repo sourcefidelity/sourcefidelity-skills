@@ -1,5 +1,5 @@
 ---
-name: source-use-review-reappraise
+name: sourcefidelity-reappraise
 description: Reappraise the citations in a completed source-use review after new sources have been acquired, updating only the affected entries and logging every changed judgment. Use when sources have been added to the source folder and the existing reviews need revisiting, not a fresh independent review or a new batch.
 ---
 

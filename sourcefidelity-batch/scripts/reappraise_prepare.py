@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.dirname(os.path.dirname(HERE))
-REVIEW_SCRIPTS = os.path.join(SKILLS, "source-use-review", "scripts")
+REVIEW_SCRIPTS = os.path.join(SKILLS, "sourcefidelity-review", "scripts")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 import source_registry  # noqa: E402

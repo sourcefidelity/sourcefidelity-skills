@@ -19,7 +19,7 @@ from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW = os.path.join(os.path.dirname(os.path.dirname(HERE)),
-                      "source-use-review", "scripts")
+                      "sourcefidelity-review", "scripts")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW)
 

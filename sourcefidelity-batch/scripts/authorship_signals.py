@@ -40,7 +40,7 @@ from collections import defaultdict
 # installed there, not in the system interpreter that runs this script.
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS_ROOT = os.path.dirname(SKILL_ROOT)
-REVIEW_SKILL = os.path.join(SKILLS_ROOT, "source-use-review")
+REVIEW_SKILL = os.path.join(SKILLS_ROOT, "sourcefidelity-review")
 PDF_VENV_PYTHON = os.path.join(REVIEW_SKILL, ".venv", "bin", "python")
 PDF_QUALITY = os.path.join(REVIEW_SKILL, "scripts", "pdf_quality.py")
 

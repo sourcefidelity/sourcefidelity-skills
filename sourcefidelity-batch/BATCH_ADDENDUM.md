@@ -405,7 +405,7 @@ Each subagent runs the current skill's `scripts/word_count.py` (or an equivalent
 
 ## Reappraisal after sources are acquired
 
-Acquiring a source does not by itself change a completed review. Use the companion skill `source-use-review-reappraise` to re-assess only the citation occurrences that cite the newly supplied works, update the affected entries in `review.md` and `ledger.md`, and record every changed judgment in a reappraisal log. Reappraisal is a revision pass, not an independent review, and must be labelled as such.
+Acquiring a source does not by itself change a completed review. Use the companion skill `sourcefidelity-reappraise` to re-assess only the citation occurrences that cite the newly supplied works, update the affected entries in `review.md` and `ledger.md`, and record every changed judgment in a reappraisal log. Reappraisal is a revision pass, not an independent review, and must be labelled as such.
 
 ## Calibrating S5
 

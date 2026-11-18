@@ -18,7 +18,7 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REVIEW_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "source-use-review", "scripts")
+REVIEW_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sourcefidelity-review", "scripts")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 

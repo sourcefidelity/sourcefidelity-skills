@@ -1,5 +1,5 @@
 ---
-name: source-use-review-batch
+name: sourcefidelity-batch
 description: Batch-review multiple student papers and produce a batch report flagging papers with many misrepresented or likely invented sources. Use for a folder of papers after independent per-paper source-use reviews.
 ---
 
@@ -17,6 +17,6 @@ After every scheduled paper has a status, read only the `summary.json` files and
 
 Use the addendum's scripts rather than retyping numbers: `scripts/authorship_signals.py cohort` for the S2/S3 signals, `scripts/acquisition_list.py` for the acquisition ranking, and `scripts/batch_report.py` for the report itself. After a reappraisal changes any summary, run `scripts/align_report.py --batch ROOT` to refresh only the report's Paper summary table from the current summaries; it leaves the reappraisal narrative intact.
 
-When sources are later acquired, hand off to the `source-use-review-reappraise` skill, which re-assesses only the occurrences citing the newly supplied works and logs every changed judgment.
+When sources are later acquired, hand off to the `sourcefidelity-reappraise` skill, which re-assesses only the occurrences citing the newly supplied works and logs every changed judgment.
 
 Deliver the batch report path, the acquisition list path, the per-paper review and ledger paths, and a concise statement of completeness, flags, signals, source-level patterns, and limitations. If a paper could not be reviewed, say which one and why; do not fill gaps with guesses.

@@ -8,16 +8,16 @@ This repository is a **prototype**. It is not a grading system and does not dete
 
 | Skill | Purpose |
 | --- | --- |
-| `source-use-review` | Review one paper against supplied sources. Produces a review, ledger and summary. |
-| `source-use-review-batch` | Review a folder of papers, produce independent per-paper artifacts, flag patterns across the cohort, and list sources still needed. |
-| `source-use-review-reappraise` | Reassess affected citations after new sources are acquired, changing only the entries in scope and logging every changed judgment. |
+| `sourcefidelity-review` | Review one paper against supplied sources. Produces a review, ledger and summary. |
+| `sourcefidelity-batch` | Review a folder of papers, produce independent per-paper artifacts, flag patterns across the cohort, and list sources still needed. |
+| `sourcefidelity-reappraise` | Reassess affected citations after new sources are acquired, changing only the entries in scope and logging every changed judgment. |
 
 Start with the `SKILL.md` in the relevant skill directory. The review protocols and worker contracts sit beside it.
 
 ## Requirements
 
 - Python 3.12 or newer for the scripts.
-- macOS for the default PDF OCR path (`source-use-review/scripts/pdfocr.swift` uses the Vision framework). Native-text PDFs and DOCX files work without OCR.
+- macOS for the default PDF OCR path (`sourcefidelity-review/scripts/pdfocr.swift` uses the Vision framework). Native-text PDFs and DOCX files work without OCR.
 - Optional: an MCP server that exposes the bibliographic adapters described in the review protocol. Without it, the skills can use the supplied files and direct web inspection, but identity resolution is more limited.
 - Optional API keys for Crossref, DataCite, OpenAlex, Semantic Scholar, CORE, Google Books and similar services, read from environment variables. Never put keys in a skill file, review, ledger or log.
 
@@ -27,9 +27,9 @@ Copy the three skill directories into the skills directory used by your agent ho
 
 ```text
 ~/.agents/skills/
-├── source-use-review/
-├── source-use-review-batch/
-└── source-use-review-reappraise/
+├── sourcefidelity-review/
+├── sourcefidelity-batch/
+└── sourcefidelity-reappraise/
 ```
 
 Keep the directory names unchanged; the batch and reappraisal skills refer to scripts in the sibling skills.
@@ -50,14 +50,14 @@ The `.gitignore` excludes the common working directories, but check `git status`
 The batch pipeline has offline tests:
 
 ```bash
-cd source-use-review-batch/scripts
+cd sourcefidelity-batch/scripts
 python3 -I test_pipeline.py
 ```
 
 The source-review skill also has PDF-quality tests:
 
 ```bash
-cd source-use-review/scripts
+cd sourcefidelity-review/scripts
 python3 -I test_pdf_quality.py
 ```
 

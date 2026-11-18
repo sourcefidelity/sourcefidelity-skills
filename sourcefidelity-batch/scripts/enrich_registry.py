@@ -36,7 +36,7 @@ import source_registry as sr  # noqa: E402
 
 CACHE_TTL = 30 * 24 * 3600
 API = "https://api.crossref.org/works"
-UA = "source-use-review/1.0 (batch registry enrichment)"
+UA = "sourcefidelity-review/1.0 (batch registry enrichment)"
 
 
 def now():

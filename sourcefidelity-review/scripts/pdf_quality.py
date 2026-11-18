@@ -42,7 +42,7 @@ import time
 import warnings
 from datetime import datetime, timezone
 
-CACHE_ROOT = os.path.expanduser("~/Library/Caches/source-use-review")
+CACHE_ROOT = os.path.expanduser("~/Library/Caches/sourcefidelity-review")
 HELPER_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdfocr.swift")
 HELPER_BIN = os.path.join(CACHE_ROOT, "pdfocr")
 

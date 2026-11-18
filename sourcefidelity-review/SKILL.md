@@ -1,5 +1,5 @@
 ---
-name: source-use-review
+name: sourcefidelity-review
 description: Review an entire student paper against original sources for source use, academic practice, and APA 7 citation and reference errors. Use for an independent evidence-based paper review, not application debugging or grading.
 ---
 

@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
-                                "source-use-review", "scripts"))
+                                "sourcefidelity-review", "scripts"))
 import enrich_registry as er  # noqa: E402
 import source_registry as sr  # noqa: E402
 
