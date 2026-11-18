@@ -217,3 +217,46 @@ layer enforces per-provider budgets, and the default set is the one that works
 without registration. An instructor who teaches law enables the law pack; one
 who teaches film enables the film pack. Nothing in the core assumes a
 discipline.
+
+## Revision 2: zero-configuration selection (2026-11-18)
+
+Revision 1 asked the instructor to enable packs and supply OAI-PMH endpoints.
+Both are wrong for the audience.
+
+**No questions about internals.** An instructor installs the skill and runs it.
+The skill never asks which providers, packs, protocols or endpoints to use, and
+never presents a configuration file as a required step. `retrieval.toml` may
+exist for an administrator, but the default path has no setups.
+
+**All keyless adapters are on by default.** Each is queried only for the works
+the paper actually cites (typically 15–40 lookups), all requests pass the
+pacing gate, and a per-provider budget caps the batch. The marginal cost of
+enabling SciELO, RePEc, ERIC, Europe PMC, CourtListener, Lantern, LoC/Gallica
+or Zenodo for a paper that cites none of them is one skipped query, not a
+timeout storm. Coverage therefore does not depend on the instructor predicting
+which pack their syllabus needs.
+
+**A discipline is inferred, not requested.** The reviewing agent decides which
+providers to prioritise from the bibliography it already has (e.g. film trade
+press present → Lantern and Gallica first; case law present → CourtListener),
+records the decision in the review ledger, and the batch report states which
+providers were consulted. The decision is visible and auditable; it is never a
+question put to the user.
+
+**Keyed providers are opt-in by environment, not by prompt.** CORE, BASE,
+Semantic Scholar, Trove and DPLA are attempted only when their key is present
+in the environment (DPLA's key is free self-service). No key means the provider
+is recorded as "not enabled", never surfaced as a task or a question.
+
+**OAI-PMH is an internal transport, not a user concept.** Library discovery
+pages do not advertise OAI-PMH because it is a machine interface, usually at
+`/oai/request` or `/oai2`; instructors should not have to know it exists. v1
+therefore does not require any OAI endpoint configuration: OpenAIRE already
+aggregates institutional repositories by OAI-PMH and is keyless, and CORE/BASE
+cover the same ground with a key. If a bundled seed list of large repositories
+is added later, it ships with the skill and is never exposed in the prompt.
+
+**Acceptance:** a fresh install with no config, no keys and no questions reviews
+a paper and reports the discipline, the providers attempted, the providers that
+were unavailable, and the resulting coverage — with zero setup steps for the
+instructor.
