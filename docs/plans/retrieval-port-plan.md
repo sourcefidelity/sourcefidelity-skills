@@ -260,3 +260,12 @@ is added later, it ships with the skill and is never exposed in the prompt.
 a paper and reports the discipline, the providers attempted, the providers that
 were unavailable, and the resulting coverage — with zero setup steps for the
 instructor.
+
+### Confirmed: default keyless plus LLM prioritisation
+
+Keyless providers run by default; the reviewing LLM prioritises them from the
+bibliography and records the order it used. Keys are optional and live in
+`.env` in the installed skill folder (documented in the README, template in
+`.env.example`), with environment variables taking precedence; an absent key
+disables that provider and the report says so. No instructor is asked about
+providers at any point.

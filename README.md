@@ -119,3 +119,35 @@ python3 -I test_pdf_quality.py
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Optional provider keys
+
+The skills run with **no keys and no setup**. Supplied source files and the
+cited-URL cache are always used, and every provider that is unavailable is
+recorded as a limitation rather than a failure.
+
+The retrieval port ([plan](docs/plans/retrieval-port-plan.md)) adds keyless
+providers by default (Crossref, OpenAlex, OpenAIRE, Zenodo, Internet Archive,
+Wayback, Open Library, Google Books, HathiTrust, Gutenberg, Wikisource, and the
+public archives), which need no credentials at all. A few aggregators are
+keyed and stay off unless a key is present:
+
+1. Copy `.env.example` to `.env` in the installed skill folder, for example
+   `~/.dsh/skills/sourcefidelity-batch/.env`, or export the variables in your
+   shell.
+2. Fill in `CONTACT_EMAIL` at minimum — Crossref and OpenAlex ask for a
+   contact address for polite use.
+3. Add any optional keys you have:
+
+```dotenv
+CONTACT_EMAIL=you@university.edu
+CORE_API_KEY=...              # https://core.ac.uk/services/api
+SEMANTIC_SCHOLAR_API_KEY=...  # https://www.semanticscholar.org/product/api
+TROVE_API_KEY=...             # https://trove.nla.gov.au/about/create-something/using-api
+DPLA_API_KEY=...              # https://dp.la/developers (free)
+ZENODO_TOKEN=...              # optional, higher limits
+```
+
+Environment variables take precedence over the file. Never commit `.env`; the
+repository ignores it. A key that is absent simply disables that provider, and
+the batch report lists which providers were not enabled for the run.
