@@ -24,6 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import evidence_window  # noqa: E402
 import source_registry  # noqa: E402
+import web_cache  # noqa: E402
 
 PAGE_BLOCK = re.compile(r"^=== PDF p(\d+) \| printed p([^|]*)\|", re.M)
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’\-]{3,}")
@@ -122,6 +123,22 @@ def find_pos(text, pattern, marks, pages, page_range=None, body_only=False):
             search_at = match.end()
             continue
         return match.start()
+
+
+def web_windows(root, url_entries, phrases, width, limit=2):
+    """Windows from cached fetched web text, labelled with the final URL."""
+    out = []
+    for entry in url_entries or []:
+        url = entry.get("url", "")
+        text, meta = web_cache.text_for(root, url)
+        if not text:
+            continue
+        hits = windows(text, [], {}, phrases, width, None, limit=limit)
+        for hit in hits:
+            hit["locator"] = f"web: {meta.get('final_url') or url}"
+            hit["source_url"] = meta.get("final_url") or url
+        out.extend(hits)
+    return out
 
 
 def windows(text, marks, pages, phrases, width, page_range=None,
@@ -380,7 +397,15 @@ def main():
                 src = sources.get(rid, {})
                 if src.get("work_kind") == "web" and src.get("url"):
                     web_urls.append({"r_id": rid, "url": src["url"]})
-            if web_urls:
+            web_hits = (web_windows(root, web_urls, phrases_for(cit), args.window,
+                                    args.max_hits) if web_urls else [])
+            if web_hits:
+                windows_by_c[cit["id"]] = web_hits[: args.max_hits]
+                window_status[cit["id"]] = {
+                    "status": "found", "count": len(web_hits[: args.max_hits]),
+                    "fallbacks": [], "source": "web", "page_range": [],
+                }
+            elif web_urls:
                 window_status[cit["id"]] = {
                     "status": "web_url",
                     "reason": "web source; inspect the supplied URL before judging",

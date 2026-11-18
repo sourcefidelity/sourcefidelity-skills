@@ -33,6 +33,7 @@ import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
+import fetch_web_sources as fw  # noqa: E402
 import file_digest as fd  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
@@ -49,6 +50,7 @@ import review_metrics as rm  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
+import web_cache  # noqa: E402
 import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 
@@ -828,6 +830,53 @@ class InstallerTests(unittest.TestCase):
                              env={"PATH": shim + os.pathsep + "/usr/bin:/bin"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
+
+
+class WebFetchTests(unittest.TestCase):
+    def test_cache_roundtrip_keeps_blocked_pages_as_limitations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web_cache.store(tmp, "https://example.com/a",
+                            {"text": "page text", "final_url": "https://example.com/a",
+                             "status": 200})
+            web_cache.store(tmp, "https://example.com/b",
+                            {"text": "", "limitation": "private_host"})
+            text, meta = web_cache.text_for(tmp, "https://example.com/a")
+            blocked_text, blocked_meta = web_cache.text_for(tmp, "https://example.com/b")
+        self.assertEqual(text, "page text")
+        self.assertEqual(meta["status"], 200)
+        self.assertEqual(blocked_text, "")
+        self.assertEqual(blocked_meta["limitation"], "private_host")
+
+    def test_fetch_stage_uses_cached_web_text_for_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/article"
+            web_cache.store(tmp, url, {"text": "the cited phrase appears in this article",
+                                       "final_url": url, "status": 200})
+            hits = mt.web_windows(tmp, [{"r_id": "R1", "url": url}],
+                                  ["cited phrase appears"], 120)
+        self.assertTrue(hits)
+        self.assertEqual(hits[0]["locator"], f"web: {url}")
+
+    def test_fetch_stage_skips_urls_already_cached(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/x"
+            web_cache.store(tmp, url, {"text": "cached text", "final_url": url})
+            calls = []
+            with mock.patch.object(fw.safe_fetch, "fetch",
+                                   side_effect=lambda u, **k: calls.append(u)):
+                stats = fw.fetch_urls(tmp, {url: "R1"})
+        self.assertEqual(calls, [])
+        self.assertEqual(stats["cached"], 1)
+
+    def test_fetch_stage_caches_a_blocked_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/blocked"
+            with mock.patch.object(fw.safe_fetch, "fetch",
+                                   return_value={"text": "", "limitation": "content_type"}):
+                stats = fw.fetch_urls(tmp, {url: "R1"})
+            _, meta = web_cache.text_for(tmp, url)
+        self.assertEqual(stats["blocked"], 1)
+        self.assertEqual(meta["limitation"], "content_type")
 
 
 class TaskMatchingTests(unittest.TestCase):
