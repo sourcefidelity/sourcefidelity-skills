@@ -89,6 +89,31 @@ def reconcile(findings, inventory):
             fail(f"{key}: findings IDs not in the validated inventory: {extra[:5]}")
 
 
+def hyperlink_breakdown(findings):
+    """(total, reason phrases) for the works counted as missing a link."""
+    items = findings.get("summary", {}).get("hyperlinks_missing", []) or []
+    buckets = {"no link": 0, "broken": 0, "wrong work": 0, "preview only": 0,
+               "not accessible": 0}
+    for item in items:
+        if isinstance(item, dict):
+            reason = str(item.get("reason", ""))
+        else:
+            reason = str(item).rsplit(":", 1)[-1]
+        reason = reason.strip().lower()
+        if not reason or "no link" in reason:
+            buckets["no link"] += 1
+        elif "broken" in reason or "dead" in reason:
+            buckets["broken"] += 1
+        elif "wrong" in reason:
+            buckets["wrong work"] += 1
+        elif "preview" in reason:
+            buckets["preview only"] += 1
+        else:
+            buckets["not accessible"] += 1
+    parts = [f"{name} {value}" for name, value in buckets.items() if value]
+    return len(items), parts
+
+
 def counts(findings):
     occ = findings.get("occurrences", [])
     key = {"Supports": "supports", "Qualified or Mixed": "qualified",
@@ -189,8 +214,9 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
     lines.append(f"References: {len(findings.get('references', []))} entries. "
                  f"Works discussed: {len(findings.get('works', []))}.")
     lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
-    lines.append(f"Hyperlinks missing: "
-                 f"{len(summary.get('hyperlinks_missing', []) or [])}.")
+    missing, reasons = hyperlink_breakdown(findings)
+    detail = f" ({'; '.join(reasons)})" if reasons else ""
+    lines.append(f"Hyperlinks missing: {missing}{detail}.")
     seconds = 0
     tokens_in = tokens_out = 0
     have_time = have_tokens = False

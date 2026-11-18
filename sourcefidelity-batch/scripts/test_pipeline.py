@@ -684,6 +684,14 @@ class ReportModeTests(unittest.TestCase):
         self.assertIn("Uncited claim about media.", text)
         self.assertIn("Access limited to one chapter.", text)
 
+    def test_hyperlink_count_names_the_reasons(self):
+        findings = self._findings()
+        findings["summary"] = {"hyperlinks_missing": [
+            "Smith 2020: no link", {"work": "Jones 2021", "reason": "broken"},
+            "Lee 2019: preview only"]}
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {}, mode="short")
+        self.assertIn("Hyperlinks missing: 3 (no link 1; broken 1; preview only 1).", text)
+
     def test_summary_ends_with_the_counts_line(self):
         findings = self._findings()
         findings["summary"] = {"category_a": ["one", "two"], "category_b": ["three"]}
@@ -779,7 +787,7 @@ class InstallerTests(unittest.TestCase):
 
     def _run(self, *args, env=None):
         environment = {**os.environ, **(env or {})}
-        return subprocess.run(["bash", self.SCRIPT, *args], capture_output=True,
+        return subprocess.run(["/bin/bash", self.SCRIPT, *args], capture_output=True,
                               text=True, env=environment)
 
     def test_dry_run_lists_every_skill_and_writes_nothing(self):
@@ -800,8 +808,9 @@ class InstallerTests(unittest.TestCase):
     def test_absent_python_reports_prompt_only_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "skills")
-            proc = self._run("--dry-run", "--target", target,
-                             env={"PATH": "/usr/bin:/bin"})
+            empty = os.path.join(tmp, "empty-bin")
+            os.makedirs(empty)
+            proc = self._run("--dry-run", "--target", target, env={"PATH": empty})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
 
