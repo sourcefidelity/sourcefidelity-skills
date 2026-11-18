@@ -27,7 +27,6 @@ import argparse
 import hashlib
 import json
 import os
-import paper_index
 import pathlib
 import re
 import statistics
@@ -35,6 +34,11 @@ import subprocess
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import paper_index  # noqa: E402
 from collections import defaultdict
 
 # The extraction layer and its venv live in the sibling review skill: PyMuPDF is
