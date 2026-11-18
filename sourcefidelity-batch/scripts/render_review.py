@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 
 import authorship_signals  # noqa: E402
+import file_digest  # noqa: E402
 import batch_paths  # noqa: E402
 import review_metrics  # noqa: E402
 
@@ -464,6 +465,31 @@ def render_ledger(paper, findings, occ_counts):
     return "\n".join(lines)
 
 
+def paper_profile_for(root, paper):
+    """The authorship profile for this exact paper file, from cache or fresh."""
+    paper_path = paper.get("path", "")
+    cache_path = os.path.join(root, "_work", paper.get("paper_id", ""), "profile.json")
+    stored = load(cache_path, {})
+    try:
+        digest = file_digest.sha256_file(paper_path)
+    except OSError:
+        return stored.get("profile") or {}
+    if stored.get("sha256") == digest:
+        return stored.get("profile") or {}
+    try:
+        profile = authorship_signals.paper_profile(paper_path)
+    except Exception:
+        return {}
+    if profile:
+        try:
+            json.dump({"sha256": digest, "profile": profile},
+                      open(cache_path, "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=1)
+        except OSError:
+            pass
+    return profile
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
@@ -485,10 +511,7 @@ def main():
     if args.inventory:
         reconcile(findings, load(args.inventory, {}))
     registry = load(os.path.join(root, "source_registry.json"), {}).get("works", {})
-    try:
-        profile = authorship_signals.paper_profile(paper["path"])
-    except Exception:
-        profile = {}
+    profile = paper_profile_for(root, paper)
     occ_counts = counts(findings)
     metrics = review_metrics.load_metrics(root, args.paper)
     folder = batch_paths.paper_folder(root, args.paper)

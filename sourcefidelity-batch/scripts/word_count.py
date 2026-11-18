@@ -111,13 +111,32 @@ def docx_blocks(path):
     return list(_blocks_from_container(body))
 
 
+_EXTRACTION_CACHE = {}
+
+
 def pdf_extract(path):
     """Text and provenance from the skill's extraction layer, or None.
 
     Runs in the skill's venv because PyMuPDF is installed there, not in the
     system interpreter that the review invokes. Returns None when the layer is
-    unavailable, so the caller can fall back to bare pypdf.
+    unavailable, so the caller can fall back to bare pypdf. The result is
+    memoized per file version, so several callers in one process extract a
+    paper once.
     """
+    try:
+        stat = os.stat(path)
+        key = (os.path.realpath(path), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and key in _EXTRACTION_CACHE:
+        return _EXTRACTION_CACHE[key]
+    result = _extract_uncached(path)
+    if key is not None:
+        _EXTRACTION_CACHE[key] = result
+    return result
+
+
+def _extract_uncached(path):
     python, quality = _extraction_layer()
     if not python:
         return None

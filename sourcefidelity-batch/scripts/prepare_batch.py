@@ -25,6 +25,7 @@ sys.path.insert(0, REVIEW_SCRIPTS)
 
 import word_count  # noqa: E402
 import extract_candidates  # noqa: E402
+import file_digest  # noqa: E402
 import authorship_signals  # noqa: E402
 
 SKIP_PATTERNS = [
@@ -112,6 +113,9 @@ def main():
         try:
             profile = authorship_signals.paper_profile(path)
             metadata = profile.get("document_metadata", {})
+            json.dump({"sha256": file_digest.sha256_file(path), "profile": profile},
+                      open(os.path.join(folder, "profile.json"), "w", encoding="utf-8"),
+                      ensure_ascii=False, indent=1)
         except Exception as exc:
             metadata = {"error": str(exc)}
         paper = {

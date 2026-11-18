@@ -32,6 +32,7 @@ import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
+import file_digest as fd  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
@@ -628,6 +629,51 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class ExtractionReuseTests(unittest.TestCase):
+    def test_one_extraction_subprocess_per_file(self):
+        fake = mock.Mock(returncode=0,
+                         stdout=b'{"text": "first line; second line", "engine": "fake"}')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.pdf")
+            open(path, "wb").write(b"%PDF-1.4 first")
+            with mock.patch.object(wc, "_extraction_layer",
+                                   return_value=("python", "quality")), \
+                    mock.patch.object(wc.subprocess, "run", return_value=fake) as run:
+                wc.count(path)
+                ec.build(path, "P1")
+                self.assertEqual(run.call_count, 1)
+                open(path, "ab").write(b" more bytes")
+                wc.count(path)
+                self.assertEqual(run.call_count, 2)
+
+    def test_render_reuses_a_stored_profile_for_the_same_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paper_path = os.path.join(tmp, "a.docx")
+            open(paper_path, "wb").write(b"student text")
+            os.makedirs(os.path.join(tmp, "_work", "P1"))
+            json.dump({"sha256": fd.sha256_file(paper_path),
+                       "profile": {"style": {"words": 3}}},
+                      open(os.path.join(tmp, "_work", "P1", "profile.json"), "w"))
+            with mock.patch.object(ats, "paper_profile",
+                                   side_effect=AssertionError("should not re-profile")):
+                profile = rr.paper_profile_for(tmp, {"paper_id": "P1",
+                                                     "path": paper_path})
+        self.assertEqual(profile, {"style": {"words": 3}})
+
+    def test_render_reprofiles_when_the_file_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paper_path = os.path.join(tmp, "a.docx")
+            open(paper_path, "wb").write(b"new text")
+            os.makedirs(os.path.join(tmp, "_work", "P1"))
+            json.dump({"sha256": "stale", "profile": {"style": {"words": 1}}},
+                      open(os.path.join(tmp, "_work", "P1", "profile.json"), "w"))
+            with mock.patch.object(ats, "paper_profile",
+                                   return_value={"style": {"words": 2}}) as profile:
+                out = rr.paper_profile_for(tmp, {"paper_id": "P1", "path": paper_path})
+        self.assertEqual(out, {"style": {"words": 2}})
+        self.assertEqual(profile.call_count, 1)
 
 
 class ExtractionLayerTests(unittest.TestCase):
