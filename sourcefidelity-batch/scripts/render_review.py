@@ -185,11 +185,11 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
                  f"(Supports {occ_counts['supports']}; Qualified or Mixed "
                  f"{occ_counts['qualified']}; Contradicts {occ_counts['contradicts']}; "
                  f"Not Supported {occ_counts['not_supported']}; "
-                 f"Not Judged {occ_counts['not_judged']}). References: "
-                 f"{len(findings.get('references', []))} entries. Works discussed: "
-                 f"{len(findings.get('works', []))}. Uncited passages: "
-                 f"{len(findings.get('uncited', []))}. "
-                 f"Hyperlinks missing: "
+                 f"Not Judged {occ_counts['not_judged']}).")
+    lines.append(f"References: {len(findings.get('references', []))} entries. "
+                 f"Works discussed: {len(findings.get('works', []))}.")
+    lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
+    lines.append(f"Hyperlinks missing: "
                  f"{len(summary.get('hyperlinks_missing', []) or [])}.")
     seconds = 0
     tokens_in = tokens_out = 0
@@ -219,9 +219,10 @@ def render_md(paper, findings, occ_counts, registry, metrics=None, mode="full"):
         lines.append("Category A academic integrity violation: " + "; ".join(summary["category_a"]) + ".")
     if summary.get("category_b"):
         lines.append("Category B academic integrity violation: " + "; ".join(summary["category_b"]) + ".")
-    hl = link_line(findings)
-    if hl:
-        lines.append(hl)
+    lines.append(
+        f"Counts: Category A {len(summary.get('category_a') or [])}; "
+        f"Category B {len(summary.get('category_b') or [])}; "
+        f"uncited substantive passages {len(findings.get('uncited', []))}.")
     lines.append("")
 
     refs = findings.get("references", [])
@@ -502,6 +503,8 @@ def main():
     ap.add_argument("--findings", required=True)
     ap.add_argument("--inventory", default="",
                     help="validated inventory.json to reconcile IDs against")
+    ap.add_argument("--metrics", default="",
+                    help="review_metrics.json to use instead of the sidecar")
     ap.add_argument("--mode", default="short", choices=("short", "full"),
                     help="short report by default; full adds counts, audit and ledger")
     args = ap.parse_args()
@@ -520,7 +523,8 @@ def main():
     registry = load(os.path.join(root, "source_registry.json"), {}).get("works", {})
     profile = paper_profile_for(root, paper)
     occ_counts = counts(findings)
-    metrics = review_metrics.load_metrics(root, args.paper)
+    metrics = (load(args.metrics) if args.metrics
+               else review_metrics.load_metrics(root, args.paper)) or {}
     folder = batch_paths.paper_folder(root, args.paper)
     os.makedirs(folder, exist_ok=True)
     open(os.path.join(folder, "review.md"), "w", encoding="utf-8").write(

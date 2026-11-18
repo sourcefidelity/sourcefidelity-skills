@@ -672,6 +672,8 @@ class ReportModeTests(unittest.TestCase):
                             rr.counts(self._findings()), {}, mode="short")
         self.assertIn("## Review scope and counts", text)
         self.assertIn("Word counts: total 5", text)
+        self.assertIn("\nUncited substantive passages:", text)
+        self.assertNotIn("The paper was missing", text)
         for absent in ("## 1. Findings", "## 5. Unresolved",
                        "Structural audit detail."):
             self.assertNotIn(absent, text)
@@ -681,6 +683,14 @@ class ReportModeTests(unittest.TestCase):
                             rr.counts(self._findings()), {}, mode="short")
         self.assertIn("Uncited claim about media.", text)
         self.assertIn("Access limited to one chapter.", text)
+
+    def test_summary_ends_with_the_counts_line(self):
+        findings = self._findings()
+        findings["summary"] = {"category_a": ["one", "two"], "category_b": ["three"]}
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {}, mode="short")
+        self.assertIn("Counts: Category A 2; Category B 1; uncited substantive passages 1.", text)
+        self.assertLess(text.index("Category A academic integrity"),
+                        text.index("Counts: Category A 2"))
 
     def test_scope_block_precedes_the_summary_and_reports_cost(self):
         metrics = {"runs": [{"duration_ms": 65000,

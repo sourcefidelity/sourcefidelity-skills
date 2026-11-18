@@ -354,14 +354,17 @@ Only include a category line when at least one confirmed finding exists. Do not 
 ## Review scope and counts
 
 Word counts: total N; text N; references N.
-Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not Supported N; Not Judged N). References: N entries. Works discussed: N. Uncited passages: N. Hyperlinks missing: N.
+Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not Supported N; Not Judged N).
+References: N entries. Works discussed: N.
+Uncited substantive passages: N.
+Hyperlinks missing: N.
 Review time: Nm Ns; tokens: N in / N out.
 
 ## Summary of academic-integrity findings
 
 Category A academic integrity violation: [confirmed issue types, semicolon-separated] (e.g., [author/source, short quoted phrase, p. X]).
 Category B academic integrity violation: [confirmed issue types, semicolon-separated] (e.g., [author/source, short quoted phrase, p. X]).
-The paper was missing N permanent and working hyperlink(s) to accessible texts ([work 1: reason]; [work 2: reason]).
+Counts: Category A N; Category B N; uncited substantive passages N.
 ```
 
 List each issue type once, not every occurrence. Give one short locator example per issue type where useful: author or source, a short quoted phrase, and a page or paragraph. Keep the block short; detailed evidence belongs in the numbered entries. The formatting-notes line is informational and is omitted when there are no notes; it never uses the words "violation". For the hyperlink line, count distinct cited works and name each missing work with its reason (no link; broken; preview only; wrong work or edition; not accessible). Use singular or plural correctly. A stable library catalogue or record page counts as a link for a print work; a publisher preview or retailer page alone does not. Omit a line when the category has no confirmed finding. If no findings exist, state that only when the checks were complete; otherwise state the limitation. Draft the summary after the audit is complete, then place it first.
