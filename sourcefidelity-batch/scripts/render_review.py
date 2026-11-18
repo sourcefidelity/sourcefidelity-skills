@@ -2,6 +2,7 @@
 """Render review.md, ledger.md and summary.json from a worker's findings.json.
 
     python3 -I render_review.py --batch ROOT --paper P240907 --findings FILE
+        [--inventory FILE]
 
 The worker supplies judgments and evidence; this script supplies the structure,
 counts, cross-references and schema. It refuses to render a Supports or
@@ -40,6 +41,27 @@ def fail(msg):
 
 
 def validate(findings):
+    """Reject findings that are internally inconsistent or silently empty."""
+    occurrences = findings.get("occurrences", [])
+    references = findings.get("references", [])
+    works = findings.get("works", [])
+    uncited = findings.get("uncited", [])
+    ids = [item.get("id") for item in occurrences + references + works + uncited]
+    for item_id in ids:
+        if not re.match(r"^(C|R|W|U)\d+$", item_id or ""):
+            fail(f"bad or missing ID: {item_id!r}")
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicates:
+        fail(f"duplicate IDs: {duplicates}")
+    ref_ids = {r.get("id") for r in references}
+    for occ in occurrences:
+        for rid in occ.get("cited_r_ids", []) or []:
+            if rid not in ref_ids:
+                fail(f"{occ.get('id')}: cited reference {rid} not in the findings")
+    if not ids:
+        # A genuinely empty inventory is allowed, but only when stated.
+        if findings.get("inventory_empty") is not True or "status" not in findings:
+            fail("empty findings need inventory_empty: true and an explicit status")
     for occ in findings.get("occurrences", []):
         if occ.get("judgment") in ("Supports", "Contradicts"):
             if not occ.get("sources"):
@@ -50,6 +72,20 @@ def validate(findings):
     for ref in findings.get("references", []):
         if not ref.get("verbatim"):
             fail(f"{ref.get('id')}: missing verbatim reference entry")
+
+
+def reconcile(findings, inventory):
+    """Every validated inventory ID appears in the findings, and nothing else."""
+    for key in ("occurrences", "references", "works", "uncited"):
+        expected = [item.get("id") for item in inventory.get(key, []) or []]
+        got = [item.get("id") for item in findings.get(key, []) or []]
+        missing = [item_id for item_id in expected if item_id not in got]
+        extra = [item_id for item_id in got if item_id not in expected]
+        if missing:
+            fail(f"{key}: {len(missing)} validated ID(s) missing from findings: "
+                 f"{missing[:5]}")
+        if extra:
+            fail(f"{key}: findings IDs not in the validated inventory: {extra[:5]}")
 
 
 def counts(findings):
@@ -427,6 +463,8 @@ def main():
     ap.add_argument("--batch", required=True)
     ap.add_argument("--paper", required=True)
     ap.add_argument("--findings", required=True)
+    ap.add_argument("--inventory", default="",
+                    help="validated inventory.json to reconcile IDs against")
     args = ap.parse_args()
     root = os.path.abspath(args.batch)
     work = batch_paths.artifact(os.path.join(root, "_work"), args.paper)
@@ -438,6 +476,8 @@ def main():
             and "occurrences" not in findings):
         findings = findings["findings"]
     validate(findings)
+    if args.inventory:
+        reconcile(findings, load(args.inventory, {}))
     registry = load(os.path.join(root, "source_registry.json"), {}).get("works", {})
     try:
         profile = authorship_signals.paper_profile(paper["path"])

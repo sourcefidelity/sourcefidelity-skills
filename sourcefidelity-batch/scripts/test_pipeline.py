@@ -39,6 +39,7 @@ import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
 import source_registry as sr  # noqa: E402
+import validate_inventory as vi  # noqa: E402
 
 
 def page(pdf, printed, text):
@@ -579,6 +580,92 @@ class ReappraiseWindowTests(unittest.TestCase):
             run = rec.from_metadata(path, "deepseek-v4-flash")
         self.assertIsNone(run["usage"])
         self.assertAlmostEqual(run["duration_ms"], 898000, delta=5)
+
+
+class RenderValidationTests(unittest.TestCase):
+    def _occ(self, oid, **extra):
+        item = {"id": oid, "judgment": "Not Judged", "paragraph_id": "p1",
+                "marker": "(Doe, 2020)", "statement": "Claim"}
+        item.update(extra)
+        return item
+
+    def test_validate_rejects_duplicate_ids(self):
+        findings = {"occurrences": [self._occ("C1"), self._occ("C1")],
+                    "references": []}
+        with self.assertRaises(SystemExit):
+            rr.validate(findings)
+
+    def test_validate_rejects_an_unresolved_cited_reference(self):
+        findings = {"occurrences": [self._occ("C1", cited_r_ids=["R9"])],
+                    "references": []}
+        with self.assertRaises(SystemExit):
+            rr.validate(findings)
+
+    def test_validate_rejects_empty_findings_without_explicit_state(self):
+        with self.assertRaises(SystemExit):
+            rr.validate({})
+        rr.validate({"inventory_empty": True, "status": "complete"})
+
+    def test_reconcile_rejects_a_dropped_inventory_item(self):
+        inventory = {"occurrences": [{"id": "C1"}, {"id": "C2"}], "references": []}
+        findings = {"occurrences": [{"id": "C1"}], "references": []}
+        with self.assertRaises(SystemExit):
+            rr.reconcile(findings, inventory)
+
+    def test_reconcile_rejects_an_invented_id(self):
+        inventory = {"occurrences": [], "references": []}
+        findings = {"occurrences": [{"id": "C7"}], "references": []}
+        with self.assertRaises(SystemExit):
+            rr.reconcile(findings, inventory)
+
+    def test_reconcile_accepts_matching_id_sets(self):
+        inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
+        findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
+        rr.reconcile(findings, inventory)
+
+
+class InventoryValidationTests(unittest.TestCase):
+    def _cand(self):
+        return {
+            "paragraphs": [{"id": "p1", "text": "Claim (Doe, 2020) holds."}],
+            "citations": [{"id": "X1", "paragraph_id": "p1",
+                           "marker": "(Doe, 2020)"}],
+            "references": [],
+        }
+
+    def _inv(self, occurrences=None, dispositions=None, coverage=True):
+        return {
+            "occurrences": occurrences or [],
+            "references": [],
+            "dispositions": dispositions if dispositions is not None else {"X1": "confirmed"},
+            "coverage": ({"paragraphs_scanned": ["p1"]} if coverage else {}),
+        }
+
+    def test_strict_rejects_confirmed_candidate_with_no_final_entry(self):
+        result = vi.validate(self._cand(), self._inv(), strict=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("X1" in e and "confirmed" in e for e in result["errors"]))
+
+    def test_confirmed_candidate_matching_a_final_entry_is_accepted(self):
+        occ = [{"id": "C1", "paragraph_id": "p1", "marker": "(Doe, 2020)",
+                "statement": "Claim", "cited_r_ids": []}]
+        result = vi.validate(self._cand(), self._inv(occurrences=occ), strict=True)
+        self.assertTrue(result["ok"], result["errors"])
+
+    def test_confirmed_as_target_must_exist(self):
+        result = vi.validate(self._cand(),
+                             self._inv(dispositions={"X1": "confirmed_as:C9"}),
+                             strict=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("confirmed target C9" in e for e in result["errors"]))
+
+    def test_strict_treats_absent_coverage_as_an_error(self):
+        result = vi.validate(self._cand(), self._inv(coverage=False), strict=True)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("coverage block absent" in e for e in result["errors"]))
+        loose = vi.validate(self._cand(), self._inv(coverage=False), strict=False)
+        self.assertTrue(loose["ok"])
+        self.assertTrue(any("coverage block absent" in w for w in loose["warnings"]))
 
 
 class PaperPathTests(unittest.TestCase):

@@ -10,10 +10,13 @@ Checks, in order:
     verbatim substrings of that paragraph;
   * every cited R ID resolves to a reference in the inventory;
   * every candidate citation and reference has a disposition
-    (confirmed / rejected / merged_into:<id> / split_into:<id>,<id>);
-  * confirmed candidates map to a final item, merged/split targets exist;
+    (confirmed / confirmed_as:<id> / rejected / merged_into:<id> /
+    split_into:<id>,<id>);
+  * under --strict, every confirmed candidate has a corresponding final entry;
+  * merged/split targets exist;
   * every reference's verbatim text is a substring of the paper;
-  * coverage lists every paragraph, and counts reconcile.
+  * coverage lists every paragraph, and counts reconcile; under --strict an
+    absent coverage block is an error rather than a warning.
 
 Prints JSON {ok, errors, warnings, counts}. Exit code 1 when errors exist.
 This validator checks text integrity and bookkeeping, not judgment quality.
@@ -30,15 +33,67 @@ def fail(errors, message):
     errors.append(message)
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--candidates", required=True)
-    ap.add_argument("--inventory", required=True)
-    ap.add_argument("--strict", action="store_true")
-    args = ap.parse_args()
+def marker_matches(final_marker, candidate_marker):
+    """True when two markers name the same citation or one contains the other."""
+    final_marker = (final_marker or "").strip()
+    candidate_marker = (candidate_marker or "").strip()
+    return bool(final_marker and candidate_marker and (
+        final_marker == candidate_marker
+        or candidate_marker in final_marker
+        or final_marker in candidate_marker))
 
-    cand = json.load(open(args.candidates, encoding="utf-8"))
-    inv = json.load(open(args.inventory, encoding="utf-8"))
+
+def confirmed_target(candidate, finals, kind):
+    """Final entry that corresponds to a confirmed candidate, or None."""
+    candidate = candidate or {}
+    if kind == "reference":
+        verbatim = (candidate.get("verbatim") or "").strip()
+        for item in finals:
+            if verbatim and (item.get("verbatim") or "").strip() == verbatim:
+                return item.get("id")
+        return None
+    paragraph_id = candidate.get("paragraph_id", "")
+    marker = candidate.get("marker", "")
+    for item in finals:
+        if item.get("paragraph_id", "") != paragraph_id:
+            continue
+        if marker_matches(item.get("marker", ""), marker):
+            return item.get("id")
+    return None
+
+
+def check_disposition(candidate_id, value, finals, errors, strict=False,
+                      candidate=None, kind="citation"):
+    final_ids = {item.get("id") for item in finals}
+    if value == "rejected":
+        return
+    if isinstance(value, str) and value.startswith("confirmed_as:"):
+        target = value.split(":", 1)[1].strip()
+        if target not in final_ids:
+            errors.append(f"candidate {candidate_id}: confirmed target {target} not found")
+        return
+    if value == "confirmed":
+        if strict and confirmed_target(candidate, finals, kind) is None:
+            errors.append(
+                f"candidate {candidate_id}: confirmed but no final {kind} entry "
+                f"corresponds to it")
+        return
+    if isinstance(value, str) and value.startswith("merged_into:"):
+        target = value.split(":", 1)[1].strip()
+        if target and target not in final_ids:
+            errors.append(f"candidate {candidate_id}: merged target {target} not found")
+        return
+    if isinstance(value, str) and value.startswith("split_into:"):
+        targets = [t.strip() for t in value.split(":", 1)[1].split(",") if t.strip()]
+        missing = [t for t in targets if t not in final_ids]
+        if not targets or missing:
+            errors.append(f"candidate {candidate_id}: split targets missing {missing}")
+        return
+    errors.append(f"candidate {candidate_id}: invalid disposition {value!r}")
+
+
+def validate(cand, inv, strict=False):
+    """Errors, warnings and counts for one inventory; writes nothing."""
     paragraphs = {p["id"]: p["text"] for p in cand.get("paragraphs", [])}
     errors, warnings = [], []
 
@@ -88,61 +143,58 @@ def main():
             fail(errors, f"{rid}: verbatim entry is not a substring of the paper")
 
     dispositions = inv.get("dispositions", {})
-    candidate_cites = {c["id"] for c in cand.get("citations", [])}
-    candidate_refs = {r["id"] for r in cand.get("references", [])}
-    for xid in sorted(candidate_cites):
+    candidates = {c["id"]: c for c in cand.get("citations", [])}
+    candidate_refs = {r["id"]: r for r in cand.get("references", [])}
+    for xid in sorted(candidates):
         if xid not in dispositions:
             fail(errors, f"candidate {xid} has no disposition")
             continue
-        check_disposition(xid, dispositions[xid], occurrences, errors)
+        check_disposition(xid, dispositions[xid], occurrences, errors,
+                          strict=strict, candidate=candidates[xid], kind="citation")
     for rid in sorted(candidate_refs):
         if rid not in dispositions:
             fail(errors, f"candidate reference {rid} has no disposition")
             continue
-        check_disposition(rid, dispositions[rid], references, errors)
+        check_disposition(rid, dispositions[rid], references, errors,
+                          strict=strict, candidate=candidate_refs[rid], kind="reference")
 
     coverage = inv.get("coverage", {}) or {}
     scanned = set(coverage.get("paragraphs_scanned", []) or [])
     missing = [pid for pid in paragraphs if pid not in scanned]
     if coverage and missing:
         msg = f"coverage does not list {len(missing)} paragraph(s): {missing[:5]}"
-        (fail(errors, msg) if args.strict else warnings.append(msg))
+        (fail(errors, msg) if strict else warnings.append(msg))
     if not coverage:
-        warnings.append("coverage block absent; paragraph coverage cannot be checked")
+        msg = "coverage block absent; paragraph coverage cannot be checked"
+        (fail(errors, msg) if strict else warnings.append(msg))
 
     counts = {
         "occurrences": len(occurrences),
         "references": len(references),
         "works": len(works),
         "uncited": len(uncited),
-        "candidate_citations": len(candidate_cites),
+        "candidate_citations": len(candidates),
         "candidate_references": len(candidate_refs),
     }
     core_counts = {k: counts[k] for k in ("occurrences", "references", "works", "uncited")}
     if inv.get("counts") and inv["counts"] != core_counts:
         warnings.append(f"inventory counts {inv['counts']} differ from actual {core_counts}")
 
-    print(json.dumps({"ok": not errors, "errors": errors, "warnings": warnings,
-                      "counts": counts}, ensure_ascii=False, indent=1))
-    return 1 if errors else 0
+    return {"ok": not errors, "errors": errors, "warnings": warnings, "counts": counts}
 
 
-def check_disposition(candidate_id, value, finals, errors):
-    final_ids = {item.get("id") for item in finals}
-    if value in ("confirmed", "rejected"):
-        return
-    if isinstance(value, str) and value.startswith("merged_into:"):
-        target = value.split(":", 1)[1].strip()
-        if target and target not in final_ids:
-            errors.append(f"candidate {candidate_id}: merged target {target} not found")
-        return
-    if isinstance(value, str) and value.startswith("split_into:"):
-        targets = [t.strip() for t in value.split(":", 1)[1].split(",") if t.strip()]
-        missing = [t for t in targets if t not in final_ids]
-        if not targets or missing:
-            errors.append(f"candidate {candidate_id}: split targets missing {missing}")
-        return
-    errors.append(f"candidate {candidate_id}: invalid disposition {value!r}")
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--candidates", required=True)
+    ap.add_argument("--inventory", required=True)
+    ap.add_argument("--strict", action="store_true")
+    args = ap.parse_args()
+
+    cand = json.load(open(args.candidates, encoding="utf-8"))
+    inv = json.load(open(args.inventory, encoding="utf-8"))
+    result = validate(cand, inv, strict=args.strict)
+    print(json.dumps(result, ensure_ascii=False, indent=1))
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":

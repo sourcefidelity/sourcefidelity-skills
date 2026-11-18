@@ -6,7 +6,10 @@ You review one paper. Read this contract and your `task.json`; do not read the f
 
 Return `inventory.json`. Every candidate citation (`X#`) and reference (`R#`) gets exactly one disposition:
 
-- `confirmed` — a real occurrence/entry as listed;
+- `confirmed` — a real occurrence/entry as listed; `--strict` validation requires
+  a final C/R entry whose paragraph and marker (or verbatim reference text)
+  correspond to the candidate;
+- `confirmed_as:<id>` — confirmed, and the final entry is explicitly that ID;
 - `rejected` — a false positive (a film year, a title, a date);
 - `merged_into:<id>` — part of another occurrence;
 - `split_into:<id>,<id>` — a fused entry that is really several.
@@ -98,4 +101,4 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
 }
 ```
 
-Write `inventory.json` and `findings.json` separately. `render_review.py` checks them and renders the artifacts; do not write `review.md`, `ledger.md` or `summary.json` yourself.
+Write `inventory.json` and `findings.json` separately. `render_review.py --inventory` reconciles the findings' C/R/W/U IDs against the validated inventory and rejects a missing or invented ID, so every confirmed candidate must appear among the occurrences. If the paper genuinely has no citations, set `inventory_empty: true` and an explicit `status` in the findings, otherwise the renderer treats empty findings as an error. Do not write `review.md`, `ledger.md` or `summary.json` yourself.
