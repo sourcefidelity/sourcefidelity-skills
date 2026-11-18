@@ -624,6 +624,78 @@ class RenderValidationTests(unittest.TestCase):
         rr.reconcile(findings, inventory)
 
 
+class ReappraiseIdentityTests(unittest.TestCase):
+    def _data(self):
+        return {
+            "occurrences": {"total": 2, "supports": 1, "qualified": 0,
+                            "contradicts": 0, "not_supported": 0, "not_judged": 1},
+            "sources": [
+                {"source_key": "jenkins-2006", "retrieval": "unverifiable",
+                 "identity_outcome": "unverifiable", "search_status": "searched"},
+                {"source_key": "other-work", "retrieval": "identity_only",
+                 "identity_outcome": "search_incomplete", "search_status": "searched"},
+            ],
+            "nonexistent_sources": [
+                {"source": "Jenkins 2006", "source_key": "jenkins-2006", "r_id": "R1"},
+                {"source": "Jenkins 2006 again", "source_key": "jenkins-2006", "r_id": "R2"}],
+            "unverifiable_sources": [{"source": "Jenkins 2006", "source_key": "jenkins-2006",
+                                      "r_id": "R1"}],
+            "misrepresented_sources": [],
+            "flags": {"fabrication_risk": True},
+        }
+
+    def _task(self, status="supplied_confirmed"):
+        return {"sources": {"jenkins-2006": {
+                    "supplied_file": "/tmp/jenkins.pdf",
+                    "identity": {"title": "Convergence Culture", "year": 2006},
+                    "identity_status": status}},
+                "entries": [{"id": "C1", "prior": "Not Judged"}]}
+
+    def _judgments(self, **extra):
+        change = {"id": "C1", "prior": "Not Judged", "new": "Supports",
+                  "source_key": "jenkins-2006", "evidence": "quote"}
+        change.update(extra)
+        return {"changes": [change]}
+
+    def test_a_confirmed_supplied_copy_clears_the_finding_and_flag(self):
+        data = ra.render_summary_data(self._data(), self._task(), self._judgments(), "2026-11-18")
+        self.assertEqual(data["nonexistent_sources"], [])
+        self.assertEqual(data["unverifiable_sources"], [])
+        self.assertFalse(data["flags"]["fabrication_risk"])
+        source = next(s for s in data["sources"] if s["source_key"] == "jenkins-2006")
+        self.assertEqual(source["retrieval"], "retrieved")
+        self.assertEqual(source["identity_outcome"], "confirmed")
+        audit = data["reappraisal"]["identity_resolved"]
+        self.assertEqual(audit[0]["source_key"], "jenkins-2006")
+        self.assertEqual(audit[0]["prior_outcome"], "unverifiable")
+        self.assertEqual(audit[0]["removed_from"], ["nonexistent_sources",
+                                                   "unverifiable_sources"])
+
+    def test_an_ambiguous_supplied_copy_leaves_the_finding_in_place(self):
+        data = ra.render_summary_data(self._data(), self._task("ambiguous"),
+                                      self._judgments(), "2026-11-18")
+        self.assertEqual(len(data["nonexistent_sources"]), 2)
+        self.assertEqual(len(data["unverifiable_sources"]), 1)
+        self.assertTrue(data["flags"]["fabrication_risk"])
+        self.assertEqual(data["reappraisal"]["identity_unresolved"][0]["source_key"],
+                         "jenkins-2006")
+
+    def test_a_change_can_declare_the_identity_still_unresolved(self):
+        data = ra.render_summary_data(self._data(), self._task(),
+                                      self._judgments(identity_unresolved=True),
+                                      "2026-11-18")
+        self.assertEqual(len(data["nonexistent_sources"]), 2)
+        self.assertTrue(data["flags"]["fabrication_risk"])
+
+    def test_unrelated_sources_keep_their_entries(self):
+        data = self._data()
+        data["unverifiable_sources"].append({"source": "Other 2019",
+                                             "source_key": "other-work", "r_id": "R2"})
+        out = ra.render_summary_data(data, self._task(), self._judgments(), "2026-11-18")
+        self.assertEqual([e["source_key"] for e in out["unverifiable_sources"]],
+                         ["other-work"])
+
+
 class SourceKeyTests(unittest.TestCase):
     A = "Smith, J. (2020). Digital Media and Cultural Change. Journal A. doi:10.1000/aaa"
     B = "Smith, J. (2020). Digital Media and Cultural Comparison. Journal B. doi:10.1000/bbb"

@@ -65,4 +65,6 @@ You are revising a completed review after sources were supplied. This is **not**
 }
 ```
 
+Set `"identity_unresolved": true` on the change when the supplied copy is a different edition or work and does not resolve the citation's identity. Leave it out when the copy confirms the identity: the apply step then clears the prior nonexistent/unverifiable finding, records the earlier judgment in `reappraisal.identity_resolved`, and recomputes the flags.
+
 Use `unchanged` for scoped IDs whose judgment does not change, with the reason in `notes` if it matters. Every scoped ID must appear once, either in `changes` or `unchanged`. Return only the JSON, no prose around it.

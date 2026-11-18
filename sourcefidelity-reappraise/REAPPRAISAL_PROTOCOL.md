@@ -110,7 +110,7 @@ The log is append-only within a pass: never delete an earlier row. A prior judgm
 
 - Set `sources[].retrieval` to `retrieved` for the matched works, with `access_notes` describing the supplied copy.
 - Recompute `occurrences` counts from the revised entries and confirm they sum to `total`.
-- Recompute `misrepresented_sources`, `nonexistent_sources`, `unverifiable_sources` if the new evidence changes them. A work that was unverifiable and is now supplied and inspected is no longer unverifiable.
+- Recompute `misrepresented_sources`, `nonexistent_sources`, `unverifiable_sources` if the new evidence changes them. A work that was unverifiable and is now supplied and inspected is no longer unverifiable. `reappraise_apply.py` does this automatically for a confirmed supplied copy, records the prior outcome and the lists it cleared in `reappraisal.identity_resolved`, and leaves the finding in place — logged in `reappraisal.identity_unresolved` — when the copy is ambiguous or a change sets `identity_unresolved: true`.
 - Add or extend a `reappraisal` block:
 
 ```json

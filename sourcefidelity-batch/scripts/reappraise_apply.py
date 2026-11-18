@@ -260,6 +260,54 @@ def apply_ledger(path, changes, day):
     return updated
 
 
+def resolve_identity_findings(data, task, changes, day):
+    """Clear identity findings a confirmed supplied copy resolves.
+
+    The removal is recorded on the reappraisal block, so the earlier
+    nonexistent/unverifiable judgment stays auditable. An ambiguous copy, or a
+    change that declares the identity unresolved, leaves the finding in place.
+    """
+    sources = task.get("sources") or {}
+    single = next(iter(sources)) if len(sources) == 1 else None
+    resolved, unresolved = [], []
+    for key, info in sources.items():
+        aliases = {key} | set(info.get("aliases", []) or [])
+        scoped = [c for c in changes
+                  if (c.get("source_key") in aliases if c.get("source_key")
+                      else single in aliases)]
+        confirmed = (info.get("identity_status") == "supplied_confirmed"
+                     and bool(info.get("identity")))
+        if confirmed and not any(c.get("identity_unresolved") for c in scoped):
+            resolved.append((key, aliases))
+        else:
+            unresolved.append((key, "reported_unresolved" if confirmed
+                               else "identity_ambiguous"))
+    if not resolved and not unresolved:
+        return
+    block = data.setdefault("reappraisal", {"date": day,
+                                            "sources_added": list(sources)})
+    for key, aliases in resolved:
+        removed = []
+        for name in ("nonexistent_sources", "unverifiable_sources"):
+            entries = data.get(name) or []
+            kept = [e for e in entries if e.get("source_key") not in aliases]
+            if len(kept) != len(entries):
+                data[name] = kept
+                removed.append(name)
+        prior = ""
+        for src in data.get("sources", []) or []:
+            if src.get("source_key") in aliases:
+                prior = src.get("identity_outcome") or ""
+                src["identity_outcome"] = "confirmed"
+                src["retrieval"] = "retrieved"
+        block.setdefault("identity_resolved", []).append({
+            "date": day, "source_key": key, "prior_outcome": prior,
+            "removed_from": removed})
+    for key, reason in unresolved:
+        block.setdefault("identity_unresolved", []).append(
+            {"date": day, "source_key": key, "reason": reason})
+
+
 def render_summary_data(data, task, judgments, day):
     """Updated summary object, isolated from the caller's copy."""
     data = json.loads(json.dumps(data)) if data else {}
@@ -292,6 +340,7 @@ def render_summary_data(data, task, judgments, day):
             "unchanged": judgments.get("unchanged", []),
             "notes": [judgments.get("notes", "")] if judgments.get("notes") else [],
         }
+    resolve_identity_findings(data, task, changes, day)
     mis = [m for m in data.get("misrepresented_sources", []) if m.get("r_id") not in
            {c.get("r_id") for c in changes}]
     for change in changes:
