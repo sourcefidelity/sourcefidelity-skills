@@ -19,7 +19,7 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 - Python 3.12 or newer for the scripts.
 - `pypdf` for PDF text extraction.
 - `pymupdf` for the preferred PDF extraction layer (layout, OCR-page detection). Without it, or without a virtual environment beside the skill, extraction falls back to bare `pypdf`: counts and passage windows still work for native-text PDFs, but are reported as `counts_available: unknown` (or `false` for a file with no extractable text) and the review says so.
-- macOS for the default PDF OCR path (`sourcefidelity-review/scripts/pdfocr.swift` uses the Vision framework). Native-text PDFs and DOCX files work without OCR.
+- Tesseract OCR (optional, cross-platform) for image-only PDFs. Native-text PDFs and DOCX files work without it. Find it at https://github.com/tesseract-ocr/tesseract; install the language data you need (for example `eng` and `chi_sim`).
 - Optional: an MCP server that exposes the bibliographic adapters described in the review protocol. Without it, the skills can use the supplied files and direct web inspection, but identity resolution is more limited.
 - Optional API keys for Crossref, DataCite, OpenAlex, Semantic Scholar, CORE, Google Books and similar services, read from environment variables. Never put keys in a skill file, review, ledger or log.
 

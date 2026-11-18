@@ -37,14 +37,29 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 import time
 import warnings
 from datetime import datetime, timezone
 
-CACHE_ROOT = os.path.expanduser("~/Library/Caches/sourcefidelity-review")
-HELPER_SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdfocr.swift")
-HELPER_BIN = os.path.join(CACHE_ROOT, "pdfocr")
+def default_cache_root():
+    """Per-platform cache directory, overridable with SOURCEFIDELITY_CACHE."""
+    override = os.environ.get("SOURCEFIDELITY_CACHE")
+    if override:
+        return override
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Caches/sourcefidelity-review")
+    if os.name == "nt":
+        return os.path.join(os.environ.get("LOCALAPPDATA",
+                                           os.path.expanduser("~")),
+                            "sourcefidelity-review")
+    return os.path.join(os.environ.get("XDG_CACHE_HOME",
+                                       os.path.expanduser("~/.cache")),
+                        "sourcefidelity-review")
+
+
+CACHE_ROOT = default_cache_root()
 
 OCR_TIMEOUT_PER_PAGE = 45.0     # seconds; bounded per the reference
 OCR_MAX_OUTPUT = 64 * 1024 * 1024
@@ -94,63 +109,91 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# ---------------------------------------------------------------- Swift helper
+# ---------------------------------------------------------------- OCR backend
+
+def tesseract_langs(langs):
+    mapping = {"en-us": "eng", "en-gb": "eng", "zh-hans": "chi_sim",
+               "zh-hant": "chi_tra"}
+    out = []
+    for language in langs or []:
+        key = language.lower().replace("_", "-")
+        out.append(mapping.get(key, key.split("-")[0]))
+    return out or ["eng"]
+
 
 def helper_status():
-    """Return (path, None) when the OCR/render helper is usable, else (None, reason)."""
-    if not shutil.which("swiftc"):
-        return None, "swiftc not available; cannot build the local OCR helper"
-    if not os.path.exists(HELPER_SRC):
-        return None, f"helper source missing: {HELPER_SRC}"
-    if (not os.path.exists(HELPER_BIN)
-            or os.path.getmtime(HELPER_BIN) < os.path.getmtime(HELPER_SRC)):
-        try:
-            proc = subprocess.run(
-                ["swiftc", "-O", "-o", HELPER_BIN, HELPER_SRC],
-                capture_output=True, text=True, timeout=300,
-            )
-        except (subprocess.SubprocessError, OSError) as exc:
-            return None, f"helper build failed: {type(exc).__name__}"
-        if proc.returncode != 0:
-            detail = (proc.stderr or "").strip().splitlines()
-            return None, "helper build failed: " + (detail[-1][:200] if detail else "swiftc error")
-    return HELPER_BIN, None
+    """(tesseract path, None) when OCR is usable, else (None, reason)."""
+    binary = shutil.which("tesseract")
+    if not binary:
+        return None, ("Tesseract OCR not found. Install Tesseract, or supply a "
+                      "text-based PDF. Word counts and page locators are unavailable "
+                      "for image-only pages.")
+    return binary, None
+
+
+def _render_page(document, number, dpi):
+    page = document[number - 1]
+    pixmap = page.get_pixmap(dpi=dpi)
+    return pixmap.tobytes("png"), pixmap.width, pixmap.height
 
 
 def _run_helper(pdf, pages=None, dpi=300, ocr=True, render=False, langs=LANG_DEFAULT,
                 timeout=None):
-    binary, reason = helper_status()
-    if binary is None:
-        return {"error": reason, "service": "pdfocr"}
-    out_dir = os.path.join(cache_dir(sha256_file(pdf), "pages"))
-    cmd = [binary, "--pdf", pdf, "--out", out_dir, "--dpi", str(dpi)]
-    if pages:
-        cmd += ["--pages", ",".join(str(p) for p in pages)]
+    """Render pages with PyMuPDF and OCR them with Tesseract when asked."""
+    binary = None
     if ocr:
-        cmd.append("--ocr")
-    if render:
-        cmd.append("--render")
-    if langs:
-        cmd += ["--langs", ",".join(langs)]
-    budget = timeout or (OCR_TIMEOUT_PER_PAGE * max(1, len(pages or [1])))
+        binary, reason = helper_status()
+        if binary is None:
+            return {"error": reason, "service": "tesseract"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=budget)
-    except subprocess.TimeoutExpired:
-        return {"error": "helper timeout", "service": "pdfocr", "pages_requested": pages}
-    except OSError as exc:
-        return {"error": f"{type(exc).__name__}: {exc}", "service": "pdfocr"}
-    if proc.returncode != 0:
-        detail = (proc.stderr or b"")[:300].decode("utf-8", "replace")
-        return {"error": f"helper exit {proc.returncode}", "detail": detail,
-                "service": "pdfocr"}
-    if len(proc.stdout) > OCR_MAX_OUTPUT:
-        return {"error": "helper output exceeded cap", "service": "pdfocr"}
+        import pymupdf
+        document = pymupdf.open(pdf)
+    except Exception as exc:  # missing dependency or unreadable file
+        return {"error": f"PDF open failed: {type(exc).__name__}: {exc}",
+                "service": "pymupdf"}
+    digest = sha256_file(pdf)
     try:
-        data = json.loads(proc.stdout.decode("utf-8", "replace"))
-    except ValueError:
-        return {"error": "helper output was not JSON", "service": "pdfocr"}
-    data["_render_dir"] = out_dir
-    return data
+        out_dir = os.path.join(cache_dir(digest, "pages"))
+    except OSError:
+        out_dir = tempfile.mkdtemp(prefix="sourcefidelity-pages-")
+    records = []
+    try:
+        numbers = ([int(number) for number in pages] if pages else
+                   list(range(1, min(document.page_count, OCR_MAX_PAGES_DEFAULT) + 1)))
+        for number in numbers:
+            if number < 1 or number > document.page_count:
+                continue
+            png, width, height = _render_page(document, number, dpi)
+            record = {"pdf_page_1based": number, "page_label": "",
+                      "width": width, "height": height}
+            if render:
+                os.makedirs(out_dir, exist_ok=True)
+                path = os.path.join(out_dir, f"page-{number:04d}.png")
+                with open(path, "wb") as handle:
+                    handle.write(png)
+                record["png"] = path
+            if ocr:
+                budget = timeout or OCR_TIMEOUT_PER_PAGE
+                try:
+                    proc = subprocess.run(
+                        [binary, "stdin", "stdout", "-l",
+                         "+".join(tesseract_langs(langs))],
+                        input=png, capture_output=True, timeout=budget)
+                except subprocess.TimeoutExpired:
+                    return {"error": "OCR timeout", "service": "tesseract",
+                            "pages_requested": numbers}
+                if proc.returncode != 0:
+                    detail = (proc.stderr or b"")[:300].decode("utf-8", "replace")
+                    return {"error": "Tesseract failed", "detail": detail,
+                            "service": "tesseract"}
+                text = proc.stdout.decode("utf-8", "replace")
+                record["lines"] = [{"bbox": None, "text": line.strip()}
+                                   for line in text.splitlines() if line.strip()]
+                record["mean_confidence"] = None
+            records.append(record)
+    finally:
+        document.close()
+    return {"pages": records, "_render_dir": out_dir}
 
 
 # ---------------------------------------------------------------- classification
@@ -718,7 +761,7 @@ def inspect_pdf(path, *, dpi=300, langs=LANG_DEFAULT, ocr_pages=None,
         if ocr_result.get("error"):
             helper_reason = ocr_result["error"]
             if not render:
-                # Retry once for rendering only, which does not need Vision.
+                # Retry once for rendering only, which does not need Tesseract.
                 ocr_result = _run_helper(path, pages=wanted, dpi=dpi, ocr=False,
                                          render=True, langs=langs)
 
@@ -738,7 +781,7 @@ def inspect_pdf(path, *, dpi=300, langs=LANG_DEFAULT, ocr_pages=None,
                 text = "\n".join(line.get("text", "") for line in lines)
                 page["ocr"] = {
                     "state": "done",
-                    "route": "vision",
+                    "route": "tesseract",
                     "line_count": len(lines),
                     "mean_confidence": ocr.get("mean_confidence"),
                     "text": text,
@@ -1060,7 +1103,7 @@ def ocr_text(path, pages, *, dpi=300, langs=LANG_DEFAULT, render=True):
         "checked_at": _now(),
         "dpi": dpi,
         "languages": list(langs),
-        "route": "vision-ocr",
+        "route": "tesseract-ocr",
         "permitted_use": "provisional: verify against the rendered page before quoting",
         "pages": out,
     }

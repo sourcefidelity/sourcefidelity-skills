@@ -37,6 +37,7 @@ import file_digest as fd  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import make_task as mt  # noqa: E402
 import page_map  # noqa: E402
+import pdf_quality as pq  # noqa: E402
 import paper_index as pi  # noqa: E402
 import reappraise_apply as ra  # noqa: E402
 import redact_identity as ri  # noqa: E402
@@ -716,6 +717,55 @@ class InstallerTests(unittest.TestCase):
                              env={"PATH": "/usr/bin:/bin"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
+
+
+class OcrBackendTests(unittest.TestCase):
+    def _pdf(self, tmp):
+        import pymupdf
+        path = os.path.join(tmp, "paper.pdf")
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_text((72, 72), "Image-only page text")
+        document.save(path)
+        document.close()
+        return path
+
+    def test_missing_tesseract_is_a_stated_limitation(self):
+        with mock.patch.object(pq.shutil, "which", return_value=None):
+            result = pq._run_helper("paper.pdf", pages=[1], ocr=True)
+        self.assertIn("Tesseract", result["error"])
+
+    def test_cache_root_respects_the_environment_override(self):
+        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": "/tmp/sf-cache"}):
+            self.assertEqual(pq.default_cache_root(), "/tmp/sf-cache")
+
+    def test_rendering_uses_pymupdf_without_ocr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._pdf(tmp)
+            with mock.patch.object(pq, "CACHE_ROOT", os.path.join(tmp, "cache")):
+                result = pq._run_helper(path, pages=[1], ocr=False, render=True)
+            self.assertNotIn("error", result)
+            page = result["pages"][0]
+            self.assertEqual(page["pdf_page_1based"], 1)
+            self.assertTrue(os.path.exists(page["png"]))
+            self.assertGreater(page["width"], 0)
+
+    def test_tesseract_reads_a_rendered_page(self):
+        if not pq.shutil.which("tesseract"):
+            self.skipTest("Tesseract is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._pdf(tmp)
+            with mock.patch.object(pq, "CACHE_ROOT", os.path.join(tmp, "cache")):
+                result = pq.ocr_text(path, [1])
+        self.assertNotIn("error", result)
+        self.assertEqual(result["route"], "tesseract-ocr")
+        self.assertIn("Image", result["pages"][0]["text"])
+
+    def test_ocr_text_reports_the_missing_backend(self):
+        with mock.patch.object(pq, "helper_status",
+                               return_value=(None, "Tesseract OCR not found.")):
+            result = pq.ocr_text("paper.pdf", [1])
+        self.assertIn("Tesseract", result["error"])
 
 
 class RedactionTests(unittest.TestCase):
