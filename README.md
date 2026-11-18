@@ -17,6 +17,8 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 ## Requirements
 
 - Python 3.12 or newer for the scripts.
+- `pypdf` for PDF text extraction.
+- `pymupdf` for the preferred PDF extraction layer (layout, OCR-page detection). Without it, or without a virtual environment beside the skill, extraction falls back to bare `pypdf`: counts and passage windows still work for native-text PDFs, but are reported as `counts_available: unknown` (or `false` for a file with no extractable text) and the review says so.
 - macOS for the default PDF OCR path (`sourcefidelity-review/scripts/pdfocr.swift` uses the Vision framework). Native-text PDFs and DOCX files work without OCR.
 - Optional: an MCP server that exposes the bibliographic adapters described in the review protocol. Without it, the skills can use the supplied files and direct web inspection, but identity resolution is more limited.
 - Optional API keys for Crossref, DataCite, OpenAlex, Semantic Scholar, CORE, Google Books and similar services, read from environment variables. Never put keys in a skill file, review, ledger or log.
@@ -33,6 +35,15 @@ Copy the three skill directories into the skills directory used by your agent ho
 ```
 
 Keep the directory names unchanged; the batch and reappraisal skills refer to scripts in the sibling skills.
+
+Each skill resolves its extraction layer from a `.venv` beside itself (`<skill>/.venv/bin/python`), because the installed skills run from that directory. Build it once per skill that will read PDFs:
+
+```bash
+python3.12 -m venv sourcefidelity-review/.venv
+sourcefidelity-review/.venv/bin/pip install pypdf pymupdf
+```
+
+Verify the installation with the offline suites in [Tests](#tests); the PDF-quality suite reports layout checks as skipped when PyMuPDF is absent, which is the signal that the preferred extraction layer is not wired up.
 
 ## Data and privacy
 

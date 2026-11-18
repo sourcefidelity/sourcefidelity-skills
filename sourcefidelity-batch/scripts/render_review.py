@@ -159,7 +159,13 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     lines.append(f"**Status:** {findings.get('status', 'complete')}  ")
     lines.append("")
     wc = paper["word_counts"]
-    lines.append(f"Word counts: total {wc['total']}; text {wc['text']}; references {wc['references']}.")
+    counts_note = ""
+    if wc.get("counts_available") not in (None, True, "unknown"):
+        counts_note = " (counts unavailable; see export)"
+    elif wc.get("counts_available") == "unknown":
+        counts_note = " (counts from the pypdf fallback; may be partial)"
+    lines.append(f"Word counts: total {wc['total']}; text {wc['text']}; "
+                 f"references {wc['references']}.{counts_note}")
     lines.append("")
     block = review_metrics.render_block(metrics or {})
     if block:

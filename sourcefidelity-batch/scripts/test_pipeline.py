@@ -43,6 +43,7 @@ import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
+import word_count as wc  # noqa: E402
 
 
 def page(pdf, printed, text):
@@ -625,6 +626,32 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class WordCountProvenanceTests(unittest.TestCase):
+    def test_an_unavailable_extraction_layer_is_reported(self):
+        with mock.patch.object(wc, "pdf_blocks", return_value=([], None)):
+            result = wc.count("paper.pdf")
+        self.assertIs(result["counts_available"], False)
+        self.assertEqual(result["extraction"]["engine"], "pypdf fallback")
+        self.assertTrue(any("OCR unavailable" in w for w in result["warnings"]))
+
+    def test_partial_fallback_counts_are_marked_unknown(self):
+        with mock.patch.object(wc, "pdf_blocks", return_value=(["some words here"], None)):
+            result = wc.count("paper.pdf")
+        self.assertEqual(result["counts_available"], "unknown")
+        self.assertTrue(any("may be partial" in w for w in result["warnings"]))
+
+    def test_the_review_notes_fallback_counts(self):
+        paper = {"paper_id": "P1", "path": "/tmp/a.pdf",
+                 "word_counts": {"total": 2, "text": 2, "references": 0,
+                                 "counts_available": "unknown"}}
+        findings = {"title": "T", "date": "2026-11-18", "status": "complete",
+                    "summary": {}, "occurrences": [], "references": [],
+                    "works": [], "uncited": [], "audit": {},
+                    "inventory_empty": True}
+        text = rr.render_md(paper, findings, rr.counts(findings), {})
+        self.assertIn("pypdf fallback", text)
 
 
 class EvidenceWindowTests(unittest.TestCase):

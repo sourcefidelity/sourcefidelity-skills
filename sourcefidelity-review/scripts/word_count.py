@@ -164,11 +164,13 @@ def count(path, ref_start_block=None, ref_heading=None):
         raise ValueError("use only one of --ref-start-block and --ref-heading")
     lower = path.lower()
     extraction = None
+    pdf_fallback = False
     if lower.endswith(".docx"):
         blocks = docx_blocks(path)
         method = "docx body paragraphs and table text; whitespace-delimited tokens"
     elif lower.endswith(".pdf"):
         blocks, extraction = pdf_blocks(path)
+        pdf_fallback = extraction is None
         engine = (extraction or {}).get("engine") or "pypdf"
         method = f"pdf text lines via {engine}; whitespace-delimited tokens"
     elif lower.endswith((".txt", ".md")):
@@ -247,6 +249,14 @@ def count(path, ref_start_block=None, ref_heading=None):
     total = text_words + ref_words
     if total == 0:
         warnings.append("no extractable text; the file may be image-only or empty")
+        if pdf_fallback:
+            warnings.append(
+                "OCR unavailable: no skill .venv with PyMuPDF, so image-only pages "
+                "are not counted and counts_available is false")
+    elif pdf_fallback:
+        warnings.append(
+            "PDF extraction layer unavailable; counts come from bare pypdf and "
+            "may be partial")
 
     result = {
         "source": path,
@@ -273,6 +283,16 @@ def count(path, ref_start_block=None, ref_heading=None):
         if available is False:
             warnings.append("counts unavailable: too little text was extracted to "
                             "report a word count; report the reason instead of a number")
+    else:
+        result["counts_available"] = False if total == 0 else "unknown"
+        result["counts_complete"] = None
+        result["extraction"] = {
+            "engine": "pypdf fallback",
+            "ocr_pages": [],
+            "missing_text_pages": [],
+            "unavailable_reason": "extraction layer not available "
+                                  "(no skill .venv with PyMuPDF)",
+        }
     return result
 
 

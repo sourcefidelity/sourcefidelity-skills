@@ -118,8 +118,12 @@ def main():
             "paper_id": pid,
             "path": path,
             "kind": "pdf" if path.lower().endswith(".pdf") else "docx",
-            "word_counts": {k: counts.get(k, 0) for k in ("total", "text", "references")},
+            "word_counts": {
+                **{k: counts.get(k, 0) for k in ("total", "text", "references")},
+                "counts_available": counts.get("counts_available", "unknown"),
+            },
             "word_warnings": counts.get("warnings", []),
+            "extraction": counts.get("extraction", {}),
             "document_metadata": metadata,
             "candidates": os.path.join(folder, "candidates.json"),
             "paragraphs": len(candidates.get("paragraphs", [])),
