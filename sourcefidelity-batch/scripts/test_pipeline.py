@@ -42,6 +42,7 @@ import record_metrics as rec  # noqa: E402
 import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
+import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import word_count as wc  # noqa: E402
@@ -627,6 +628,84 @@ class RenderValidationTests(unittest.TestCase):
         inventory = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         findings = {"occurrences": [{"id": "C1"}], "references": [{"id": "R1"}]}
         rr.reconcile(findings, inventory)
+
+
+class FetchPolicyTests(unittest.TestCase):
+    class Response:
+        def __init__(self, status, headers, body, url):
+            self.status = status
+            self.headers = headers
+            self._body = body
+            self._url = url
+
+        def read(self, amount):
+            return self._body[:amount]
+
+        def geturl(self):
+            return self._url
+
+    def _transport(self, routes, calls=None):
+        def transport(url, timeout):
+            if calls is not None:
+                calls.append(url)
+            status, headers, body = routes[url]
+            return self.Response(status, headers, body, url)
+        return transport
+
+    def test_refuses_a_non_http_scheme(self):
+        calls = []
+        out = sf.fetch("file:///etc/passwd",
+                       network=self._transport({}, calls), resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "unsupported_scheme")
+        self.assertEqual(calls, [])
+
+    def test_refuses_embedded_credentials(self):
+        out = sf.fetch("https://user:pass@example.com/x",
+                       network=self._transport({}), resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "credentials_in_url")
+
+    def test_refuses_private_and_loopback_hosts(self):
+        for url in ("http://127.0.0.1/x", "http://localhost/x", "http://169.254.1.1/x"):
+            out = sf.fetch(url, network=self._transport({}),
+                           resolver=lambda h: {"93.184.216.34"})
+            self.assertEqual(out["limitation"], "private_host", url)
+        out = sf.fetch("http://evil.example/x", network=self._transport({}),
+                       resolver=lambda h: {"10.0.0.5"})
+        self.assertEqual(out["limitation"], "private_host")
+
+    def test_rechecks_each_redirect(self):
+        calls = []
+        routes = {"https://example.com/a": (302, {"Location": "http://127.0.0.1/b"}, b"")}
+        out = sf.fetch("https://example.com/a", network=self._transport(routes, calls),
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "private_host")
+        self.assertEqual(calls, ["https://example.com/a"])
+
+    def test_follows_an_allowed_redirect(self):
+        routes = {
+            "https://example.com/a": (302, {"Location": "https://example.com/b"}, b""),
+            "https://example.com/b": (200, {"Content-Type": "text/html; charset=utf-8"},
+                                      b"<html><body>cited text</body></html>"),
+        }
+        out = sf.fetch("https://example.com/a", network=self._transport(routes),
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "")
+        self.assertEqual(out["final_url"], "https://example.com/b")
+        self.assertIn("cited text", out["text"])
+
+    def test_enforces_a_byte_cap(self):
+        routes = {"https://example.com/x": (200, {"Content-Type": "text/plain"}, b"a" * 100)}
+        out = sf.fetch("https://example.com/x", max_bytes=10,
+                       network=self._transport(routes),
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertTrue(out["truncated"])
+        self.assertEqual(out["bytes"], 10)
+
+    def test_rejects_a_disallowed_content_type(self):
+        routes = {"https://example.com/x": (200, {"Content-Type": "application/zip"}, b"PK")}
+        out = sf.fetch("https://example.com/x", network=self._transport(routes),
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "content_type")
 
 
 class CohortS1Tests(unittest.TestCase):
