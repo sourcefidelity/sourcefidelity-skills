@@ -318,7 +318,7 @@ def count(path, ref_start_block=None, ref_heading=None):
         if available is False:
             warnings.append("counts unavailable: too little text was extracted to "
                             "report a word count; report the reason instead of a number")
-    else:
+    elif pdf_fallback:
         result["counts_available"] = False if total == 0 else "unknown"
         result["counts_complete"] = None
         result["extraction"] = {
@@ -328,6 +328,8 @@ def count(path, ref_start_block=None, ref_heading=None):
             "unavailable_reason": "extraction layer not available "
                                   "(no skill .venv with PyMuPDF)",
         }
+    else:
+        result["counts_available"] = True
     return result
 
 

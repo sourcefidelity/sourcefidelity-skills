@@ -1089,6 +1089,15 @@ class WordCountProvenanceTests(unittest.TestCase):
         self.assertEqual(result["counts_available"], "unknown")
         self.assertTrue(any("may be partial" in w for w in result["warnings"]))
 
+    def test_plain_text_counts_are_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            open(path, "w", encoding="utf-8").write(
+                "Body words here.\nReferences\nSmith, J. (2020). A work.\n")
+            result = wc.count(path)
+        self.assertIs(result["counts_available"], True)
+        self.assertNotIn("extraction", result)
+
     def test_the_review_notes_fallback_counts(self):
         paper = {"paper_id": "P1", "path": "/tmp/a.pdf",
                  "word_counts": {"total": 2, "text": 2, "references": 0,
