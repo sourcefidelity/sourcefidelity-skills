@@ -318,7 +318,43 @@ IDENTITY_OUTCOME_ALIASES = {
     "unresolved": "search_incomplete",
     "not_checked": "search_incomplete",
     "not_retrieved": "search_incomplete",
+    # Worker vocabulary observed in the field; normalised to the summary enum.
+    "artifact": "insufficient_metadata",
+    "fragment": "insufficient_metadata",
+    "mismatch": "bibliographic_conflict",
+    "confirmed_at_issue_level": "confirmed",
+    "confirmed_with_edition_mismatch": "confirmed_with_minor_differences",
+    "confirmed_work_item_unlocated": "possible_match",
+    "confirmed_work_unread": "confirmed",
+    "item_identified": "confirmed",
+    "not_assessed": "search_incomplete",
+    "supplied_confirmed": "confirmed",
+    "unverified": "unlocated_after_search",
+    "unverified_bot_block": "unlocated_after_search",
+    "unverified_dead_link": "unlocated_after_search",
+    "unverified_redirect": "unlocated_after_search",
+    "wrong_work_link": "bibliographic_conflict",
 }
+
+IDENTITY_OUTCOMES = {"confirmed", "confirmed_with_minor_differences", "possible_match",
+                     "bibliographic_conflict", "nonexistent_as_cited",
+                     "unlocated_after_search", "insufficient_metadata", "search_incomplete"}
+
+
+RETRIEVALS = {"retrieved", "not_retrieved", "identity_only", "nonexistent", "unverifiable"}
+
+
+def canonical_retrieval(value):
+    if value in RETRIEVALS:
+        return value
+    if isinstance(value, str) and (value.startswith("retrieved") or value.startswith("shared")):
+        return "retrieved"
+    return "not_retrieved"
+
+
+def canonical_outcome(value):
+    value = IDENTITY_OUTCOME_ALIASES.get(value, value)
+    return value if value in IDENTITY_OUTCOMES else "search_incomplete"
 
 
 def render_summary(paper, findings, occ_counts, registry, profile, root, metrics=None):
@@ -331,15 +367,15 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
         rec = registry.get(key, {})
         obj = registry.get(rec.get("source_object_key"), rec) if rec else {}
         outcome = ref.get("identity_outcome")
-        outcome = IDENTITY_OUTCOME_ALIASES.get(outcome, outcome)
+        outcome = canonical_outcome(outcome)
         entry = by_key.setdefault(key, {
             "source_key": key,
             "source": (rec.get("identity", {}) or {}).get("verbatim") or ref.get("verbatim", ""),
             "r_ids": [], "c_ids": [], "citation_count": 0,
-            "retrieval": ref.get("retrieval") or (
+            "retrieval": canonical_retrieval(ref.get("retrieval") or (
                           "retrieved" if obj.get("extraction") or rec.get("extraction")
                           else "identity_only" if obj.get("supplied_file") or rec.get("supplied_file")
-                          else "not_retrieved"),
+                          else "not_retrieved")),
             "identity_outcome": outcome or (
                                  "confirmed" if obj.get("extraction") and not
                                  (obj.get("identity_status") == "nonexistent")

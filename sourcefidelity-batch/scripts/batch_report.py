@@ -34,6 +34,14 @@ ABBREV_END = re.compile(r"\b(?:pp|p|vol|no|nos|ed|eds|al|Jr|vs|cf|e\.g|i\.e)\.$"
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(])")
 
 
+def _rid(item):
+    """A source name from a summary record that may use any of several keys."""
+    if isinstance(item, str):
+        return item
+    return (item.get("source_key") or item.get("id") or item.get("work")
+            or item.get("r_id") or "")
+
+
 def clip(text, limit=230):
     text = " ".join((text or "").split())
     first = text
@@ -72,8 +80,13 @@ def flags(r):
     Unverifiable sources do not count toward the fabrication flag: a work that
     could not be reached may exist. The flag asserts invented works only.
     """
-    mr = {s["source_key"] for s in r["misrepresented_sources"]}
-    nx = {s["source_key"] for s in r["nonexistent_sources"]}
+    def _key(item):
+        if isinstance(item, str):
+            return item
+        return (item.get("source_key") or item.get("id") or item.get("work")
+                or item.get("r_id") or "")
+    mr = {_key(s) for s in r["misrepresented_sources"]}
+    nx = {_key(s) for s in r["nonexistent_sources"]}
     return len(mr) >= MISREP_THRESHOLD, len(nx) >= FAB_NONEXISTENT_THRESHOLD
 
 
@@ -336,9 +349,9 @@ def main():
     w("## Source-level patterns (secondary)\n")
     pattern = {}
     for r in rows:
-        for key in ([s.get("source_key", "") for s in r["misrepresented_sources"]]
-                    + [s.get("source_key", "") for s in r["nonexistent_sources"]]
-                    + [s.get("source_key", "") for s in r["unverifiable_sources"]]):
+        for key in ([_rid(s) for s in r["misrepresented_sources"]]
+                    + [_rid(s) for s in r["nonexistent_sources"]]
+                    + [_rid(s) for s in r["unverifiable_sources"]]):
             if not key:
                 continue
             pattern.setdefault(key, []).append(r["paper_id"])
@@ -353,11 +366,11 @@ def main():
         for key, papers in sorted(hits.items()):
             statuses = set()
             for r in rows:
-                if any(s["source_key"] == key for s in r["misrepresented_sources"]):
+                if any(_rid(s) == key for s in r["misrepresented_sources"]):
                     statuses.add("misrepresented")
-                if any(s["source_key"] == key for s in r["nonexistent_sources"]):
+                if any(_rid(s) == key for s in r["nonexistent_sources"]):
                     statuses.add("nonexistent")
-                if any(s["source_key"] == key for s in r["unverifiable_sources"]):
+                if any(_rid(s) == key for s in r["unverifiable_sources"]):
                     statuses.add("unverifiable")
             w(f"| {key} | {len(set(papers))} | {' / '.join(sorted(statuses))} | "
               f"{', '.join(sorted(set(papers)))} |")

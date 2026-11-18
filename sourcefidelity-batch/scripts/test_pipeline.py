@@ -879,6 +879,15 @@ class WebFetchTests(unittest.TestCase):
         self.assertEqual(meta["limitation"], "content_type")
 
 
+class CanonicalFieldTests(unittest.TestCase):
+    def test_worker_vocabulary_is_normalised_before_validation(self):
+        self.assertEqual(rr.canonical_outcome("unverified_redirect"), "unlocated_after_search")
+        self.assertEqual(rr.canonical_outcome("confirmed_at_issue_level"), "confirmed")
+        self.assertEqual(rr.canonical_outcome("weird_outcome"), "search_incomplete")
+        self.assertEqual(rr.canonical_retrieval("retrieved_shared_window"), "retrieved")
+        self.assertEqual(rr.canonical_retrieval("weird"), "not_retrieved")
+
+
 class TaskMatchingTests(unittest.TestCase):
     REFS = [
         {"id": "R2", "verbatim": "Hardy, J. (2010). Dynamics and varieties of cross-media promotion. In Cross-media promotion (pp. 3-32). Peter Lang."},
