@@ -948,7 +948,7 @@ class RedactionTests(unittest.TestCase):
             'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
 
     def _docx(self, tmp, paragraphs, creator="Michael High",
-              modified_by="Administrator"):
+              modified_by="Administrator", header=None):
         path = os.path.join(tmp, "paper.docx")
         body = "".join(
             "<w:p>" + "".join(f'<w:r><w:t xml:space="preserve">{chunk}</w:t></w:r>'
@@ -970,6 +970,12 @@ class RedactionTests(unittest.TestCase):
             archive.writestr("_rels/.rels", self.RELS)
             archive.writestr("word/document.xml", document)
             archive.writestr("docProps/core.xml", core)
+            if header:
+                archive.writestr(
+                    "word/header1.xml",
+                    '<?xml version="1.0" encoding="UTF-8"?>'
+                    '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/'
+                    '2006/main"><w:p><w:r><w:t>' + header + "</w:t></w:r></w:p></w:hdr>")
         return path
 
     def _read(self, path, member):
@@ -1036,6 +1042,16 @@ class RedactionTests(unittest.TestCase):
             ri.redact_file(source, out, tier=2)
             document = self._read(out, "word/document.xml")
         self.assertNotIn("2023123456", document)
+
+    def test_tier_two_masks_a_header_identity_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self._docx(tmp, [["Body only."]],
+                                header="Student ID: 2023123456")
+            out = os.path.join(tmp, "copy.docx")
+            ri.redact_file(source, out, tier=2)
+            header = self._read(out, "word/header1.xml")
+        self.assertNotIn("2023123456", header)
+        self.assertIn("Student ID: " + "*" * 10, header)
 
     def test_tier_two_warns_when_no_label_is_found(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -138,6 +138,7 @@ def redact_docx(source, output, tier=1):
     report = {"source": source, "output": output, "tier": tier,
               "metadata_stripped": [], "masked": 0, "warnings": [],
               "limitations": []}
+    label_hits = 0
     with zipfile.ZipFile(source) as reader, \
             zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as writer:
         for item in reader.infolist():
@@ -148,19 +149,22 @@ def redact_docx(source, output, tier=1):
             elif item.filename == "docProps/app.xml":
                 data = strip_app_metadata(data.decode("utf-8")).encode("utf-8")
                 report["metadata_stripped"].append("docProps/app.xml")
-            elif tier == 2 and item.filename == "word/document.xml":
+            elif tier == 2 and (item.filename == "word/document.xml"
+                                or re.match(r"word/(?:header|footer)\d*\.xml$",
+                                            item.filename)):
                 text, masked, labels = mask_document_xml(data.decode("utf-8"))
                 data = text.encode("utf-8")
                 report["masked"] += masked
-                if masked and not labels:
-                    report["warnings"].append(
-                        "identity values were masked, but no labelled identity line "
-                        "was found; follow the title-block convention in the README")
-                elif not masked:
-                    report["warnings"].append(
-                        "no labelled identity line was found; if this paper has an "
-                        "unlabelled title block, anonymise it before review")
+                label_hits += labels
             writer.writestr(item, data)
+    if tier == 2 and report["masked"] and not label_hits:
+        report["warnings"].append(
+            "identity values were masked, but no labelled identity line was found; "
+            "follow the title-block convention in the README")
+    elif tier == 2 and not report["masked"]:
+        report["warnings"].append(
+            "no labelled identity line was found; if this paper has an unlabelled "
+            "title block, anonymise it before review")
     report["limitations"].append(
         "names in body text, images and scans are not masked; quoted passages "
         "can still identify a writer")
