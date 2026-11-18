@@ -13,7 +13,12 @@ from __future__ import annotations
 
 import argparse
 import glob
-import paper_index
+import os as _bootstrap_os
+import sys as _bootstrap_sys
+_BOOTSTRAP_HERE = _bootstrap_os.path.dirname(_bootstrap_os.path.abspath(__file__))
+if _BOOTSTRAP_HERE not in _bootstrap_sys.path:
+    _bootstrap_sys.path.insert(0, _BOOTSTRAP_HERE)
+import paper_index  # noqa: E402
 import json
 import os
 import sys

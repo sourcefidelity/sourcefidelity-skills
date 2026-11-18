@@ -820,6 +820,18 @@ class InstallerTests(unittest.TestCase):
             self.assertIn("prompt-only", proc.stdout)
 
 
+class ScriptBootstrapTests(unittest.TestCase):
+    SCRIPTS = ("source_registry.py", "batch_report.py", "acquisition_list.py",
+               "validate_batch.py", "audit_tasks.py", "align_report.py")
+
+    def test_batch_scripts_start_in_isolated_mode(self):
+        for script in self.SCRIPTS:
+            proc = subprocess.run(
+                [sys.executable, "-I", os.path.join(HERE, script), "--help"],
+                capture_output=True, text=True, cwd=HERE)
+            self.assertEqual(proc.returncode, 0, f"{script}: {proc.stderr[-300:]}")
+
+
 class InterpreterResolutionTests(unittest.TestCase):
     def _skill(self, tmp, venv=True):
         skill = os.path.join(tmp, "sourcefidelity-review")
