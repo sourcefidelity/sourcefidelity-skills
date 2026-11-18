@@ -808,9 +808,14 @@ class InstallerTests(unittest.TestCase):
     def test_absent_python_reports_prompt_only_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "skills")
-            empty = os.path.join(tmp, "empty-bin")
-            os.makedirs(empty)
-            proc = self._run("--dry-run", "--target", target, env={"PATH": empty})
+            shim = os.path.join(tmp, "shim-bin")
+            os.makedirs(shim)
+            for name in ("python3", "python3.12"):
+                path = os.path.join(shim, name)
+                open(path, "w").write("#!/bin/sh\nexit 1\n")
+                os.chmod(path, 0o755)
+            proc = self._run("--dry-run", "--target", target,
+                             env={"PATH": shim + os.pathsep + "/usr/bin:/bin"})
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
 
