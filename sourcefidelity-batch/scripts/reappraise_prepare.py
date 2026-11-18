@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -108,6 +109,49 @@ def window_hits(text_cache, citation, identity, container, page_range):
     return hits
 
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run_prepare_source(path, out, key):
+    """Extract one supplied copy; prepare_source reuses a matching hash."""
+    subprocess.run([sys.executable, "-I",
+                    os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
+                    "--pdf", path, "--out", out, "--key", key],
+                   capture_output=True)
+
+
+def prepare_extraction(root, key, path):
+    """Bind the extraction to this exact supplied copy.
+
+    Reuses the stored extraction only when its recorded SHA-256 matches the
+    supplied file. A different edition is re-extracted; if that fails, the
+    caller gets a limitation instead of another copy's text.
+    """
+    digest = sha256_file(path)
+    out = os.path.join(root, "_sources", key)
+    meta = load(os.path.join(out, "meta.json"), {})
+    if meta.get("sha256") != digest:
+        run_prepare_source(path, out, key)
+        meta = load(os.path.join(out, "meta.json"), {})
+        if not meta:
+            return {"extraction": "", "page_map": {}, "sha256": digest,
+                    "limitation": "extraction_failed"}
+        if meta.get("sha256") != digest:
+            return {"extraction": "", "page_map": {}, "sha256": digest,
+                    "limitation": "supplied_copy_not_extracted"}
+    text = os.path.join(out, "text.txt")
+    if not os.path.exists(text):
+        return {"extraction": "", "page_map": {}, "sha256": digest,
+                "limitation": "extraction_failed"}
+    return {"extraction": text, "page_map": meta.get("offset", {}) or {},
+            "sha256": digest, "limitation": ""}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
@@ -146,18 +190,11 @@ def main():
         rec = registry.get(key, {})
         object_key = rec.get("source_object_key", key)
         obj = registry.get(object_key, rec)
-        extraction = obj.get("extraction") or rec.get("extraction", "")
+        bound = prepare_extraction(root, key, path)
+        extraction = bound["extraction"]
         identity = obj.get("identity", rec.get("identity", {}))
         page_range = rec.get("page_range", [])
         restrict = bool(rec.get("restrict_pages"))
-        if not extraction or not os.path.exists(extraction):
-            out = os.path.join(root, "_sources", key)
-            subprocess.run([sys.executable, "-I",
-                            os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
-                            "--pdf", path, "--out", out, "--key", key],
-                           capture_output=True)
-            meta = load(os.path.join(out, "meta.json"), {})
-            extraction = os.path.join(out, "text.txt") if meta else ""
         text_cache = None
         if extraction and os.path.exists(extraction):
             text_cache = make_task.page_index(extraction)
@@ -205,26 +242,13 @@ def main():
                     "prior": entry.get("prior", ""),
                     "block": entry.get("block", "")[:2500],
                 })
-            task = {
-                "paper_id": pid,
-                "source_key": key,
-                "supplied_file": path,
-                "identity": identity,
-                "identity_status": "supplied_confirmed",
-                "work_kind": rec.get("work_kind", ""),
-                "form_issue": rec.get("form_issue", ""),
-                "page_range": page_range,
-                "restrict_pages": restrict,
-                "extraction": extraction,
-                "page_map": rec.get("page_map", {}),
-                "entries": entries,
-                "windows": windows,
-            }
             bucket = by_paper.setdefault(pid, {"paper_id": pid, "sources": {},
                                                "entries": [], "windows": {}})
             bucket["sources"][key] = {
                 "supplied_file": path, "identity": identity,
-                "extraction": extraction, "page_map": obj.get("page_map", {}),
+                "extraction": extraction, "page_map": bound["page_map"],
+                "supplied_sha256": bound["sha256"],
+                "extraction_limitation": bound["limitation"],
                 "work_kind": rec.get("work_kind", ""), "form_issue": rec.get("form_issue", ""),
                 "page_range": page_range, "restrict_pages": restrict,
             }
@@ -243,7 +267,11 @@ def main():
                   ensure_ascii=False, indent=1)
         tasks.append({"paper": pid, "task": task_path,
                       "entries": len(bucket["entries"]),
-                      "windows": sum(len(v) for v in bucket["windows"].values())})
+                      "windows": sum(len(v) for v in bucket["windows"].values()),
+                      "limitations": sorted({
+                          s.get("extraction_limitation")
+                          for s in bucket["sources"].values()
+                          if s.get("extraction_limitation")})})
     manifest = {"run": run, "out_dir": out_dir, "matched": matched,
                 "unmatched": unmatched, "tasks": tasks}
     json.dump(manifest, open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8"),

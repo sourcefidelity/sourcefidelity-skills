@@ -675,6 +675,68 @@ class EnrichTests(unittest.TestCase):
         self.assertEqual(stats["errors"], 2)
 
 
+class SourceBindingTests(unittest.TestCase):
+    def _write_extraction(self, root, key, digest, text, offset=None):
+        out = os.path.join(root, "_sources", key)
+        os.makedirs(out, exist_ok=True)
+        json.dump({"sha256": digest, "offset": offset or {}},
+                  open(os.path.join(out, "meta.json"), "w", encoding="utf-8"))
+        open(os.path.join(out, "text.txt"), "w", encoding="utf-8").write(text)
+
+    def test_new_copy_replaces_the_stale_extraction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "new-copy.pdf")
+            open(supplied, "wb").write(b"NEW CONTENT")
+            self._write_extraction(tmp, "smith-2020", "oldhash", "OLD TEXT",
+                                   {"arabic_offset": 3})
+            new_offset = {"arabic_offset": 7, "coverage": 0.9}
+
+            def fake_prepare(path, out, key):
+                self._write_extraction(tmp, key, rp.sha256_file(path),
+                                       "NEW TEXT", new_offset)
+
+            with mock.patch.object(rp, "run_prepare_source", side_effect=fake_prepare):
+                bound = rp.prepare_extraction(tmp, "smith-2020", supplied)
+
+            self.assertEqual(bound["limitation"], "")
+            self.assertEqual(bound["page_map"], new_offset)
+            self.assertEqual(open(bound["extraction"], encoding="utf-8").read(),
+                             "NEW TEXT")
+            self.assertEqual(bound["sha256"], rp.sha256_file(supplied))
+
+    def test_identical_copy_reuses_the_verified_extraction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "same-copy.pdf")
+            open(supplied, "wb").write(b"SAME")
+            digest = rp.sha256_file(supplied)
+            self._write_extraction(tmp, "smith-2020", digest, "TEXT", {"arabic_offset": 2})
+            with mock.patch.object(rp, "run_prepare_source",
+                                   side_effect=AssertionError("should not re-extract")):
+                bound = rp.prepare_extraction(tmp, "smith-2020", supplied)
+            self.assertEqual(bound["limitation"], "")
+            self.assertEqual(open(bound["extraction"], encoding="utf-8").read(), "TEXT")
+
+    def test_failed_extraction_of_a_different_copy_reports_a_limitation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "edition-two.pdf")
+            open(supplied, "wb").write(b"DIFFERENT")
+            self._write_extraction(tmp, "smith-2020", "oldhash", "OLD TEXT")
+            with mock.patch.object(rp, "run_prepare_source", return_value=None):
+                bound = rp.prepare_extraction(tmp, "smith-2020", supplied)
+            self.assertEqual(bound["extraction"], "")
+            self.assertEqual(bound["page_map"], {})
+            self.assertEqual(bound["limitation"], "supplied_copy_not_extracted")
+
+    def test_missing_extraction_after_a_failed_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "first-copy.pdf")
+            open(supplied, "wb").write(b"ANY")
+            with mock.patch.object(rp, "run_prepare_source", return_value=None):
+                bound = rp.prepare_extraction(tmp, "smith-2020", supplied)
+            self.assertEqual(bound["extraction"], "")
+            self.assertEqual(bound["limitation"], "extraction_failed")
+
+
 class ReappraiseApplyTests(unittest.TestCase):
     def test_bold_and_heading_sections(self):
         text = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n\n"
