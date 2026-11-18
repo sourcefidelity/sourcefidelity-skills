@@ -20,10 +20,22 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 - `pypdf` for PDF text extraction.
 - `pymupdf` for the preferred PDF extraction layer (layout, OCR-page detection). Without it, or without a virtual environment beside the skill, extraction falls back to bare `pypdf`: counts and passage windows still work for native-text PDFs, but are reported as `counts_available: unknown` (or `false` for a file with no extractable text) and the review says so.
 - Tesseract OCR (optional, cross-platform) for image-only PDFs. Native-text PDFs and DOCX files work without it. Find it at https://github.com/tesseract-ocr/tesseract; install the language data you need (for example `eng` and `chi_sim`).
-- Optional: an MCP server that exposes the bibliographic adapters described in the review protocol. Without it, the skills can use the supplied files and direct web inspection, but identity resolution is more limited.
-- Optional API keys for Crossref, DataCite, OpenAlex, Semantic Scholar, CORE, Google Books and similar services, read from environment variables. Never put keys in a skill file, review, ledger or log.
+- No API keys are required. Bibliographic lookup uses the free Crossref endpoint through `curl`. Coverage is smaller than a paid or multi-provider setup: an unlocated work is recorded as an access limitation, never as a finding.
 
 ## Installation
+
+Run the installer for your platform from the repository folder:
+
+```bash
+./install.sh          # macOS or Linux
+.\install.ps1         # Windows PowerShell
+```
+
+Both scripts find your harness skills directory, copy the three skills, check for Python 3.12, and build each skill's `.venv`. Pass `--dry-run` (or `-DryRun`) to see the plan first, and `--target DIR` (or `-Target DIR`) to choose the skills directory yourself.
+
+If Python is missing, the installer still copies the skills and explains prompt-only mode: a review still runs, but word counts, page mapping and the verbatim checks are unavailable. Install Python from https://www.python.org/downloads/ and run the installer again to enable them.
+
+### Manual installation
 
 Copy the three skill directories into the skills directory used by your agent host. For a ZCode-style host this is usually:
 
@@ -45,6 +57,24 @@ sourcefidelity-review/.venv/bin/pip install pypdf pymupdf
 
 Verify the installation with the offline suites in [Tests](#tests); the PDF-quality suite reports layout checks as skipped when PyMuPDF is absent, which is the signal that the preferred extraction layer is not wired up.
 
+## Title block convention
+
+Identity masking works from labelled lines. To let `redact_identity.py --tier 2` remove a student's details before an LLM reads the paper, ask for a title block with one label per line:
+
+```text
+Name: …
+Student ID: …
+Course: …
+Instructor: …
+University: …
+```
+
+The masker also removes email addresses and long digit strings anywhere. If it finds no labelled line it says so instead of guessing; unlabelled blocks, names in body text, images and scans are not masked. Nothing is anonymised completely: quoted passages can still identify a writer.
+
+## Prompt-only mode
+
+Every skill works with prompts alone. Without Python you lose word counts, page locators, OCR and the verbatim checks, and the review says which checks were unavailable. The scripts are an accuracy upgrade, not a requirement.
+
 ## Data and privacy
 
 The skills process student papers and may process copyrighted sources. Keep these outside the repository:
@@ -55,6 +85,10 @@ The skills process student papers and may process copyrighted sources. Keep thes
 - agent metadata and logs
 
 The `.gitignore` excludes the common working directories, but check `git status` before every commit. Review outputs can contain names, student IDs, quoted passages and source links.
+
+## Updating
+
+Releases are tagged on GitHub. To update, replace the skill folders with the new release and run the installer again; your reviews and working folders are outside the repository and are not touched. The installed version is in `VERSION`.
 
 ## Tests
 
