@@ -63,9 +63,12 @@ use recorded fixtures, CI makes no network calls.
 
 ### Phase 2 — identity lanes in `resolve_unsupplied.py`
 
-- Crossref (DOI, journal articles), OpenAlex (works, OA locations), Open
-  Library and Google Books (books and editions), Internet Archive catalogue
-  (scanned books and trade press).
+- Crossref (DOI, journal articles), OpenAlex (works, OA locations — its
+  locations already subsume Unpaywall, arXiv and DOAJ, so those get no separate
+  adapter), Open Library and Google Books (books and editions), Internet
+  Archive catalogue (scanned books and trade press), HathiTrust bibliographic
+  API (full-view versus search-only classification), Library of Congress
+  loc.gov API and digitized-books metadata, BnF Gallica, Europeana, OpenAIRE.
 - Record in `source_registry.json`: `identity_status`, provider, matched
   work URL, access URL, edition evidence, confidence, and the failure class
   (`not_found`, `ambiguous`, `provider_busy`, `blocked`).
@@ -78,10 +81,13 @@ missing; the report can say "identified, no open text" separately from
 ### Phase 3 — open full-text lanes
 
 - `fetch_open_sources.py`: for each supplied-confirmed-open or identified work,
-  try archvie full text in this order: supplied copy, Internet Archive
-  fulltext, Wayback snapshot of the cited URL, Gutenberg/Wikisource for public
-  domain, Lantern/Media History Archive scans, abstract-only page as last
-  resort with its classification.
+  try archive full text in this order: supplied copy, Internet Archive
+  fulltext, Internet Archive Scholar (fatcat) for OA scholarship, Wayback
+  snapshot of the cited URL, Gutenberg/Wikisource for public domain,
+  Lantern/Media History Archive scans, Library of Congress Chronicling America
+  OCR for period newspapers, BnF Gallica for French film press,
+  Europeana/OpenAIRE full-text links, HathiTrust where the scan is full-view,
+  abstract-only page as last resort with its classification.
 - Store text in `_work/_sources/<source_key>/` with `meta.json`: provider,
   access URL, retrieved-at, content type, chars, page map where known,
   classification, and limitation when partial.
@@ -144,3 +150,23 @@ supersedes that reference with a verifiable commit.
 - Provider outage must degrade to "no text", not to a wrong identity.
 - The Chinese proxy environment resolves through fake IPs; the transport must
   keep the fake-IP exception while still refusing real private addresses.
+
+## Adapter revisions (2026-11-18)
+
+- **No Unpaywall, arXiv or DOAJ adapters.** OpenAlex's location model already
+  designates the best OA copy and draws on Unpaywall, arXiv, DOAJ and Zenodo:
+  https://help.openalex.org/data/locations/ and the OpenAlex source table in
+  https://direct.mit.edu/qss/article/5/1/50/119554/OpenCitations-Meta
+- **Added:** Internet Archive Scholar (fatcat) for OA full text; HathiTrust
+  bibliographic API for full-view/search-only classification; Library of
+  Congress loc.gov API plus Chronicling America OCR (pre-1963 newspapers);
+  BnF Gallica (French cinema and press); Europeana and OpenAIRE as aggregator
+  fallbacks.
+- **Skipped:** National Library of Scotland (no film-studies full text; its
+  newspapers run through the paywalled British Newspaper Archive), the British
+  Library and other national catalogues, paywalled publishers, JSTOR and
+  Project MUSE.
+- **Opt-in keyed only:** Semantic Scholar, CORE, Trove.
+- Classification-only providers (HathiTrust, LoC catalogue, Open Library,
+  Google Books) never supply quotation windows; they tell the report whether a
+  work is identified and where a legal copy exists.
