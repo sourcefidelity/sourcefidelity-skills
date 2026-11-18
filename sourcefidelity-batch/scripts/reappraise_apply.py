@@ -122,9 +122,9 @@ def validate_rewrite(original, updated):
                          + "; ".join(missing[:3]))
 
 
-def apply_review(path, task, judgments, day):
-    text = open(path, encoding="utf-8").read()
-    original = text
+def render_review_text(original, task, judgments, day, counts=None):
+    """Review text and log rows for the scoped judgments; writes nothing."""
+    text = original
     scoped = {e["id"] for e in task.get("entries", [])}
     log_rows = []
     for change in judgments.get("changes", []):
@@ -133,7 +133,7 @@ def apply_review(path, task, judgments, day):
             raise SystemExit(f"{cid} is outside the task scope")
         span = block_span(text, cid)
         if not span:
-            raise SystemExit(f"{cid}: section not found in {path}")
+            raise SystemExit(f"{cid}: section not found in review")
         start, end = span
         block = text[start:end]
         prior = change.get("prior") or next(
@@ -195,18 +195,25 @@ def apply_review(path, task, judgments, day):
     else:
         text = text.rstrip() + "\n\n" + log + rows_text
     validate_rewrite(original, text)
+    if counts:
+        text = sync_occurrence_line(text, counts)
+    return text, log_rows
+
+
+def apply_review(path, task, judgments, day):
+    """Rewrite one review file in place (thin wrapper over render_review_text)."""
+    original = open(path, encoding="utf-8").read()
     summary = load(os.path.join(os.path.dirname(path), "summary.json"), {})
-    if summary.get("occurrences"):
-        text = sync_occurrence_line(
-            text, shift_counts(summary["occurrences"], judgments.get("changes", [])))
+    counts = (shift_counts(summary["occurrences"], judgments.get("changes", []))
+              if summary.get("occurrences") else None)
+    text, rows = render_review_text(original, task, judgments, day, counts)
     open(path, "w", encoding="utf-8").write(text)
-    return log_rows
+    return rows
 
 
-def apply_ledger(path, changes, day):
-    if not os.path.exists(path):
-        return []
-    lines = open(path, encoding="utf-8").read().splitlines()
+def render_ledger_text(original, changes, day):
+    """Ledger text and updated C IDs; writes nothing."""
+    lines = original.splitlines()
     updated = []
     for change in changes:
         cid = change.get("id")
@@ -240,12 +247,21 @@ def apply_ledger(path, changes, day):
                 lines[i] = (f"| {cells[1].strip()} | Resolved {day}: supplied copy "
                             f"inspected | No further action; judgment updated. |")
                 break
-    open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    return "\n".join(lines) + "\n", updated
+
+
+def apply_ledger(path, changes, day):
+    """Rewrite one ledger file in place (thin wrapper over render_ledger_text)."""
+    if not os.path.exists(path):
+        return []
+    text, updated = render_ledger_text(open(path, encoding="utf-8").read(), changes, day)
+    open(path, "w", encoding="utf-8").write(text)
     return updated
 
 
-def apply_summary(path, task, judgments, day):
-    data = load(path, {})
+def render_summary_data(data, task, judgments, day):
+    """Updated summary object, isolated from the caller's copy."""
+    data = json.loads(json.dumps(data)) if data else {}
     counts = data.setdefault("occurrences", {})
     counts.update(shift_counts(counts, judgments.get("changes", [])))
     for key, info in task.get("sources", {}).items():
@@ -291,8 +307,95 @@ def apply_summary(path, task, judgments, day):
         "fabrication_risk": len(data.get("nonexistent_sources", []) or []) >= 2,
         "authorship_signal_risk": bool(data.get("flags", {}).get("authorship_signal_risk")),
     }
+    return data
+
+
+def apply_summary(path, task, judgments, day):
+    """Rewrite one summary file in place (thin wrapper over render_summary_data)."""
+    data = render_summary_data(load(path, {}), task, judgments, day)
     json.dump(data, open(path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     return data
+
+
+def stage_text(path, text):
+    """Write text beside its destination, ready for an atomic replace."""
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return tmp
+
+
+def commit_staged(items):
+    for tmp, path in items:
+        os.replace(tmp, path)
+
+
+def _restore(path, text):
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    except OSError:
+        pass
+
+
+def apply_all(folder, task, judgments, day):
+    """Apply one set of judgments to review, ledger and summary together.
+
+    Each artifact is rendered and validated in memory before any file is
+    touched; then every replacement is staged, the previous review is saved
+    beside it, and only then are the staged files swapped in. A render failure
+    leaves all three artifacts as they were.
+    """
+    review_path = os.path.join(folder, "review.md")
+    ledger_path = os.path.join(folder, "ledger.md")
+    summary_path = os.path.join(folder, "summary.json")
+    review_old = open(review_path, encoding="utf-8").read()
+    ledger_old = (open(ledger_path, encoding="utf-8").read()
+                  if os.path.exists(ledger_path) else None)
+    summary_old = load(summary_path, {})
+    changes = judgments.get("changes", [])
+    counts = (shift_counts(summary_old["occurrences"], changes)
+              if summary_old.get("occurrences") else None)
+    review_text, rows = render_review_text(review_old, task, judgments, day, counts)
+    if ledger_old is None:
+        ledger_text, ledger_updated = None, []
+    else:
+        ledger_text, ledger_updated = render_ledger_text(ledger_old, changes, day)
+    summary_new = render_summary_data(summary_old, task, judgments, day)
+    summary_text = json.dumps(summary_new, ensure_ascii=False, indent=1)
+
+    staged = [(review_path, review_text)]
+    if ledger_text is not None:
+        staged.append((ledger_path, ledger_text))
+    staged.append((summary_path, summary_text))
+    items = []
+    try:
+        for path, body in staged:
+            items.append((stage_text(path, body), path))
+    except Exception:
+        for tmp, _ in items:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        raise
+    shutil.copy2(review_path, os.path.join(folder, "review.pre-reappraisal.md"))
+    try:
+        commit_staged(items)
+    except Exception:
+        for tmp, _ in items:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        _restore(review_path, review_old)
+        if ledger_old is not None:
+            _restore(ledger_path, ledger_old)
+        if summary_old:
+            _restore(summary_path, json.dumps(summary_old, ensure_ascii=False, indent=1))
+        raise
+    return {"changes": len(rows), "ledger_rows_updated": ledger_updated,
+            "summary": summary_new, "log": rows}
 
 
 def main():
@@ -341,21 +444,20 @@ def main():
                           "note": "no judgment changed; source retrieval recorded",
                           "flags": data.get("flags", {})}, indent=1))
         return 0
-    shutil.copy2(review, os.path.join(folder, "review.pre-reappraisal.md"))
-    rows = apply_review(review, task, judgments, args.date)
-    ledger_updated = apply_ledger(os.path.join(folder, "ledger.md"),
-                                  judgments.get("changes", []), args.date)
-    data = apply_summary(os.path.join(folder, "summary.json"), task, judgments, args.date)
+    result = apply_all(folder, task, judgments, args.date)
+    rows = result["changes"]
+    ledger_updated = result["ledger_rows_updated"]
+    data = result["summary"]
     total = data.get("occurrences", {}).get("total", 0)
     summed = sum(int(data.get("occurrences", {}).get(k, 0)) for k in
                  ("supports", "qualified", "contradicts", "not_supported", "not_judged"))
     print(json.dumps({
-        "paper": pid, "date": args.date, "changes": len(rows),
+        "paper": pid, "date": args.date, "changes": rows,
         "ledger_rows_updated": ledger_updated,
         "occurrence_total": total, "occurrence_sum": summed,
         "counts_reconcile": total == summed,
         "flags": data.get("flags", {}),
-        "log": [{"id": r[0], "prior": r[3], "new": r[4]} for r in rows],
+        "log": [{"id": r[0], "prior": r[3], "new": r[4]} for r in result.get("log", [])],
     }, ensure_ascii=False, indent=1))
     return 0 if total == summed else 1
 

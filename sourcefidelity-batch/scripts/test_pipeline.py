@@ -758,6 +758,75 @@ class ReappraiseApplyTests(unittest.TestCase):
         after = "## 1. A\n\n### C1 — x\n\n**Overall judgment: Supports.**\n"
         ra.validate_rewrite(before, after)
 
+    def test_apply_all_updates_review_ledger_and_summary_together(self):
+        """SF-01: one pending change, three artifacts, one commit."""
+        review = ("## 1. Findings, counts, and limitations\n\n"
+                  "**Citation occurrences.** 1 inventoried. Supports 0; Qualified or Mixed 0; "
+                  "Contradicts 0; Not Supported 0; Not Judged 1.\n\n"
+                  "## 2. Numbered citation entries, in paper order\n\n"
+                  "### C2 — ¶2 — (Jones, 2021)\n\n"
+                  "**Overall judgment: Not Judged.**\n\n"
+                  "Body.\n\n"
+                  "## 3. Bibliography review, in submitted order\n\n"
+                  "### R1 — Smith 2020\n\n"
+                  "**Identity:** verified.\n")
+        ledger = ("| C2 | ¶2 | marker | statement | R1 | old | old status | none |\n"
+                  "| R1 | entry | identity | link | status | old | searched | C2 | none |\n")
+        summary = {"occurrences": {"total": 1, "supports": 0, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 1}}
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote",
+                                  "locator": "printed p. 2"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, body in (("review.md", review), ("ledger.md", ledger),):
+                open(os.path.join(tmp, name), "w", encoding="utf-8").write(body)
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w",
+                                    encoding="utf-8"))
+            ra.apply_all(tmp, task, judgments, "2026-11-17")
+            text = open(os.path.join(tmp, "review.md"), encoding="utf-8").read()
+            ledger_text = open(os.path.join(tmp, "ledger.md"), encoding="utf-8").read()
+            data = json.load(open(os.path.join(tmp, "summary.json"), encoding="utf-8"))
+            backup = open(os.path.join(tmp, "review.pre-reappraisal.md"),
+                          encoding="utf-8").read()
+            temps = [n for n in os.listdir(tmp) if ".tmp" in n]
+
+        self.assertIn("**Citation occurrences.** 1 inventoried. Supports 1;", text)
+        self.assertIn("| 2026-11-17 |", text)
+        self.assertIn("**Reappraised 2026-11-17: Supports**", ledger_text)
+        self.assertEqual(data["occurrences"]["supports"], 1)
+        self.assertEqual(data["occurrences"]["not_judged"], 0)
+        self.assertEqual(backup, review)
+        self.assertEqual(temps, [])
+
+    def test_apply_all_writes_nothing_when_a_render_fails(self):
+        review = "### C2 — ¶2\n\n**Overall judgment: Not Judged.**\n\nBody.\n"
+        ledger = "| C1 | ¶1 | m | s | R1 | old | old | none |\n"
+        summary = {"occurrences": {"total": 1, "supports": 0, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 1}}
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, body in (("review.md", review), ("ledger.md", ledger),):
+                open(os.path.join(tmp, name), "w", encoding="utf-8").write(body)
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w",
+                                    encoding="utf-8"))
+            with mock.patch.object(ra, "render_summary_data",
+                                   side_effect=RuntimeError("boom")):
+                with self.assertRaises(RuntimeError):
+                    ra.apply_all(tmp, task, judgments, "2026-11-17")
+            after = {n: open(os.path.join(tmp, n), encoding="utf-8").read()
+                     for n in ("review.md", "ledger.md")}
+            after_summary = json.load(open(os.path.join(tmp, "summary.json"),
+                                          encoding="utf-8"))
+            backup_exists = os.path.exists(os.path.join(tmp, "review.pre-reappraisal.md"))
+
+        self.assertEqual(after["review.md"], review)
+        self.assertEqual(after["ledger.md"], ledger)
+        self.assertEqual(after_summary, summary)
+        self.assertFalse(backup_exists)
+
     def test_ledger_updates_r_row_and_pending(self):
         ledger = (
             "| C1 | ¶1 | marker | statement | R1 | old | old | old | none |\n"
