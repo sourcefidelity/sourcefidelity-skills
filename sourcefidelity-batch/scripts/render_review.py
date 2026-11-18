@@ -24,6 +24,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 
 import authorship_signals  # noqa: E402
+import batch_paths  # noqa: E402
 import review_metrics  # noqa: E402
 
 
@@ -428,7 +429,8 @@ def main():
     ap.add_argument("--findings", required=True)
     args = ap.parse_args()
     root = os.path.abspath(args.batch)
-    paper = load(os.path.join(root, "_work", args.paper, "paper.json"))
+    work = batch_paths.artifact(os.path.join(root, "_work"), args.paper)
+    paper = load(os.path.join(work, "paper.json"))
     if not paper:
         raise SystemExit("paper.json missing; run prepare_batch.py")
     findings = load(args.findings)
@@ -443,7 +445,7 @@ def main():
         profile = {}
     occ_counts = counts(findings)
     metrics = review_metrics.load_metrics(root, args.paper)
-    folder = os.path.join(root, args.paper)
+    folder = batch_paths.paper_folder(root, args.paper)
     os.makedirs(folder, exist_ok=True)
     open(os.path.join(folder, "review.md"), "w", encoding="utf-8").write(
         render_md(paper, findings, occ_counts, registry, metrics))

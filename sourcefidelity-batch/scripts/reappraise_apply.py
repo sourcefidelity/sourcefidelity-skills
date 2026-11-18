@@ -31,6 +31,7 @@ from datetime import date
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import batch_paths  # noqa: E402
 import reappraise_prepare  # noqa: E402
 
 JUDGMENT_KEYS = {
@@ -346,9 +347,10 @@ def apply_all(folder, task, judgments, day):
     beside it, and only then are the staged files swapped in. A render failure
     leaves all three artifacts as they were.
     """
-    review_path = os.path.join(folder, "review.md")
-    ledger_path = os.path.join(folder, "ledger.md")
-    summary_path = os.path.join(folder, "summary.json")
+    paths = batch_paths.artifacts(folder)
+    review_path = paths["review.md"]
+    ledger_path = paths["ledger.md"]
+    summary_path = paths["summary.json"]
     review_old = open(review_path, encoding="utf-8").read()
     ledger_old = (open(ledger_path, encoding="utf-8").read()
                   if os.path.exists(ledger_path) else None)
@@ -379,7 +381,7 @@ def apply_all(folder, task, judgments, day):
             except OSError:
                 pass
         raise
-    shutil.copy2(review_path, os.path.join(folder, "review.pre-reappraisal.md"))
+    shutil.copy2(review_path, paths["review.pre-reappraisal.md"])
     try:
         commit_staged(items)
     except Exception:
@@ -414,8 +416,8 @@ def main():
     pid = task["paper_id"]
     if judgments.get("paper_id") not in (None, pid):
         raise SystemExit("judgments paper_id does not match the task")
-    folder = os.path.join(root, pid)
-    review = os.path.join(folder, "review.md")
+    folder = batch_paths.paper_folder(root, pid)
+    review = batch_paths.artifact(folder, "review.md")
     if not os.path.exists(review):
         raise SystemExit(f"no review.md in {folder}")
     changes = judgments.get("changes", [])
@@ -438,7 +440,8 @@ def main():
         judgments = {**judgments, "changes": kept}
         changes = kept
     if not changes:
-        data = apply_summary(os.path.join(folder, "summary.json"), task, judgments, args.date)
+        data = apply_summary(batch_paths.artifact(folder, "summary.json"),
+                             task, judgments, args.date)
         print(json.dumps({"paper": pid, "date": args.date, "changes": 0,
                           "unchanged": judgments.get("unchanged", []),
                           "note": "no judgment changed; source retrieval recorded",

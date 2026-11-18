@@ -25,6 +25,7 @@ sys.path.insert(0, REVIEW)
 
 import acquisition_list as al  # noqa: E402
 import audit_tasks as at  # noqa: E402
+import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import extract_candidates as ec  # noqa: E402
@@ -577,6 +578,56 @@ class ReappraiseWindowTests(unittest.TestCase):
             run = rec.from_metadata(path, "deepseek-v4-flash")
         self.assertIsNone(run["usage"])
         self.assertAlmostEqual(run["duration_ms"], 898000, delta=5)
+
+
+class PaperPathTests(unittest.TestCase):
+    def test_paper_folder_rejects_escaping_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ("", ".", "..", "../evil", "/tmp/evil", "a/b", "a\\b"):
+                with self.assertRaises(SystemExit, msg=bad):
+                    bp.paper_folder(tmp, bad)
+
+    def test_paper_folder_accepts_a_direct_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "P1"))
+            self.assertEqual(bp.paper_folder(tmp, "P1"),
+                             os.path.realpath(os.path.join(tmp, "P1")))
+
+    def test_paper_folder_rejects_symlinked_paper_directory(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as outside:
+            os.symlink(outside, os.path.join(tmp, "P2"))
+            with self.assertRaises(SystemExit):
+                bp.paper_folder(tmp, "P2")
+
+    def test_artifact_rejects_a_symlinked_file(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as outside:
+            folder = os.path.join(tmp, "P1")
+            os.makedirs(folder)
+            target = os.path.join(outside, "review.md")
+            open(target, "w", encoding="utf-8").write("elsewhere")
+            os.symlink(target, os.path.join(folder, "review.md"))
+            with self.assertRaises(SystemExit):
+                bp.artifact(folder, "review.md")
+
+    def test_apply_all_refuses_a_symlinked_review_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                tempfile.TemporaryDirectory() as outside:
+            folder = os.path.join(tmp, "P1")
+            os.makedirs(folder)
+            target = os.path.join(outside, "review.md")
+            open(target, "w", encoding="utf-8").write("elsewhere")
+            os.symlink(target, os.path.join(folder, "review.md"))
+            json.dump({"occurrences": {"total": 1}},
+                      open(os.path.join(folder, "summary.json"), "w",
+                           encoding="utf-8"))
+            task = {"entries": [{"id": "C1", "prior": "Not Judged"}]}
+            judgments = {"changes": [{"id": "C1", "prior": "Not Judged",
+                                      "new": "Supports"}]}
+            with self.assertRaises(SystemExit):
+                ra.apply_all(folder, task, judgments, "2026-11-18")
+            self.assertEqual(open(target, encoding="utf-8").read(), "elsewhere")
 
 
 class ReappraiseApplyTests(unittest.TestCase):
