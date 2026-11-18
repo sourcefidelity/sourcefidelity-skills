@@ -76,7 +76,7 @@ The worker must use the general-purpose agent type, because it writes files. The
 
 ```json
 {
-  "schema_version": "3",
+  "schema_version": "4",
   "paper_id": "string",
   "word_counts": {"total": 0, "text": 0, "references": 0},
   "occurrences": {
@@ -165,7 +165,7 @@ The worker must use the general-purpose agent type, because it writes files. The
 
 Rules for the fields:
 
-- `schema_version`: `"3"` for this schema. Readers must accept older summaries without `sources` or `formatting_notes`, record the missing fields and the schema difference as a limitation, and continue. Do not compare category counts across schema versions without saying that schema-2 counts include unverifiable sources in Category B.
+- `schema_version`: `"4"` for this schema. Schema 4 removes the authorship-signal block, `replacement_profile`, the authorship flag and the `formatting_notes` field; readers must accept older summaries without them, record the difference as a limitation, and continue. Do not compare category counts across schema versions without saying that schema-2 counts include unverifiable sources in Category B.
 - `source_key`: a stable lowercase key for grouping across papers, made from author/organization, year, and a short title, e.g. `zhang-2026-record-screening`, `d23-2026-tom-hanks-interview`. Use the same key for the same work across papers.
 - `sources`: **one entry for every cited work**, not only the problematic ones. `retrieval` is the controlled vocabulary that makes acquisition possible; do not leave it to prose. Use `retrieved` only when a usable full text was inspected; `identity_only` when the work was identified but no text was available; `unverifiable` when the work could not be located; `nonexistent` only where the review found affirmative evidence. `citation_count` is the number of C occurrences citing the work.
 - `sources[].identity_outcome`: the eight-value vocabulary from the protocol. `unlocated_after_search` may be reported as `unverifiable`; `nonexistent_as_cited` is reported as `nonexistent_sources` and counts toward the fabrication flag, and requires the evidence tier defined in the protocol's "Proving a work does not exist". `possible_match`, `bibliographic_conflict`, `insufficient_metadata` and `search_incomplete` are recorded states, not absences, and are excluded from the unverifiable count. `bibliographic_conflict` requires that the cited work exists; an entry that cannot describe any existing work is `nonexistent_as_cited`.

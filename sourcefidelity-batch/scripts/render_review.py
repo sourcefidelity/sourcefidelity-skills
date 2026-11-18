@@ -342,7 +342,7 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
     unverifiable = as_records(findings.get("unverifiable", []), "unverifiable")
     folder = os.path.join(root, paper["paper_id"])
     result = {
-        "schema_version": "3",
+        "schema_version": "4",
         "paper_id": paper["paper_id"],
         "word_counts": paper["word_counts"],
         "occurrences": occ_counts,
