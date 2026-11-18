@@ -17,4 +17,4 @@ Open the delivered review with the protocol's **Review scope and counts** block 
 
 For a single review, record agent usage with `scripts/record_metrics.py --phase review` and pass the result with `render_review.py --metrics FILE`, or place it at `_work/<paper>/review_metrics.json`; without it the scope block says `not recorded`.
 
-Output is a short report by default: the academic-integrity summary, the citing entries, the bibliography issues and any substantive uncited statements. Ask for a **full review** to add word counts, the audit trail and the ledger.
+There is one report shape: the scope block, the academic-integrity summary, the citing entries, the bibliography issues and any substantive uncited statements, plus the companion ledger. Counts, review time and tokens live in the scope block.

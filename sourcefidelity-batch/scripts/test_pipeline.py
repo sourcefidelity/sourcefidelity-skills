@@ -559,8 +559,8 @@ class ReappraiseWindowTests(unittest.TestCase):
             "completed_at": "2026-11-17T02:00:01Z",
             "cost_status": "estimated", "estimated_cost_usd": 0.0001554}]}
         text = rr.render_md(paper, findings, rr.counts(findings), {}, metrics)
-        self.assertIn("**Review time:**", text)
-        self.assertLess(text.index("**Review time:**"),
+        self.assertIn("Review time: 1s", text)
+        self.assertLess(text.index("Review time:"),
                         text.index("## Summary of academic-integrity findings"))
 
     def test_render_summary_includes_metrics(self):
@@ -669,7 +669,7 @@ class ReportModeTests(unittest.TestCase):
 
     def test_short_report_keeps_a_scope_block_and_omits_the_audit(self):
         text = rr.render_md(self._paper(), self._findings(),
-                            rr.counts(self._findings()), {}, mode="short")
+                            rr.counts(self._findings()), {})
         self.assertIn("## Review scope and counts", text)
         self.assertIn("Word counts: total 5", text)
         self.assertIn("\nUncited substantive passages:", text)
@@ -680,7 +680,7 @@ class ReportModeTests(unittest.TestCase):
 
     def test_short_report_keeps_uncited_statements_and_limitations(self):
         text = rr.render_md(self._paper(), self._findings(),
-                            rr.counts(self._findings()), {}, mode="short")
+                            rr.counts(self._findings()), {})
         self.assertIn("Uncited claim about media.", text)
         self.assertIn("Access limited to one chapter.", text)
 
@@ -689,13 +689,13 @@ class ReportModeTests(unittest.TestCase):
         findings["summary"] = {"hyperlinks_missing": [
             "Smith 2020: no link", {"work": "Jones 2021", "reason": "broken"},
             "Lee 2019: preview only"]}
-        text = rr.render_md(self._paper(), findings, rr.counts(findings), {}, mode="short")
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
         self.assertIn("Hyperlinks missing: 3 (no link 1; broken 1; preview only 1).", text)
 
     def test_summary_ends_with_the_counts_line(self):
         findings = self._findings()
         findings["summary"] = {"category_a": ["one", "two"], "category_b": ["three"]}
-        text = rr.render_md(self._paper(), findings, rr.counts(findings), {}, mode="short")
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
         self.assertIn("Counts: Category A 2; Category B 1; uncited substantive passages 1.", text)
         self.assertLess(text.index("Category A academic integrity"),
                         text.index("Counts: Category A 2"))
@@ -704,14 +704,14 @@ class ReportModeTests(unittest.TestCase):
         metrics = {"runs": [{"duration_ms": 65000,
                              "usage": {"input_tokens": 1200, "output_tokens": 300}}]}
         text = rr.render_md(self._paper(), self._findings(),
-                            rr.counts(self._findings()), {}, metrics, mode="short")
+                            rr.counts(self._findings()), {}, metrics)
         self.assertLess(text.index("## Review scope and counts"),
                         text.index("## Summary of academic-integrity findings"))
         self.assertIn("Review time: 1m 5s; tokens: 1,200 in / 300 out.", text)
 
     def test_scope_block_says_not_recorded_without_metrics(self):
         text = rr.render_md(self._paper(), self._findings(),
-                            rr.counts(self._findings()), {}, mode="short")
+                            rr.counts(self._findings()), {})
         self.assertIn("Review time: not recorded; tokens: not recorded.", text)
 
     def _paper_with_refs(self, tmp, body):
@@ -776,9 +776,10 @@ class ReportModeTests(unittest.TestCase):
 
     def test_full_report_keeps_counts_and_audit(self):
         text = rr.render_md(self._paper(), self._findings(),
-                            rr.counts(self._findings()), {}, mode="full")
-        self.assertIn("Word counts:", text)
-        self.assertIn("## 5. Unresolved items and audit", text)
+                            rr.counts(self._findings()), {})
+        self.assertEqual(text.count("Word counts:"), 1)
+        self.assertNotIn("## 1. Findings", text)
+        self.assertNotIn("## 5. Unresolved", text)
 
 
 class InstallerTests(unittest.TestCase):
@@ -1815,7 +1816,6 @@ class ReappraiseApplyTests(unittest.TestCase):
         self.assertIn("## 5. Unresolved items and audit", text)
         self.assertIn("Audit trail line that must survive.", text)
         self.assertIn("**Citation occurrences.** 2 inventoried. Supports 2;", text)
-        self.assertIn("Not Judged 0.", text)
         self.assertIn("| 2026-11-17 |", text)
 
     def test_apply_review_keeps_prior_log_rows(self):
@@ -1886,10 +1886,9 @@ class ReappraiseApplyTests(unittest.TestCase):
         self.assertIn("## 3. Bibliography review, in submitted order", text)
         self.assertIn("### R1 — Smith 2020", text)
         self.assertIn("## 4. Uncited substantive passages", text)
-        self.assertIn("## 5. Unresolved items and audit", text)
-        self.assertIn("The structural audit is complete", text)
-        self.assertIn("**Citation occurrences.** 2 inventoried. Supports 2;", text)
-        self.assertIn("Not Judged 0.", text)
+        self.assertIn("## 4. Uncited substantive passages", text)
+        self.assertIn("Counts: Category A", text)
+        self.assertIn("Occurrences: 2 inventoried", text)
 
     def test_apply_review_refuses_to_write_a_truncated_review(self):
         """SF-01: a rewrite that loses a section must leave the file untouched."""
