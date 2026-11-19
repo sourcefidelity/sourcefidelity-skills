@@ -1,0 +1,24 @@
+{
+  "checked": "2026-11-17",
+  "stale_after_days": 180,
+  "models": {
+    "deepseek-v4-flash": {
+      "label": "DeepSeek V4 Flash",
+      "windows": [
+        {"effective_from": "2026-11-17", "cache_hit": 0.003, "cache_miss": 0.15, "output": 0.60}
+      ]
+    },
+    "deepseek-flash": {
+      "label": "DeepSeek Flash",
+      "windows": [
+        {"effective_from": "2026-11-17", "cache_hit": 0.003, "cache_miss": 0.15, "output": 0.60}
+      ]
+    },
+    "deepseek-v4-pro": {
+      "label": "DeepSeek V4 Pro",
+      "windows": [
+        {"effective_from": "2026-11-17", "cache_hit": 0.022, "cache_miss": 0.66, "output": 1.98}
+      ]
+    }
+  }
+}

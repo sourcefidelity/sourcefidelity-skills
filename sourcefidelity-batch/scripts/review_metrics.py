@@ -22,7 +22,7 @@ MARKER_START = "<!-- review-metrics:start -->"
 MARKER_END = "<!-- review-metrics:end -->"
 
 # USD per 1M tokens, off-peak: (cache hit, cache miss/input, output)
-PRICING = {
+BUILTIN_PRICING = {
     "deepseek-v4-flash": [
         {"effective_from": "2026-11-17", "rates": (0.003, 0.15, 0.60),
          "label": "DeepSeek V4 Flash"},
@@ -36,6 +36,43 @@ PRICING = {
          "label": "DeepSeek V4 Pro"},
     ],
 }
+PRICING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pricing.json")
+STALE_AFTER_DAYS = 180
+
+
+def load_pricing(path=None):
+    """Pricing tables from the shipped JSON, so a price change is a data edit.
+
+    `refresh_pricing.py` appends a dated window; older windows stay, so a run is
+    priced with the table in force when it started. Falls back to the built-in
+    snapshot when the file is missing or unreadable.
+    """
+    path = path or os.environ.get("SOURCEFIDELITY_PRICING") or PRICING_FILE
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        models = {}
+        for name, entry in (data.get("models") or {}).items():
+            windows = []
+            for window in entry.get("windows") or []:
+                windows.append({"effective_from": window["effective_from"],
+                                "rates": (float(window["cache_hit"]),
+                                          float(window["cache_miss"]),
+                                          float(window["output"])),
+                                "label": entry.get("label", name)})
+            if windows:
+                models[name] = windows
+        return {"checked": data.get("checked") or PRICING_AS_OF,
+                "stale_after_days": int(data.get("stale_after_days")
+                                        or STALE_AFTER_DAYS),
+                "models": models or BUILTIN_PRICING}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"checked": PRICING_AS_OF, "stale_after_days": STALE_AFTER_DAYS,
+                "models": BUILTIN_PRICING}
+
+
+TABLES = load_pricing()
+PRICING = TABLES["models"]
 RATES = {model: windows[-1]["rates"] for model, windows in PRICING.items()}
 MODEL_LABELS = {model: windows[-1]["label"]
                 for model, windows in PRICING.items()}
@@ -108,6 +145,14 @@ def _int(usage, *names):
 def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
     """Return a priced usage record, or a not_recorded record with a reason."""
     model = (model or "deepseek-v4-flash").strip()
+    checked = _aware(parse_time(TABLES.get("checked")))
+    started = _aware(parse_time(started_at))
+    stale_after = TABLES.get("stale_after_days", STALE_AFTER_DAYS)
+    if checked and started and (started - checked).days > stale_after:
+        return {"cost_status": "not_recorded", "reason": "stale_pricing",
+                "model": model, "pricing_as_of": TABLES.get("checked"),
+                "stale_after_days": stale_after,
+                "message": "the pricing table is older than the run; refresh pricing.json"}
     base, label, effective = rates_for(model, started_at)
     if base is None:
         return {"cost_status": "not_recorded", "reason": "unknown_model",

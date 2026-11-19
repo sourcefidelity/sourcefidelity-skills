@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Offline regression tests for the batch pipeline.
 
     python3 -I test_pipeline.py
@@ -48,6 +48,7 @@ import record_metrics as rec  # noqa: E402
 import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
+import refresh_pricing as pricing_refresh  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
@@ -2977,6 +2978,56 @@ class HyperlinkAuditTests(unittest.TestCase):
 
 
 class MetricsTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+        self._env = os.environ.get("SOURCEFIDELITY_PRICING")
+
+    def tearDown(self):
+        if self._env is None:
+            os.environ.pop("SOURCEFIDELITY_PRICING", None)
+        else:
+            os.environ["SOURCEFIDELITY_PRICING"] = self._env
+        self._tmp.cleanup()
+
+    def test_pricing_loader_reads_the_json_table(self):
+        path = os.path.join(self.tmp, "pricing.json")
+        data = {"checked": "2027-01-01", "stale_after_days": 90,
+                "models": {"m1": {"label": "Model One", "windows": [
+                    {"effective_from": "2027-01-01", "cache_hit": 0.1,
+                     "cache_miss": 0.2, "output": 0.3}]}}}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        os.environ["SOURCEFIDELITY_PRICING"] = path
+        tables = rm.load_pricing()
+        self.assertEqual(tables["checked"], "2027-01-01")
+        self.assertEqual(tables["stale_after_days"], 90)
+        self.assertEqual(tables["models"]["m1"][0]["rates"], (0.1, 0.2, 0.3))
+
+    def test_stale_pricing_is_not_priced(self):
+        old = rm.TABLES
+        try:
+            rm.TABLES = {"checked": "2020-01-01", "stale_after_days": 30,
+                         "models": rm.PRICING}
+            cost = rm.estimate_cost({"input_tokens": 10, "output_tokens": 10},
+                                    "deepseek-v4-flash", "2026-11-19T11:12:45Z")
+        finally:
+            rm.TABLES = old
+        self.assertEqual(cost["cost_status"], "not_recorded")
+        self.assertEqual(cost["reason"], "stale_pricing")
+
+    def test_refresh_appends_a_dated_window(self):
+        path = os.path.join(self.tmp, "pricing.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"checked": "2026-11-17", "models": {"m1": {
+                "label": "Model One",
+                "windows": [{"effective_from": "2026-11-17", "cache_hit": 1,
+                             "cache_miss": 2, "output": 3}]}}}, handle)
+        data = pricing_refresh.append_window(path, "m1", 4, 5, 6, "2027-01-01")
+        self.assertEqual(len(data["models"]["m1"]["windows"]), 2)
+        self.assertEqual(data["checked"], "2027-01-01")
+        self.assertEqual(data["models"]["m1"]["windows"][-1]["effective_from"], "2027-01-01")
+
     def test_pricing_is_chosen_for_the_run_date(self):
         rates, label, effective = rm.rates_for("deepseek-v4-flash",
                                                "2026-11-19T11:12:45Z")
