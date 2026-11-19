@@ -79,6 +79,32 @@ def sentences(text):
     return [s.strip() for s in SENT_SPLIT.split(text) if s.strip()]
 
 
+def sentence_for(text, marker, start):
+    """The sentence holding the marker, extended if a split broke a quotation."""
+    parts = sentences(text)
+    offsets, cursor = [], 0
+    for part in parts:
+        index = text.find(part, cursor)
+        if index < 0:
+            index = cursor
+        offsets.append((index, index + len(part), part))
+        cursor = index + len(part)
+    chosen = next((list(item) for item in offsets if item[0] <= start < item[1]), None)
+    if chosen is None:
+        found = next((item for item in offsets if marker in item[2]), None)
+        chosen = list(found) if found else [0, len(text), text]
+    begin, end, part = chosen
+    for _ in range(6):
+        if part.count(chr(34)) % 2 == 0:
+            break
+        later = [item for item in offsets if item[0] >= end]
+        if not later:
+            break
+        end = later[0][1]
+        part = text[begin:end]
+    return part
+
+
 def locator(text):
     m = PAGE_RE.search(text)
     return m.group(1) if m else ""
@@ -186,6 +212,10 @@ def build(path, paper_id):
         for p in paragraphs[heading_index + (1 if explicit_heading else 0):]:
             if APPENDIX_RE.match(p["text"]):
                 break
+            if p["text"].lower().startswith("http") and references:
+                references[-1]["verbatim"] += " " + p["text"]
+                references[-1]["has_url"] = True
+                continue
             if len(p["text"].split()) < 2:
                 continue
             references.append({
@@ -253,7 +283,7 @@ def build(path, paper_id):
                 "confidence": confidence,
                 "year": (YEAR_RE.search(inside).group(0) if YEAR_RE.search(inside) else ""),
                 "locator": locator(inside),
-                "sentence": next((s for s in sentences(text) if marker in s), ""),
+                "sentence": sentence_for(text, marker, start),
                 "parts": parts or [],
                 "flags": flags,
                 **({"reference_match": match_id} if match_id else {}),
