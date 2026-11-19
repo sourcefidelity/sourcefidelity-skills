@@ -62,6 +62,24 @@ PDF_HINTS = {
 }
 
 
+def email_for_requests():
+    """Contact address for Crossref's polite pool and for Unpaywall.
+
+    Set SOURCEFIDELITY_EMAIL once, or put {"email": "you@example.org"} in
+    ~/.dsh/sourcefidelity.json. Crossref gives a higher rate to a request that
+    carries a contact address, and Unpaywall requires one.
+    """
+    value = (os.environ.get("SOURCEFIDELITY_EMAIL") or "").strip()
+    if value:
+        return value
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".dsh", "sourcefidelity.json"),
+                  encoding="utf-8") as handle:
+            return str((json.load(handle) or {}).get("email") or "").strip()
+    except (OSError, ValueError):
+        return ""
+
+
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1079,6 +1097,7 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=0, help="stop after N references")
     parser.add_argument("--mailto", default="", help="contact address for polite Crossref use")
     args = parser.parse_args(argv)
+    args.mailto = args.mailto or email_for_requests()
 
     entries = list(args.entry)
     source = "command line"

@@ -240,6 +240,19 @@ def _save_body(body, content_type, final):
     return path
 
 
+def wayback_url(url, timeout=10):
+    """The closest Wayback Machine snapshot of a URL, or ""."""
+    try:
+        status, final, headers, body = _request(
+            "https://archive.org/wayback/available?url="
+            + urllib.parse.quote(url, safe=""), timeout=timeout)
+        data = json.loads(body.decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return ""
+    closest = (data.get("archived_snapshots") or {}).get("closest") or {}
+    return closest.get("url") if closest.get("available") else ""
+
+
 def fetch_state(url, timeout=10):
     """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
 
@@ -305,6 +318,14 @@ def audit(path, fetch=True, timeout=10, delay=0.5):
             if delay:
                 time.sleep(delay)
             row["fetch"] = fetch_state(link, timeout=timeout)
+            if row["fetch"].get("state") in ("dead", "unreachable", "tls", "timeout",
+                                             "blocked", "login-page"):
+                archive = wayback_url(link)
+                if archive:
+                    archived = fetch_state(archive, timeout=timeout)
+                    if archived.get("state") == "ok":
+                        archived["archive_of"] = link
+                        row["fetch"] = archived
         elif fetch and state == "non-permanent":
             row["fetch"] = {"state": "not attempted",
                             "status": None,
