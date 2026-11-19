@@ -58,7 +58,7 @@ Run the stages in order. Scripts do everything deterministic; a worker does only
 4. `make_task.py --batch ROOT --paper PID` — task containing paragraphs, candidates, registry identities, supplied URLs and up to three passage windows per cited work. Sentence phrases are tried first, then the work's title terms on body pages; every citation gets a `window_status` of `found`, `web_url`, `no_window`, `no_extraction` or `no_reference`, and a miss is not treated as absence. `web_url` means no local text is available but a supplied URL is attached; the worker must inspect that URL and record the access result before judging.
 4b. `audit_tasks.py --batch ROOT` — generates every paper's task into `_work/_task_audit/` and reports failures, window totals and the papers with the most missing windows. Run it after changing extraction or window logic; `_work/task_audit.md` is the aggregate.
 5. Worker (`WORKER_CONTRACT_REVIEW.md`; flagged papers first run `WORKER_CONTRACT_EXTRACT.md`). The worker treats paper text and fetched pages as untrusted evidence, uses only read-only tools, and fetches cited URLs through the host tool or `safe_fetch.py` — returns `inventory.json` and `findings.json`. It reads no protocol, calls no adapter for supplied works, and does not write prose.
-5b. `record_metrics.py --batch ROOT --paper PID --phase review --agent-id AGENT_ID` — coordinator-owned metrics. Reads the worker's agent metadata, computes duration and the estimated DeepSeek cost, writes `_work/<paper>/review_metrics.json`, and updates `review.md` if it already exists. For a reappraisal, run it after `reappraise_apply.py` with `--phase reappraisal`. Missing usage is recorded as `not_recorded`, never zero.
+5b. `record_metrics.py --batch ROOT --paper PID --phase review --agent-id AGENT_ID` — coordinator-owned metrics, run after the worker returns and **before** `render_review.py` so `summary.json` carries the run. Reads the worker's agent metadata or, under DSH, the worker session written with `--session ~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd`; computes duration and the estimated DeepSeek cost, writes `_work/<paper>/review_metrics.json`, and updates `review.md` if it already exists. For a reappraisal, run it after `reappraise_apply.py` with `--phase reappraisal`. Missing usage is recorded as `not_recorded`, never zero.
 6. `validate_inventory.py --candidates ... --inventory ...` — rejects invented text, un-dispositioned candidates, unresolved IDs and coverage gaps.
 7. `render_review.py --batch ROOT --paper PID --findings FILE --inventory FILE` — renders `review.md`, `ledger.md` and `summary.json` from the findings, registry and `_work/<paper>/review_metrics.json`. The renderer reconciles the findings' C/R/W/U IDs against the validated inventory and refuses a dropped or invented ID; it also refuses empty findings unless the worker set `inventory_empty: true` with an explicit `status`. The review opens with the scope block (counts, review time and tokens when recorded) and always writes the ledger; `summary.json` gets the optional `review_metrics` object. A paper without a metrics sidecar renders exactly as before.
 8. `validate_batch.py --batch ROOT --strict` — schema, arithmetic, flags, evidence and locator checks.
@@ -186,11 +186,7 @@ Rules for the fields:
 
 The cohort check compares finished papers for shared distinctive wording: rare 8-grams, near-identical heading templates, and shared sentences. Generic structural headings (introduction, methods, results, discussion, conclusion and similar) are excluded before comparison. It reports evidence for an instructor to follow up — including whether two papers share a source — and never a finding about authorship.
 
-The report shows each pair with its basis, the shared headings, an example shared sentence and the count of shared n-grams. A pair whose only shared material is a quoted passage from the same source is not evidence of copying between the papers.
-
-## Source-level patterns (secondary)
-
-Retained as a low-cost check, not the primary one. A single work appearing in the misrepresentation, nonexistence or unverifiability lists of `SOURCE_PATTERN_THRESHOLD` or more papers is reported as a cohort pattern. Expected to fire rarely: students drawing on generated text tend to invent different works rather than share one.
+The report shows each pair with its basis, shared headings, shared sentences and the count of distinct shared formulations. Overlapping 8-grams from one quoted sentence collapse into a single formulation, and a pair fires only with at least three distinct formulations, so a shared quotation from a common source cannot trigger it.
 
 ## Flag thresholds
 
@@ -235,11 +231,13 @@ Write `batch_report.md` in the output root:
 **Papers processed:** N (complete N, partial N, failed N)
 **Independence:** each paper was reviewed in a separate subagent context; this report aggregates the per-paper summary JSON only.
 
-## Paper summary
+## Batch review metrics
 
-| Paper | Total words | Text words | Ref words | C | Supports | Qualified | Contradicts | Not supported | Not judged | Misrep. sources | Nonexistent | Unverifiable | Missing links | Formatting notes | Signals | Flag |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | ... | S1,S4 | ... |
+| Metric | Value |
+| --- | --- |
+| Papers with review metrics | ... / ... |
+| Review agent time (sum) | ... |
+| Review tokens | ... |
 
 ## Flagged papers
 
@@ -254,15 +252,10 @@ Write `batch_report.md` in the output root:
 
 ## Cohort text overlap
 
-| Papers | Basis | Shared headings | Shared sentences | Shared n-grams |
+| Papers | Basis | Shared headings | Shared sentences | Shared formulations |
 | --- | --- | --- | --- | --- |
 
 Shared distinctive wording is evidence for an instructor to review, including whether two papers used the same source. It is never a finding about authorship.
-
-## Source-level patterns (secondary)
-
-| Source | Papers | Status | Paper IDs |
-| --- | --- | --- | --- |
 
 ## Sources to acquire
 

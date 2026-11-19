@@ -12,6 +12,13 @@ Manual mode is available where agent metadata is not exposed:
 
     --duration-ms N --input-tokens N --cache-read-tokens N --output-tokens N \
     --started-at 2026-11-17T02:15:00Z
+
+Under the DSH harness the worker's session file carries the same facts:
+
+    --session ~/.dsh/sessions/<workspace>/<session>/session.v4.jsonl.zstd
+
+The session is summed over its assistant messages and the run is recorded with
+the same shape. Pass a plain `.jsonl` path if zstd is unavailable.
 """
 from __future__ import annotations
 
@@ -82,6 +89,75 @@ def from_metadata(path, model):
     }
 
 
+def iso_from_ms(value):
+    return datetime.fromtimestamp(value / 1000, timezone.utc).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
+
+
+def session_lines(path):
+    if path.endswith(".zstd"):
+        import subprocess
+        try:
+            raw = subprocess.run(["zstd", "-dc", path], capture_output=True,
+                                 check=True).stdout
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise SystemExit(f"cannot decompress {path}: {exc}")
+        return raw.decode("utf-8", "replace")
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+
+def from_dsh_session(path):
+    """Duration and usage for one worker session under the DSH harness."""
+    started = last = None
+    totals = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+              "total_tokens": 0}
+    model = ""
+    for line in session_lines(path).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        kind = event.get("type")
+        if kind == "session":
+            started = event.get("createdAt") or started
+        stamp = event.get("time")
+        if isinstance(stamp, (int, float)):
+            last = stamp
+        data = event.get("data") or {}
+        if kind == "subagent/descriptor" and data.get("agentModel"):
+            model = data["agentModel"]
+        if kind == "assistant/message":
+            usage = data.get("usage") or {}
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens",
+                        "total_tokens"):
+                camel = {"input_tokens": "inputTokens", "output_tokens": "outputTokens",
+                         "cache_read_tokens": "cacheReadTokens",
+                         "total_tokens": "totalTokens"}[key]
+                value = usage.get(camel)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    totals[key] += int(value)
+    if started is None:
+        raise SystemExit(f"no session header in {path}")
+    if last is None:
+        last = started
+    usage = {key: totals[key] for key in ("input_tokens", "output_tokens",
+                                          "cache_read_tokens", "total_tokens")}
+    return {
+        "agent_id": os.path.basename(os.path.dirname(path)) or "dsh-session",
+        "status": "completed",
+        "started_at": iso_from_ms(started),
+        "completed_at": iso_from_ms(last),
+        "duration_ms": max(0, last - started),
+        "usage": usage if usage["input_tokens"] or usage["output_tokens"] else None,
+        "model": model,
+        "metadata": path,
+    }
+
+
 def manual_run(args):
     usage = None
     if args.input_tokens is not None or args.output_tokens is not None:
@@ -111,6 +187,7 @@ def main():
     ap.add_argument("--phase", choices=["review", "reappraisal"], default="review")
     ap.add_argument("--agent-id", default="")
     ap.add_argument("--metadata-path", default="")
+    ap.add_argument("--session", default="", help="DSH session .jsonl or .jsonl.zstd")
     ap.add_argument("--model", default="deepseek-v4-flash")
     ap.add_argument("--duration-ms", type=int)
     ap.add_argument("--input-tokens", type=int)
@@ -123,12 +200,14 @@ def main():
     metadata_path = args.metadata_path
     if not metadata_path and args.agent_id:
         metadata_path = find_metadata(args.agent_id)
-    if metadata_path:
+    if args.session:
+        run = from_dsh_session(args.session)
+    elif metadata_path:
         run = from_metadata(metadata_path, args.model)
     else:
         run = manual_run(args)
     run["phase"] = args.phase
-    run["model"] = args.model
+    run["model"] = args.model or run.get("model") or "deepseek-v4-flash"
     cost = metrics.estimate_cost(run.get("usage"), args.model, run.get("started_at"))
     run.update({
         "cost_status": cost.get("cost_status", "not_recorded"),

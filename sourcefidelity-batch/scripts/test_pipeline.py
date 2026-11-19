@@ -2248,6 +2248,45 @@ class MetricsTests(unittest.TestCase):
                                0.0001554)
         self.assertIn("**Review time:**", review)
 
+    def test_record_metrics_from_dsh_session(self):
+        lines = [
+            {"type": "session", "version": 4, "id": "session-test",
+             "createdAt": 1794964969000},
+            {"type": "subagent/descriptor", "seq": 2, "time": 1794964970000,
+             "data": {"agentModel": "deepseek-flash"}},
+            {"type": "assistant/message", "seq": 3, "time": 1794964990000,
+             "data": {"usage": {"inputTokens": 1200, "outputTokens": 200,
+                                "cacheReadTokens": 800, "cacheWriteTokens": 0,
+                                "totalTokens": 2200}}},
+            {"type": "assistant/message", "seq": 4, "time": 1794965090000,
+             "data": {"usage": {"inputTokens": 800, "outputTokens": 300,
+                                "cacheReadTokens": 400, "cacheWriteTokens": 0,
+                                "totalTokens": 1500}}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.v4.jsonl")
+            with open(session, "w", encoding="utf-8") as handle:
+                for event in lines:
+                    handle.write(json.dumps(event) + "\n")
+            batch = os.path.join(tmp, "batch")
+            os.makedirs(os.path.join(batch, "_work", "P1"))
+            os.makedirs(os.path.join(batch, "P1"))
+            open(os.path.join(batch, "P1", "review.md"), "w",
+                 encoding="utf-8").write("# Review\n\n")
+            argv = ["record_metrics.py", "--batch", batch, "--paper", "P1",
+                    "--phase", "review", "--session", session]
+            with mock.patch.object(sys, "argv", argv):
+                with redirect_stdout(io.StringIO()):
+                    rec.main()
+            sidecar = json.load(open(os.path.join(
+                batch, "_work", "P1", "review_metrics.json"), encoding="utf-8"))
+        run = sidecar["runs"][0]
+        self.assertEqual(run["duration_ms"], 121000)
+        self.assertEqual(run["usage"]["input_tokens"], 2000)
+        self.assertEqual(run["usage"]["output_tokens"], 500)
+        self.assertEqual(run["usage"]["total_tokens"], 3700)
+        self.assertEqual(run["phase"], "review")
+
     def test_batch_aggregate(self):
         usage = {"input_tokens": 1000, "output_tokens": 100,
                  "cache_read_tokens": 900, "total_tokens": 1100}
