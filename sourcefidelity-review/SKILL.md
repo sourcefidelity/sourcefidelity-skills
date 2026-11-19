@@ -9,6 +9,10 @@ description: Review an entire student paper against original sources for source 
 
 Read [REVIEW_PROTOCOL.md](REVIEW_PROTOCOL.md) in full before starting. It is the canonical review specification and can also be used without this skill.
 
+No key is required. Free keys (Google Books, OpenAlex, Semantic Scholar, CORE)
+raise provider quotas; store them once with `scripts/user_settings.py --prompt`.
+To reproduce a keyless install, set `SOURCEFIDELITY_DISABLE_KEYS=1`.
+
 Work from one original paper and the supplied source files or source folder. Establish the exact inputs and a private output location outside application repositories. Use read-only access to inputs; write only review artifacts and necessary temporary extraction/rendering files. Leave applications, stored sources, and existing reports unchanged. No API key and no MCP server are required. Resolve identity from the supplied copies first; for a work with no supplied copy, use the public Crossref endpoint or ordinary web search. Use read-only HTTP or WebFetch for full-text inspection. If a service is unavailable, record the limitation rather than the work's nonexistence.
 
 Follow the protocol's sequence: establish independence and access, inventory the whole paper, resolve sources, review every occurrence, review the bibliography, then reconcile the audit counts. Maintain the companion audit ledger as work proceeds so a resumed review can distinguish completed inspection from pending work. Continue through the whole authorized paper rather than stopping after a sample.

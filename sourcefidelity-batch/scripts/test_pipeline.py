@@ -62,6 +62,7 @@ import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
+import user_settings  # noqa: E402
 
 
 def page(pdf, printed, text):
@@ -3469,6 +3470,32 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             result = rd.book_affirmative(parsed)
         self.assertNotEqual(result["status"], "absent")
         self.assertNotEqual(result["status"], "nonexistent_as_cited")
+
+    def test_a_keyless_install_can_be_simulated(self):
+        parsed = rd.parse_reference(
+            "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
+        captured = {}
+
+        def fake_json(url, timeout=25, headers=None):
+            captured["url"] = url
+            return {"totalItems": 0, "items": []}
+
+        with mock.patch.dict(os.environ, {
+                "SOURCEFIDELITY_DISABLE_KEYS": "1",
+                "GOOGLE_BOOKS_API_KEY": "env-key",
+                "OPENALEX_API_KEY": "env-key",
+                "CORE_API_KEY": "env-key",
+                "SOURCEFIDELITY_EMAIL": "prof@example.edu"}), \
+                mock.patch.object(user_settings, "load",
+                                  return_value={"google_books_key": "file-key",
+                                                "openalex_api_key": "file-key"}):
+            self.assertEqual(rd._key("openalex_api_key"), "")
+            self.assertEqual(rd.google_books_key(), "")
+            self.assertEqual(rd.core_api_key(), "")
+            self.assertEqual(user_settings.get("email"), "prof@example.edu")
+            with mock.patch.object(rd, "_json", side_effect=fake_json):
+                rd._probe_googlebooks(parsed)
+        self.assertNotIn("key=", captured["url"])
 
 
 if __name__ == "__main__":

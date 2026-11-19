@@ -3,7 +3,8 @@
 
 Settings never go in the venv, a skill directory, or a review artifact: the venv
 is rebuilt and shared, and the other two are committed or copied. One JSON file
-under the user's DSH home holds the contact address and any API key.
+under the user's DSH home holds the contact address and any API key. Set
+`SOURCEFIDELITY_DISABLE_KEYS=1` to simulate an install with no keys.
 
     python -I user_settings.py --show
     python -I user_settings.py --prompt
@@ -19,6 +20,13 @@ import os
 import sys
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".dsh", "sourcefidelity.json")
+DISABLE_KEYS_ENV = "SOURCEFIDELITY_DISABLE_KEYS"
+
+
+def keys_disabled():
+    """True when a run simulates a user who never signed up for keys."""
+    return (os.environ.get(DISABLE_KEYS_ENV) or "").strip().lower() in (
+        "1", "true", "yes", "on")
 ENV_NAMES = {"email": "SOURCEFIDELITY_EMAIL",
              "google_books_key": "GOOGLE_BOOKS_API_KEY",
              "openalex_api_key": "OPENALEX_API_KEY",
@@ -48,7 +56,14 @@ def load(path=None):
 
 
 def get(name, path=None):
-    """Environment first, then the config file."""
+    """Environment first, then the config file.
+
+    With SOURCEFIDELITY_DISABLE_KEYS set, every key reads as absent so a run
+    behaves exactly like a fresh keyless install; the contact email is kept
+    because it is not a credential.
+    """
+    if name != "email" and keys_disabled():
+        return ""
     value = (os.environ.get(ENV_NAMES.get(name, "")) or "").strip()
     if value:
         return value
@@ -99,6 +114,7 @@ def save(updates, path=None):
 
 def prompt(path=None):
     """Ask for the two settings and save them. Empty input keeps the current value."""
+    print(f"To test the skill as a keyless user, set {DISABLE_KEYS_ENV}=1.")
     data = load(path)
     print("Contact email for Crossref, OpenAlex and Unpaywall.")
     print("Crossref gives a higher rate to a request that carries a contact address.")

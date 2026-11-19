@@ -73,7 +73,14 @@ def email_for_requests():
         return (os.environ.get("SOURCEFIDELITY_EMAIL") or "").strip()
 
 
+def _keys_disabled():
+    return (os.environ.get("SOURCEFIDELITY_DISABLE_KEYS") or "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def _key(name):
+    if _keys_disabled():
+        return ""
     try:
         import user_settings
         return user_settings.get(name)
@@ -83,6 +90,8 @@ def _key(name):
 
 
 def core_api_key():
+    if _keys_disabled():
+        return ""
     try:
         import user_settings
         return user_settings.get("core_api_key")
@@ -99,6 +108,8 @@ def _max_bytes(name, default):
 
 
 def google_books_key():
+    if _keys_disabled():
+        return ""
     try:
         import user_settings
         return user_settings.google_books_key()
