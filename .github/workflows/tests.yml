@@ -3,7 +3,6 @@ name: tests
 on:
   push:
   pull_request:
-  workflow_dispatch:
 
 # A newer push to the same ref supersedes the run it interrupted: this repo
 # sees bursts of pushes, and every one of them used to start a full matrix.
@@ -16,10 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux on every push; the macOS and Windows legs only for pull
-        # requests, pushes to main, and manual runs. macOS bills at roughly
-        # ten times the Linux rate, so it does not belong on every branch push.
-        os: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && fromJSON('["ubuntu-latest","macos-latest","windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
