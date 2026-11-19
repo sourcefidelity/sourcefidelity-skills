@@ -3211,5 +3211,45 @@ class PublisherPathTests(unittest.TestCase):
             self.assertEqual(rd.extract_pdf(os.path.join(folder, "none.pdf"), folder), {})
 
 
+class SourceCacheTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.old = rd.CACHE_ROOT
+        rd.CACHE_ROOT = self.root
+
+    def tearDown(self):
+        rd.CACHE_ROOT = self.old
+        self._tmp.cleanup()
+
+    def test_a_fetched_copy_is_reused_without_a_request(self):
+        pdf = os.path.join(self.root, "copy.pdf")
+        with open(pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4 test")
+        rd.cache_put("fetch", "10.1000/x",
+                     {"pdf": pdf, "bytes": 12, "final_url": "https://x",
+                      "content_type": "application/pdf"})
+        with mock.patch.object(rd, "_request",
+                               side_effect=AssertionError("network used")):
+            result = rd.resolve_copy("10.1000/x", self.root)
+        self.assertEqual(result["resolver"], "cache")
+        self.assertEqual(result["pdf"], pdf)
+
+    def test_cached_metadata_skips_crossref(self):
+        rd.cache_put("metadata", "10.1000/x", {"title": "Cached"})
+        with mock.patch.object(rd, "crossref_by_doi",
+                               side_effect=AssertionError("network used")):
+            meta = rd.crossref_by_doi_cached("10.1000/X", "me@example.org")
+        self.assertEqual(meta["title"], "Cached")
+
+    def test_an_expired_entry_is_ignored(self):
+        rd.cache_put("metadata", "10.1000/x", {"title": "Old"})
+        data = rd.cache_load()
+        data["metadata"]["10.1000/x"]["stored_at"] = 0
+        with open(rd.cache_path(), "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        self.assertIsNone(rd.cache_get("metadata", "10.1000/x"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -349,6 +349,60 @@ def _json(url, timeout=25, headers=None):
     return json.loads(body.decode("utf-8", "replace"))
 
 
+CACHE_ROOT = ""
+CACHE_TTL_SECONDS = 30 * 24 * 3600
+CACHE_FILE = "source_cache.json"
+
+
+def cache_path():
+    return os.path.join(CACHE_ROOT, CACHE_FILE) if CACHE_ROOT else ""
+
+
+def cache_load():
+    path = cache_path()
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def cache_get(kind, key):
+    entry = (cache_load().get(kind) or {}).get(key)
+    if not isinstance(entry, dict):
+        return None
+    if time.time() - float(entry.get("stored_at") or 0) > CACHE_TTL_SECONDS:
+        return None
+    return entry.get("value")
+
+
+def cache_put(kind, key, value):
+    path = cache_path()
+    if not path:
+        return
+    data = cache_load()
+    data.setdefault(kind, {})[key] = {"stored_at": time.time(), "value": value}
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = path + ".tmp"
+    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(data, handle, indent=1, ensure_ascii=False)
+    os.replace(temporary, path)
+
+
+def crossref_by_doi_cached(doi, mailto=""):
+    """Crossref metadata once per batch, then from the cache."""
+    key = (doi or "").lower()
+    cached = cache_get("metadata", key)
+    if cached:
+        return cached
+    meta = crossref_by_doi(doi, mailto)
+    cache_put("metadata", key, meta)
+    return meta
+
+
 def crossref_by_doi(doi):
     meta = _json("https://api.crossref.org/works/" + urllib.parse.quote(doi))["message"]
     return {"doi": doi,
@@ -932,6 +986,13 @@ def resolve_copy(doi, out_dir, mailto=""):
     """Call the DOI resolver and keep a PDF only when the publisher serves one."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
+    cached = cache_get("fetch", (doi or "").lower()) if doi else None
+    if cached and os.path.exists(cached.get("pdf", "")):
+        record.update({"resolver": "cache", "status": 200,
+                       "final_url": cached.get("final_url", ""),
+                       "content_type": cached.get("content_type", ""),
+                       "bytes": cached.get("bytes", 0), "pdf": cached["pdf"]})
+        return record
     if not doi:
         record["resolver"] = "no doi"
         return record
@@ -998,6 +1059,16 @@ def resolve_copy(doi, out_dir, mailto=""):
 
 
 def _keep_pdf(record, body, doi, out_dir):
+    result = _keep_pdf_impl(record, body, doi, out_dir)
+    if result.get("pdf") and doi:
+        cache_put("fetch", doi.lower(), {"pdf": result["pdf"],
+                                         "bytes": result.get("bytes", 0),
+                                         "final_url": result.get("final_url", ""),
+                                         "content_type": result.get("content_type", "")})
+    return result
+
+
+def _keep_pdf_impl(record, body, doi, out_dir):
     slug = re.sub(r"[^A-Za-z0-9]+", "-", doi).strip("-")[:80]
     path = os.path.join(out_dir, f"{slug}.pdf")
     with open(path, "wb") as handle:
@@ -1183,7 +1254,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
 
     if parsed["doi"]:
         try:
-            meta = crossref_by_doi(parsed["doi"])
+            meta = crossref_by_doi_cached(parsed["doi"])
             ran.append("crossref(doi)")
             verdict, evidence = match_record(parsed, meta, kind)
             if verdict in ("possible_match", "unlocated_after_search"):
@@ -1345,6 +1416,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refs", default="", help="text file, one reference per line")
     parser.add_argument("--entry", action="append", default=[], help="one reference; repeatable")
+    parser.add_argument("--cache-root", default="",
+                        help="batch source cache directory")
     parser.add_argument("--paper", default="", help="a DOCX/PDF whose references to resolve")
     parser.add_argument("--out", default="", help="output directory")
     parser.add_argument("--no-attempt", action="store_true", help="resolve identity only")
@@ -1353,6 +1426,8 @@ def main(argv=None):
     parser.add_argument("--limit", type=int, default=0, help="stop after N references")
     parser.add_argument("--mailto", default="", help="contact address for polite Crossref use")
     args = parser.parse_args(argv)
+    global CACHE_ROOT
+    CACHE_ROOT = args.cache_root or ""
     args.mailto = args.mailto or email_for_requests()
 
     entries = list(args.entry)
