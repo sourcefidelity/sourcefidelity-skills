@@ -2898,7 +2898,11 @@ class HyperlinkAuditTests(unittest.TestCase):
     def test_link_classes_separate_absence_from_permanence(self):
         self.assertEqual(ha.classify_link("https://pan.baidu.com/s/1abc?pwd=1234"),
                          "non-permanent")
+        # A full-text link to an online source is the link to the work, even
+        # when this machine cannot reach the host.
         self.assertEqual(ha.classify_link("https://lantern.mediahist.org/catalog/x"),
+                         "full-text")
+        self.assertEqual(ha.classify_link("https://www.worldcat.org/title/1"),
                          "record-only")
         self.assertEqual(ha.classify_link("https://doi.org/10.1007/bf00820765"), "doi")
         self.assertEqual(ha.classify_link("https://www.routledge.com/book/1"), "permanent")
@@ -2926,16 +2930,18 @@ class HyperlinkAuditTests(unittest.TestCase):
         report = {"rows": [
             {"id": "R1", "link_class": "absent", "fetch": None},
             {"id": "R2", "link_class": "non-permanent", "fetch": None},
-            {"id": "R3", "link_class": "record-only",
-             "fetch": {"state": "unreachable", "status": None, "detail": "reset"}},
+            {"id": "R3", "link_class": "full-text",
+             "fetch": {"state": "unreachable", "status": None, "detail": "reset",
+                       "environment": True}},
             {"id": "R4", "link_class": "permanent",
              "fetch": {"state": "ok", "status": 200, "detail": "text/html"}},
         ]}
         lines = "\n".join(ha.scope_lines(report))
         self.assertIn("Hyperlinks absent: 1", lines)
         self.assertIn("not permanent: 1", lines)
-        self.assertIn("catalogue or record page: 1", lines)
+        self.assertIn("Full-text links to the work: 1", lines)
         self.assertIn("unreachable 1", lines)
+        self.assertIn("unreachable from the review environment: 1", lines)
         self.assertIn("Hyperlink findings (HL): 2", lines)
 
     def test_fetch_state_names_the_failure_kind(self):
@@ -2949,6 +2955,13 @@ class HyperlinkAuditTests(unittest.TestCase):
                                side_effect=urllib.error.URLError(
                                    "certificate verify failed: CERTIFICATE_VERIFY_FAILED")):
             self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "tls")
+    def test_environment_failures_are_flagged(self):
+        with mock.patch.object(ha.urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError("connection reset")):
+            self.assertTrue(ha.fetch_state("https://example.org/x")["environment"])
+        with mock.patch.object(ha.urllib.request, "urlopen",
+                               side_effect=urllib.error.HTTPError("u", 404, "no", {}, None)):
+            self.assertFalse(ha.fetch_state("https://example.org/x")["environment"])
 
     def test_login_page_is_not_counted_as_working(self):
         response = mock.MagicMock()

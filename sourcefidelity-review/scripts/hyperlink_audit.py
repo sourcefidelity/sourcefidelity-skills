@@ -31,10 +31,10 @@ CLOUD_HOSTS = ("pan.baidu.com", "aliyundrive.com", "aliyundrive.net", "123pan.co
                "drive.google.com", "docs.google.com", "dropbox.com", "mega.nz",
                "wetransfer.com", "we.tl", "1drv.ms", "onedrive.live.com",
                "sharepoint.com", "qq.com", "weiyun.com", "lanzou")
-CATALOGUE_HOSTS = ("lantern.mediahist.org", "archive.org", "openlibrary.org",
-                   "catalog.hathitrust.org", "hathitrust.org", "jstor.org",
-                   "worldcat.org", "loc.gov", "catalogue.bnf.fr", "k10plus",
-                   "books.google", "google.com/books", "gutenberg.org")
+FULLTEXT_HOSTS = ("lantern.mediahist.org", "archive.org", "gutenberg.org",
+                  "hathitrust.org", "biodiversitylibrary.org")
+RECORD_HOSTS = ("worldcat.org", "catalogue.bnf.fr", "k10plus", "openlibrary.org",
+                "loc.gov", "books.google", "jstor.org")
 DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"'<>,;]+")
 URL_RE = re.compile(r"https?://[^\s\"'<>\])]+")
 REFERENCE_HEADING = re.compile(r"^\s*(references?|reference list|bibliography|works cited)"
@@ -163,7 +163,12 @@ def entry_links(entry):
 
 
 def classify_link(url):
-    """Link presence class: absent, doi, non-permanent, record-only, permanent."""
+    """Link class: absent, doi, non-permanent, full-text, record-only, permanent.
+
+    A full-text link to an online source is the link to the work, whatever this
+    machine can reach: failure to reach it is an environment limitation, not a
+    defect in the link. A record page is only an access route.
+    """
     if not url:
         return "absent"
     host = urllib.parse.urlparse(url).netloc.lower()
@@ -171,7 +176,9 @@ def classify_link(url):
         return "doi"
     if any(item in host for item in CLOUD_HOSTS):
         return "non-permanent"
-    if any(item in host for item in CATALOGUE_HOSTS):
+    if any(item in host for item in FULLTEXT_HOSTS):
+        return "full-text"
+    if any(item in host for item in RECORD_HOSTS):
         return "record-only"
     return "permanent"
 
@@ -203,8 +210,16 @@ def classify_media_link(entry_text, link):
 
 
 
+ENVIRONMENT_STATES = ("unreachable", "tls", "timeout")
+
+
 def fetch_state(url, timeout=10):
-    """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page."""
+    """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
+
+    `unreachable`, `tls` and `timeout` are properties of the review machine, not
+    of the link, and carry `environment: True` so no report turns them into a
+    link finding.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": UA,
                                                    "Accept": "text/html,application/pdf"})
     try:
@@ -215,26 +230,35 @@ def fetch_state(url, timeout=10):
             body = response.read(300000)
     except urllib.error.HTTPError as error:
         if error.code in (404, 410):
-            return {"state": "dead", "status": error.code, "detail": "HTTP 404/410"}
-        return {"state": "blocked", "status": error.code, "detail": f"HTTP {error.code}"}
+            return {"state": "dead", "status": error.code, "detail": "HTTP 404/410",
+                "environment": False}
+        return {"state": "blocked", "status": error.code, "detail": f"HTTP {error.code}",
+                "environment": False}
     except urllib.error.URLError as error:
         reason = str(error.reason)
         if "CERTIFICATE" in reason.upper() or "SSL" in reason.upper():
-            return {"state": "tls", "status": None, "detail": reason[:120]}
+            return {"state": "tls", "status": None, "detail": reason[:120],
+                "environment": True}
         if "timed out" in reason.lower():
-            return {"state": "timeout", "status": None, "detail": reason[:120]}
-        return {"state": "unreachable", "status": None, "detail": reason[:120]}
+            return {"state": "timeout", "status": None, "detail": reason[:120],
+                "environment": True}
+        return {"state": "unreachable", "status": None, "detail": reason[:120],
+                "environment": True}
     except Exception as error:  # noqa: BLE001
-        return {"state": "unreachable", "status": None, "detail": type(error).__name__}
+        return {"state": "unreachable", "status": None,
+                "detail": type(error).__name__, "environment": True}
 
     lowered = (final or "").lower()
     if any(word in lowered for word in ("login", "signin", "sign-in", "consent", "captcha")):
-        return {"state": "login-page", "status": status, "detail": final[:160]}
+        return {"state": "login-page", "status": status, "detail": final[:160],
+                "environment": False}
     text = body[:20000].decode("utf-8", "replace").lower()
     if "sign in" in text or "log in" in text or "captcha" in text:
-        return {"state": "login-page", "status": status, "detail": final[:160]}
+        return {"state": "login-page", "status": status, "detail": final[:160],
+                "environment": False}
     return {"state": "ok", "status": status,
-            "detail": f"{content_type or 'unknown'} {len(body)} B"}
+            "detail": f"{content_type or 'unknown'} {len(body)} B",
+            "environment": False}
 
 
 def audit(path, fetch=True, timeout=10):
@@ -275,20 +299,28 @@ def scope_lines(report):
     classes, outcomes = totals(report)
     absent = classes.get("absent", 0)
     non_permanent = classes.get("non-permanent", 0)
+    fulltext = classes.get("full-text", 0)
     record = classes.get("record-only", 0)
     excluded = classes.get("not-linkable", 0)
     permanent = classes.get("permanent", 0) + classes.get("doi", 0)
     lines = [f"Hyperlinks absent: {absent}.",
              f"Excluded as non-linkable (traditional audio-visual media): {excluded}.",
              f"Links present but not permanent: {non_permanent}.",
+             f"Full-text links to the work: {fulltext}.",
              f"Links that are only a catalogue or record page: {record}.",
              f"Links that should resolve to the work: {permanent}."]
     ok = outcomes.get("ok", 0)
+    env_failures = sum(value for key, value in outcomes.items()
+                       if key in ENVIRONMENT_STATES)
     broken = {key: value for key, value in outcomes.items()
               if key in ("blocked", "dead", "unreachable", "tls", "timeout", "login-page")}
     if broken:
         detail = ", ".join(f"{key} {value}" for key, value in sorted(broken.items()))
         lines.append(f"Fetch attempted, result: {detail}; reachable {ok}.")
+    if env_failures:
+        lines.append(f"Full-text links unreachable from the review environment: "
+                     f"{env_failures} (network restriction, not a link defect; access "
+                     f"not verifiable, not HL).")
     if absent or non_permanent:
         lines.append(f"Hyperlink findings (HL): {absent + non_permanent} "
                      f"({absent} absent, {non_permanent} not permanent).")
