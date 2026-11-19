@@ -270,13 +270,40 @@ def match_record(parsed, candidate, kind):
     return "unlocated_after_search", evidence
 
 
-def _request(url, accept="application/json", timeout=25, referer=""):
+RETRY_STATUS = (429, 500, 502, 503, 504)
+
+
+class RateLimited(Exception):
+    """A 429 with a long Retry-After: the route is closed for this run."""
+
+
+def _request(url, accept="application/json", timeout=25, referer="", attempts=3):
+    """One request, with a short backoff for a transient status.
+
+    The public APIs rate-limit: a 429 is a "try later", not an absence.
+    """
     headers = {"User-Agent": UA, "Accept": accept}
     if referer:
         headers["Referer"] = referer
-    request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.status, response.geturl(), response.headers, response.read()
+    last = None
+    for attempt in range(attempts):
+        request = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.status, response.geturl(), response.headers, response.read()
+        except urllib.error.HTTPError as error:
+            last = error
+            try:
+                retry_after = int(error.headers.get("Retry-After") or 0)
+            except (TypeError, ValueError):
+                retry_after = 0
+            if error.code == 429 and retry_after > 60:
+                raise RateLimited(f"rate limited: Retry-After {retry_after}s") from error
+            if error.code in RETRY_STATUS and attempt < attempts - 1:
+                time.sleep(min(retry_after or 2 * (attempt + 1), 30))
+                continue
+            raise
+    raise last
 
 
 def _json(url, timeout=25):
@@ -730,7 +757,23 @@ def book_affirmative(parsed):
     return result
 
 
-def resolve_copy(doi, out_dir):
+UNPAYWALL = "https://api.unpaywall.org/v2/"
+
+
+def oa_pdf_urls(doi, mailto=""):
+    """PDF URLs from Unpaywall's OA locations, best first."""
+    query = "?email=" + urllib.parse.quote(mailto or "review@example.org")
+    data = _json(UNPAYWALL + urllib.parse.quote(doi) + query)
+    urls = []
+    for location in data.get("oa_locations") or []:
+        for key in ("url_for_pdf", "url"):
+            value = location.get(key)
+            if value and value not in urls:
+                urls.append(value)
+    return urls
+
+
+def resolve_copy(doi, out_dir, mailto=""):
     """Call the DOI resolver and keep a PDF only when the publisher serves one."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
@@ -746,7 +789,10 @@ def resolve_copy(doi, out_dir):
             return _keep_pdf(record, body, doi, out_dir)
         if b"<" in body[:200]:
             html = body.decode("utf-8", "replace")
-            links = re.findall(r'href="([^"]+\.pdf[^"]*)"', html, flags=re.I)
+            meta = re.search(r'<meta[^>]+name="citation_pdf_url"[^>]+'
+                             r'content="([^"]+)"', html, flags=re.I)
+            links = [meta.group(1)] if meta else []
+            links += re.findall(r'href="([^"]+\.pdf[^"]*)"', html, flags=re.I)
             if links:
                 target = urllib.parse.urljoin(final, links[0])
                 status2, final2, headers2, body2 = _request(target, accept="application/pdf",
@@ -778,8 +824,21 @@ def resolve_copy(doi, out_dir):
     except urllib.error.HTTPError as error:
         record.update({"resolver": "doi.org", "status": error.code,
                        "final_url": error.geturl() if error.geturl() else ""})
+
     except Exception as exc:  # noqa: BLE001 - recorded, never raised
         record["pdf"] = f"{type(exc).__name__}: {exc}"
+    for candidate in oa_pdf_urls(doi, mailto)[:2]:
+        try:
+            status4, final4, headers4, body4 = _request(candidate, accept="application/pdf",
+                                                        timeout=60)
+        except Exception:  # noqa: BLE001
+            continue
+        if body4[:4] == b"%PDF":
+            record.update({"resolver": "unpaywall", "status": status4,
+                           "final_url": final4,
+                           "content_type": headers4.get("Content-Type", ""),
+                           "bytes": len(body4)})
+            return _keep_pdf(record, body4, doi, out_dir)
     return record
 
 
@@ -968,7 +1027,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
     if attempt and record["doi"] and record["identity"] in (
             "confirmed", "same_work_other_edition", "bibliographic_conflict"):
         try:
-            record["copy"] = resolve_copy(record["doi"], out_dir)
+            record["copy"] = resolve_copy(record["doi"], out_dir, mailto)
         except Exception as exc:  # noqa: BLE001
             record["copy"] = {"error": f"{type(exc).__name__}: {exc}"}
     return record

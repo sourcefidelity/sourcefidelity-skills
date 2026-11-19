@@ -2839,6 +2839,15 @@ class ResolveDoisTests(unittest.TestCase):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present_title_mismatch")
 
+    def test_unpaywall_pdf_urls_read_the_oa_locations(self):
+        data = {"oa_locations": [
+            {"url_for_pdf": "https://example.org/a.pdf", "url": "https://example.org/a"},
+            {"url": "https://example.org/b"}]}
+        with mock.patch.object(rd, "_json", return_value=data):
+            urls = rd.oa_pdf_urls("10.1000/x", "review@example.org")
+        self.assertEqual(urls, ["https://example.org/a.pdf",
+                                "https://example.org/a", "https://example.org/b"])
+
     def test_resolve_copy_still_exists(self):
         self.assertTrue(callable(rd.resolve_copy))
 
