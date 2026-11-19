@@ -505,6 +505,45 @@ SRU_K10PLUS = ("https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve"
                "&recordSchema=dc&maximumRecords=1&query=")
 SRU_DNB = ("https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve"
            "&recordSchema=oai_dc&maximumRecords=1&query=")
+SRU_BNF = ("https://catalogue.bnf.fr/api/SRU?version=1.2&operation=searchRetrieve"
+           "&recordSchema=dublincore&maximumRecords=10&query=")
+
+
+def bnf_probe(parsed):
+    """(record, reason) from the BnF catalogue.
+
+    The BnF SRU rejects combined title and author clauses, so this queries the
+    title and inspects the creators of the returned records instead.
+    """
+    title = parsed.get("title") or ""
+    surname = _fold(parsed.get("surname"))
+    query = f'bib.title all "{_cql_terms(title, 5)}"'
+    try:
+        status, final, headers, body = _request(SRU_BNF + urllib.parse.quote(query),
+                                                accept="application/xml")
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    text = body.decode("utf-8", "replace")
+    count = re.search(r"numberOfRecords>(\d+)<", text)
+    if not count:
+        return None, "no record count"
+    total = int(count.group(1))
+    if total == 0:
+        return {"count": 0, "score": 0.0, "author_ok": False, "title": ""}, ""
+    clean = lambda value: re.sub(r"<[^>]+>", "", value).strip()  # noqa: E731
+    titles = [clean(item) for item in re.findall(r"<dc:title[^>]*>(.*?)</dc:title>", text, re.S)]
+    creators = [clean(item) for item in
+                re.findall(r"<dc:creator[^>]*>(.*?)</dc:creator>", text, re.S)]
+    best_title, best_creator, best_score = "", "", 0.0
+    for index, item in enumerate(titles):
+        score = title_score(title, item)
+        if score > best_score:
+            best_title = item
+            best_creator = creators[index] if index < len(creators) else ""
+            best_score = score
+    return {"count": total, "title": best_title, "creator": best_creator,
+            "score": best_score,
+            "author_ok": bool(surname) and surname in _fold(best_creator)}, ""
 
 
 def _cql_terms(text, limit=6):
@@ -550,10 +589,19 @@ def book_affirmative(parsed):
     k10_query = f"pica.all={_cql_terms(title)}" + (f" and pica.all={surname}" if surname else "")
     k10_count, k10_title = sru_probe(SRU_K10PLUS, k10_query)
     routes.append({"catalogue": "K10plus", "count": k10_count, "strong": True,
-                   "detail": "" if k10_count is not None else k10_title})
+                   "detail": k10_title if k10_count is not None else ""})
     dnb_count, dnb_detail = sru_probe(SRU_DNB, f"WOE={title} {surname}".strip())
     routes.append({"catalogue": "DNB", "count": dnb_count, "strong": True,
                    "detail": "" if dnb_count is not None else dnb_detail})
+    bnf, bnf_detail = bnf_probe(parsed)
+    if bnf is None:
+        routes.append({"catalogue": "BnF", "count": None, "strong": True,
+                       "detail": bnf_detail})
+    else:
+        routes.append({"catalogue": "BnF", "count": bnf["count"], "strong": True,
+                       "detail": bnf.get("title", ""),
+                       "score": bnf.get("score", 0.0),
+                       "author_ok": bnf.get("author_ok", False)})
     try:
         data = _json("https://www.googleapis.com/books/v1/volumes?maxResults=1&q="
                      + urllib.parse.quote(f"intitle:{title} inauthor:{surname}"))
@@ -566,22 +614,37 @@ def book_affirmative(parsed):
     answered = [route for route in routes if route["strong"] and route["count"] is not None]
     zero = [route for route in answered if route["count"] == 0]
     held = [route for route in answered if route["count"]]
-    if held:
+    matched = []
+    for route in held:
+        if route["catalogue"] == "K10plus":
+            score = title_score(title, route.get("detail") or "")
+            if score >= 0.4:
+                matched.append((route, score))
+        elif route["catalogue"] == "BnF":
+            score = route.get("score", 0.0)
+            if score >= 0.5 or route.get("author_ok"):
+                matched.append((route, score))
+        else:
+            matched.append((route, 0.0))
+    if matched:
+        route, score = matched[0]
         result["status"] = "present"
-        result["note"] = f"held by {held[0]['catalogue']} ({held[0]['count']} record(s))"
-        if k10_count:
-            result["first_title"] = k10_title
-            result["score"] = title_score(title, k10_title)
-            if result["score"] < 0.4:
-                result["status"] = "present_title_mismatch"
-                result["note"] = f"K10plus returns a different title: {k10_title}"
+        result["note"] = f"held by {route['catalogue']} ({route['count']} record(s))"
+        result["first_title"] = route.get("detail", "")
+        result["score"] = score
+    elif held:
+        route = held[0]
+        result["status"] = "present_title_mismatch"
+        result["first_title"] = route.get("detail", "")
+        result["note"] = (f"{route['catalogue']} returns {route['count']} record(s) but none "
+                          f"matches this title; nearest: {(route.get('detail') or '')[:90]}")
     elif len(zero) >= 2:
         result["status"] = "absent"
         result["note"] = "no record in " + " and ".join(route["catalogue"] for route in zero)
     elif len(zero) == 1:
         result["status"] = "absent_single_catalogue"
-        result["note"] = (f"no record in {zero[0]['catalogue']}; only one strong catalogue "
-                          f"answered, so absence is not established")
+        result["note"] = (f"no record in {zero[0]['catalogue']}; fewer than two strong "
+                          f"catalogues answered, so absence is not established")
     return result
 
 

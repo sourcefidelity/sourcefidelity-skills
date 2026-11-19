@@ -2777,6 +2777,7 @@ class ResolveDoisTests(unittest.TestCase):
         with mock.patch.object(rd, "sru_probe",
                                side_effect=[(10, "Heavenly Bodies: Film Stars and Society"),
                                             (None, "HTTPError")]), \
+                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
                 mock.patch.object(rd, "_json", side_effect=Exception("429")):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present")
@@ -2786,11 +2787,21 @@ class ResolveDoisTests(unittest.TestCase):
         parsed = rd.parse_reference(
             "Doe, J. (2019). A fabricated monograph. Invented Press.")
         with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (0, "")]), \
+                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
                 mock.patch.object(rd, "_json", return_value={"totalItems": 0}):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "absent")
+        # K10plus and BnF answering zero is two strong answers.
+        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (None, "HTTPError")]), \
+                mock.patch.object(rd, "bnf_probe",
+                                  return_value=({"count": 0, "score": 0.0,
+                                                 "author_ok": False, "title": ""}, "")), \
+                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+            two = rd.book_affirmative(parsed)
+        self.assertEqual(two["status"], "absent")
         # One catalogue answering zero is not absence.
         with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (None, "HTTPError")]), \
+                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
                 mock.patch.object(rd, "_json", side_effect=Exception("429")):
             single = rd.book_affirmative(parsed)
         self.assertEqual(single["status"], "absent_single_catalogue")
@@ -2800,6 +2811,7 @@ class ResolveDoisTests(unittest.TestCase):
             "Doe, J. (2019). A fabricated monograph. Routledge.")
         with mock.patch.object(rd, "sru_probe",
                                side_effect=[(3, "Something Else Entirely"), (None, "HTTPError")]), \
+                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
                 mock.patch.object(rd, "_json", side_effect=Exception("429")):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present_title_mismatch")
