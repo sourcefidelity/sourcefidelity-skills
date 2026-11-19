@@ -99,6 +99,18 @@ def core_api_key():
         return ""
 
 
+REFERENCE_IDENTITY_SECONDS = 30
+
+
+def _reference_budget():
+    try:
+        import user_settings
+        return user_settings.get_int("reference_identity_seconds",
+                                     REFERENCE_IDENTITY_SECONDS)
+    except Exception:  # noqa: BLE001
+        return REFERENCE_IDENTITY_SECONDS
+
+
 def _max_bytes(name, default):
     try:
         import user_settings
@@ -941,7 +953,8 @@ def bnf_probe(parsed):
     query = f'bib.title all "{_cql_terms(title, 5)}"'
     try:
         status, final, headers, body = _request(SRU_BNF + urllib.parse.quote(query),
-                                                accept="application/xml")
+                                                accept="application/xml",
+                                                timeout=8, attempts=1)
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     text = body.decode("utf-8", "replace")
@@ -977,11 +990,16 @@ def _cql_terms(text, limit=6):
     return " ".join(words[:limit])
 
 
-def sru_probe(base, query):
-    """(numberOfRecords, first dc:title) from an SRU catalogue, or (None, reason)."""
+def sru_probe(base, query, timeout=8, attempts=1):
+    """(numberOfRecords, first dc:title) from an SRU catalogue, or (None, reason).
+
+    Catalogue probes are one short attempt: a dead or slow catalogue is a
+    recorded limitation, not a reason to spend 45 seconds retrying it.
+    """
     try:
         status, final, headers, body = _request(base + urllib.parse.quote(query),
-                                                accept="application/xml")
+                                                accept="application/xml",
+                                                timeout=timeout, attempts=attempts)
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     text = body.decode("utf-8", "replace")
@@ -1027,7 +1045,7 @@ def _probe_internet_archive(parsed):
     url = ("https://archive.org/advancedsearch.php?output=json&rows=1"
            "&fl%5B%5D=title&q=" + urllib.parse.quote(query))
     try:
-        data = _json(url, timeout=10)
+        data = _json(url, timeout=8)
     except urllib.error.HTTPError as exc:
         return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
@@ -1046,7 +1064,7 @@ def _probe_cinii(parsed):
     url = ("https://ci.nii.ac.jp/books/opensearch/search?format=json&count=1&q="
            + urllib.parse.quote(query))
     try:
-        data = _json(url, timeout=10)
+        data = _json(url, timeout=8)
     except urllib.error.HTTPError as exc:
         return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
@@ -1067,7 +1085,7 @@ def _probe_openlibrary(parsed):
            "&title=" + urllib.parse.quote(parsed.get("title") or "")
            + "&author=" + urllib.parse.quote(parsed.get("surname") or ""))
     try:
-        data = _json(url, timeout=10)
+        data = _json(url, timeout=8)
     except urllib.error.HTTPError as exc:
         return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
@@ -1089,7 +1107,7 @@ def _probe_googlebooks(parsed):
     if key:
         url += "&key=" + urllib.parse.quote(key)
     try:
-        data = _json(url, timeout=10)
+        data = _json(url, timeout=8)
     except urllib.error.HTTPError as exc:
         return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
@@ -1158,7 +1176,7 @@ def _catalogue_record(name, probe_name, parsed, key):
     return record, ""
 
 
-def book_affirmative(parsed):
+def book_affirmative(parsed, deadline=None):
     """Ask book catalogues whether the work exists, and say who answered.
 
     The three primary catalogues are tried until a hold or two answered zeros;
@@ -1180,8 +1198,14 @@ def book_affirmative(parsed):
     primary_zeros, zeros, held, mismatch, answered = 0, 0, None, 0, 0
     tiers = ((True, BOOK_PRIMARY_ROUTES), (False, BOOK_SECONDARY_ROUTES),
              (False, BOOK_FALLBACK_ROUTES))
+    deadline_hit = False
     for strong, routes_in_tier in tiers:
         for name, probe_name in routes_in_tier:
+            if deadline is not None and time.monotonic() >= deadline:
+                routes.append({"catalogue": name, "count": None, "strong": strong,
+                               "detail": "reference deadline"})
+                deadline_hit = True
+                break
             record, detail = _catalogue_record(name, probe_name, parsed, key)
             if record is None:
                 routes.append({"catalogue": name, "count": None, "strong": strong,
@@ -1208,7 +1232,7 @@ def book_affirmative(parsed):
                 break
             else:
                 mismatch += 1
-        if held is not None or primary_zeros >= 2:
+        if held is not None or primary_zeros >= 2 or deadline_hit:
             break
 
     if held is not None:
@@ -1639,6 +1663,14 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
     kind = entry_kind(parsed["entry"], parsed)
     record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
               "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
+    try:
+        budget = _reference_budget()
+    except Exception:  # noqa: BLE001
+        budget = REFERENCE_IDENTITY_SECONDS
+    deadline = (time.monotonic() + budget) if budget and budget > 0 else None
+
+    def past_deadline():
+        return deadline is not None and time.monotonic() >= deadline
     if kind == "article" and parsed["doi"]:
         record["publisher"] = landing_metadata(parsed["doi"], mailto)
         if record["publisher"].get("toc_url"):
@@ -1692,21 +1724,21 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             except Exception as exc:  # noqa: BLE001
                 failed.append(f"crossref(doi) {type(exc).__name__}")
         else:
-            if "crossref" in routes and not stop_early():
+            if "crossref" in routes and not stop_early() and not past_deadline():
                 try:
                     for candidate in crossref_search(parsed, mailto)[:3]:
                         consider(candidate)
                     ran.append("crossref")
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"crossref {type(exc).__name__}")
-            if "openalex" in routes and not stop_early():
+            if "openalex" in routes and not stop_early() and not past_deadline():
                 try:
                     for candidate in openalex_search(parsed)[:3]:
                         consider(candidate)
                     ran.append("openalex")
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"openalex {type(exc).__name__}")
-            if "openlibrary" in routes and not stop_early():
+            if "openlibrary" in routes and not stop_early() and not past_deadline():
                 try:
                     for candidate in openlibrary_search(parsed)[:2]:
                         consider(candidate)
@@ -1741,6 +1773,8 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
                 "author and coordinates point at a real record, but no record carries this "
                 "title: inspect the volume/issue contents before judging the entry")
 
+    if past_deadline():
+        record["notes"].append("reference deadline: remaining routes skipped")
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
     if failed:
         record["notes"].append("route failures: " + "; ".join(failed))
@@ -1758,6 +1792,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             "record_title": record.get("record_title", "")})
 
     if (check_contents and kind == "article" and not stop_early()
+            and not past_deadline()
             and record["identity"] not in DECISIVE_IDENTITIES):
         contents = contents_check_cached(parsed)
         record["contents"] = contents
@@ -1785,9 +1820,9 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["notes"].append("contents check: "
                                    + (contents.get("note") or contents["status"]))
 
-    if (check_contents and kind == "book"
+    if (check_contents and kind == "book" and not past_deadline()
             and record["identity"] not in DECISIVE_IDENTITIES):
-        check = book_affirmative(parsed)
+        check = book_affirmative(parsed, deadline=deadline)
         record["contents"] = check
         if check["status"] == "present" and record["identity"] not in (
                 "confirmed", "same_work_other_edition"):

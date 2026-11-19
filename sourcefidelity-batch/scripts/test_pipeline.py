@@ -3529,6 +3529,39 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         self.assertEqual(result["status"], "present")
         self.assertEqual(result["first_title"], "Heavenly Bodies")
 
+    def test_sru_probes_are_one_short_attempt(self):
+        seen = {}
+
+        def fake_request(url, **kwargs):
+            seen.update(kwargs)
+            return 200, url, {}, b"<numberOfRecords>0</numberOfRecords>"
+
+        with mock.patch.object(rd, "_request", side_effect=fake_request):
+            count, _title = rd.sru_probe("https://sru.example/x", "q")
+        self.assertEqual(count, 0)
+        self.assertEqual(seen.get("attempts"), 1)
+        self.assertEqual(seen.get("timeout"), 8)
+
+    def test_a_reference_deadline_stops_the_catalogue_chain(self):
+        parsed = rd.parse_reference(
+            "Doe, J. (2019). A fabricated monograph. Invented Press.")
+        with mock.patch.object(rd, "_probe_k10plus",
+                               side_effect=AssertionError("catalogue used")):
+            result = rd.book_affirmative(parsed, deadline=time.monotonic() - 1)
+        self.assertEqual(result["status"], "search_incomplete")
+        self.assertTrue(any(route["detail"] == "reference deadline"
+                            for route in result["routes"]))
+
+    def test_the_reference_deadline_is_recorded_on_the_record(self):
+        entry = "Doe, J. (2019). A fabricated monograph. Invented Press."
+        with mock.patch.object(rd, "_reference_budget", return_value=0.001), \
+                mock.patch.object(rd, "crossref_search",
+                                  side_effect=AssertionError("route used")), \
+                mock.patch.object(rd, "book_affirmative",
+                                  side_effect=AssertionError("catalogue used")):
+            record = rd.process(entry, self._tmp.name, False, "", check_contents=True)
+        self.assertIn("reference deadline", " ".join(record.get("notes", [])))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
