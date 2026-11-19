@@ -96,7 +96,7 @@ Update in place, in this order.
 
 | Date | Source | C/R | Prior judgment | New judgment | Evidence | Locator |
 | --- | --- | --- | --- | --- | --- | --- |
-| 2026-11-15 | Belton (2013), 4th ed. | C8 | Not Judged | Supports | quotation appears at "…" | printed p. 64 |
+| 2026-11-15 | Marlowe (2013), 4th ed. | C8 | Not Judged | Supports | quotation appears at "…" | printed p. 64 |
 ```
 
 The log is append-only within a pass: never delete an earlier row. A prior judgment must remain readable even when superseded.
@@ -116,7 +116,7 @@ The log is append-only within a pass: never delete an earlier row. A prior judgm
 ```json
 "reappraisal": {
   "date": "2026-11-15",
-  "sources_added": ["belton-2013-american-cinema-american"],
+  "sources_added": ["marlowe-2013-film-culture"],
   "changed": [{"id": "C8", "prior": "Not Judged", "new": "Supports"}],
   "unchanged": ["C27"],
   "notes": ["Concern outside scope recorded for the next full review"]

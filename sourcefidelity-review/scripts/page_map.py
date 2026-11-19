@@ -94,7 +94,7 @@ def folio_from_lines(lines):
             continue
         # A running head can carry the chapter number at the start and the
         # printed folio at the end ("1 Introduction ... 25"). Prefer the
-        # trailing number; an even-page head ("24 V. Cicchelli") has only the
+        # trailing number; an even-page head ("24 V. Calder") has only the
         # leading number, which the next test catches.
         for regex, kind in ((ARABIC_TRAIL_RE, "arabic"), (ARABIC_LEAD_RE, "arabic")):
             m = regex.search(stripped)

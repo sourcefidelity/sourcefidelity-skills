@@ -3,6 +3,11 @@
 
     python3 -I test_pdf_quality.py                # unit tests only
     REAL_PDF_DIR=/path/to/pdfs python3 -I test_pdf_quality.py   # + integration
+
+The integration checks take their sample PDFs from environment
+variables (REAL_PDF_TEXT, REAL_PDF_TWO_COLUMN,
+REAL_PDF_SECOND_TWO_COLUMN, REAL_PDF_FOLIO), so no corpus file
+names live in the repository.
 """
 import importlib.util
 import os
@@ -76,10 +81,16 @@ def unit_tests():
     check("OCR-quality prose is usable_native", state == "usable_native", state)
 
 
+def _sample(env_name):
+    """A sample PDF path supplied by the operator, or an empty list."""
+    path = os.environ.get(env_name)
+    return [path] if path and os.path.exists(path) else []
+
+
 def integration_tests(root):
     import glob
     image_only = glob.glob(os.path.join(root, "Global Entertainment Media- Content*"))
-    text_pdf = glob.glob(os.path.join(root, "Bernal-Merino*"))
+    text_pdf = _sample("REAL_PDF_TEXT")
     if not image_only or not text_pdf:
         print("SKIP integration: expected test PDFs not found")
         return
@@ -133,7 +144,7 @@ def integration_tests(root):
               and any("order" in w for w in page["warnings"]),
               page["warnings"])
 
-        two_col = glob.glob(os.path.join(root, "Enderwick*"))
+        two_col = _sample("REAL_PDF_TWO_COLUMN")
         if two_col:
             page = pq.inspect_pdf(two_col[0], only_pages=[2])["pages"][0]
             check("two-column page detected", page["layout"]["columns"] == 2, page["layout"])
@@ -143,15 +154,15 @@ def integration_tests(root):
             check("native order of the two-column page really was interleaved",
                   "since 2004" not in page["text"][:400], page["text"][:200])
 
-        mori = [n for n in os.listdir(root) if n.startswith("M") and "Pitfall" in n]
-        if mori:
-            page = pq.inspect_pdf(os.path.join(root, mori[0]), only_pages=[2])["pages"][0]
+        second = _sample("REAL_PDF_SECOND_TWO_COLUMN")
+        if second:
+            page = pq.inspect_pdf(second[0], only_pages=[2])["pages"][0]
             check("second two-column article also detected",
                   page["layout"]["columns"] == 2, page["layout"])
 
-        straubhaar = glob.glob(os.path.join(root, "Joseph Straubhaar*"))
-        if straubhaar:
-            page = pq.inspect_pdf(straubhaar[0], only_pages=[3])["pages"][0]
+        folio = _sample("REAL_PDF_FOLIO")
+        if folio:
+            page = pq.inspect_pdf(folio[0], only_pages=[3])["pages"][0]
             check("printed folio candidate found in a journal header",
                   (page.get("folio_candidate") or {}).get("text") == "41",
                   page.get("folio_candidate"))

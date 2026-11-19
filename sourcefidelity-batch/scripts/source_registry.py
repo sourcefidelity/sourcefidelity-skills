@@ -107,8 +107,8 @@ def close_surname(observed, expected):
 def surname_of(author):
     """First family name in an author string, not the last initial.
 
-    'Croteau, D., & Hoynes, W.' -> 'croteau'; 'Mirrlees, T.' -> 'mirrlees';
-    'The Numbers' -> 'the numbers' (a group author, matched as a phrase).
+    'Ashby, D., & Merrick, W.' -> 'ashby'; 'Marlowe, T.' -> 'marlowe';
+    'Screen Data Group' -> 'screen data group' (a group author, matched as a phrase).
     """
     text = (author or "").split("&")[0]
     text = re.split(r",| and |;", text)[0]
@@ -183,21 +183,35 @@ JOURNAL_ISSUE_ONLY_RE = re.compile(
     r",\s*\(\s*\d{1,3}\s*\)\s*,\s*(?:pp?\.\s*)?"
     r"[A-Za-z]?\d{1,6}\s*[-\u2013\u2014]\s*[A-Za-z]?\d{1,6}", re.I)
 BOOK_PUBLISHER_RE = re.compile(
-    r"\b(?:publisher|routledge|sage|palgrave|university press|academic press|"
-    r"mit press|polity|pine forge press|nyu press|bloomsbury|verso|"
-    r"peter lang|british film institute|taylor\s*(?:&|and)\s*francis|"
-    r"pearson|mcgraw[\s-]?hill|macmillan|rowman|blackwell|wiley|springer)\b",
+    r"\b(?:publisher|publishing|university press|academic press|"
+    r"press(?!\s+release)|books|imprint)\b",
     re.I)
 
 
 def _terminal_publisher(source):
     """A publisher imprint after the date/title, not an organizational author."""
-    raw = re.sub(r"https?://\S+|www\.\S+", " ", source or "", flags=re.I).strip()
-    matches = list(BOOK_PUBLISHER_RE.finditer(raw))
-    year_end = raw.find("). ")
-    if not matches or year_end < 0 or matches[-1].start() < year_end:
+    if re.search(r"https?://|www\.", source or "", flags=re.I):
         return False
-    return len(raw) - matches[-1].end() <= 80
+    raw = re.sub(r"https?://\S+|www\.\S+", " ", source or "", flags=re.I).strip()
+    year_end = raw.find("). ")
+    if year_end < 0:
+        return False
+    matches = list(BOOK_PUBLISHER_RE.finditer(raw))
+    if matches and matches[-1].start() >= year_end:
+        return len(raw) - matches[-1].end() <= 80
+    # No generic imprint word ("Press", "Books"): a short capitalised final
+    # segment after the title still reads as an imprint, as in
+    # "A book about stars. Alder House."
+    tail = raw[year_end + 3:]
+    parts = [part.strip() for part in tail.split(". ") if part.strip()]
+    if len(parts) < 2:
+        return False
+    imprint = parts[-1].rstrip(".")
+    if ": " in imprint:
+        imprint = imprint.rsplit(": ", 1)[-1]
+    return (0 < len(imprint) <= 50 and len(imprint.split()) <= 5
+            and imprint[0].isupper()
+            and not re.search(r"\d|journal|press release", imprint, re.I))
 
 
 def parse_source(entry):

@@ -13,7 +13,7 @@ You adjudicate one paper's candidate inventory. You do not assess sources. Read 
   "paper_id": "P240907",
   "dispositions": {"X1": "rejected", "X2": "confirmed", "R1": "confirmed",
                    "R7": "merged_into:R1", "R9": "split_into:R9,R10"},
-  "occurrences": [{"id": "C1", "paragraph_id": "P2", "marker": "(Jenkins, 2006)",
+  "occurrences": [{"id": "C1", "paragraph_id": "P2", "marker": "(Hollis, 2006)",
                    "statement": "exact sentences the marker covers",
                    "cited_r_ids": ["R2"]}],
   "references": [{"id": "R1", "verbatim": "the submitted entry, exactly"}],
@@ -27,7 +27,7 @@ You adjudicate one paper's candidate inventory. You do not assess sources. Read 
 Rules:
 
 1. Every candidate `X#` and `R#` must appear in `dispositions` exactly once.
-2. `marker` and `statement` must be verbatim substrings of `paragraph_id`'s text. Do not correct spelling, punctuation or citation form. If the student wrote `(Croteau and Hoynes 2006 p.78)`, preserve it.
+2. `marker` and `statement` must be verbatim substrings of `paragraph_id`'s text. Do not correct spelling, punctuation or citation form. If the student wrote `(Ashby and Merrick 2006 p.78)`, preserve it.
 3. A reference `verbatim` must be the submitted entry exactly. Parse malformed entries only in your own notes; do not rewrite the text.
 4. Add missed occurrences and split fused references. A repeated use is a new C ID; a shared multi-source citation is one occurrence with several `cited_r_ids`.
 5. A citation with no reference entry gets a C ID with an empty/partial `cited_r_ids`; do not invent an R ID.
