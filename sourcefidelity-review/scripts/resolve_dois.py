@@ -236,27 +236,36 @@ def match_record(parsed, candidate, kind):
 
     supporting = sum(1 for value in (author, container, volume_ok, pages_ok,
                                      publisher_ok, edition_ok) if value is True)
+    coordinate_support = sum(1 for value in (container, volume_ok, pages_ok,
+                                             publisher_ok, edition_ok) if value is True)
     wrong_details = [name for name, value in (("volume", volume_ok), ("pages", pages_ok),
                                               ("publisher", publisher_ok),
                                               ("edition", edition_ok)) if value is False]
     title_ok = score >= 0.6
+    title_related = score >= 0.3
 
-    if title_ok and author is not False:
-        # Same work. Decide whether the entry's details or its edition differ.
+    if title_ok:
+        if author is False:
+            # The work exists under this title, but the entry names someone else.
+            return (("bibliographic_conflict" if coordinate_support >= 1
+                     else "possible_match"), evidence)
         if delta is not None and delta > 1:
             return "same_work_other_edition", evidence
-        if wrong_details and author is True:
+        if wrong_details:
             return "bibliographic_conflict", evidence
-        if author is True or supporting >= 1:
+        if author is True or coordinate_support >= 1:
             return "confirmed", evidence
         return "possible_match", evidence
-    if not title_ok and supporting >= 2:
-        # The other fields agree even though the title does not: same work, an
-        # entry whose title is wrong.
+
+    # Title does not match. Coordinates alone never identify a work: a real
+    # author, journal and volume under a title no record carries is the shape of
+    # a fabricated entry (or a badly garbled one), so it must not be resolved to
+    # the nearest record. It goes back for inspection instead.
+    if author is True and coordinate_support >= 2:
+        return "title_conflict_at_coordinates", evidence
+    if title_related and author is True and coordinate_support >= 1:
         return "bibliographic_conflict", evidence
-    if title_ok and author is False:
-        return "possible_match", evidence
-    if supporting == 1:
+    if author is True or coordinate_support >= 1:
         return "possible_match", evidence
     return "unlocated_after_search", evidence
 
@@ -508,7 +517,7 @@ def process(entry, out_dir, attempt, mailto):
                 failed.append(f"openlibrary {type(exc).__name__}")
 
     order = ("confirmed", "same_work_other_edition", "bibliographic_conflict",
-             "possible_match", "unlocated_after_search")
+             "title_conflict_at_coordinates", "possible_match", "unlocated_after_search")
     if seen:
         seen.sort(key=lambda item: order.index(item[1]))
         candidate, verdict, evidence = seen[0]
@@ -528,6 +537,10 @@ def process(entry, out_dir, attempt, mailto):
                                               ("edition", evidence.get("edition")))
                      if value is False]
             record["notes"].append("details differ: " + (", ".join(wrong) or "title"))
+        if verdict == "title_conflict_at_coordinates":
+            record["notes"].append(
+                "author and coordinates point at a real record, but no record carries this "
+                "title: inspect the volume/issue contents before judging the entry")
 
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
     if failed:

@@ -2705,6 +2705,33 @@ class ResolveDoisTests(unittest.TestCase):
                      "authors": ["Dyer"], "year": 2004}, "book")
         self.assertEqual(verdict, "possible_match")
 
+    def test_match_record_flags_real_coordinates_under_an_unknown_title(self):
+        # The fabrication shape: a real author, journal, volume and pages with a
+        # title no record carries. It must not be resolved to the nearest record.
+        parsed = rd.parse_reference(
+            "Wallace, W. T. (1993). Stardom and the studio accountants. "
+            "Journal of cultural economics, 17(1), 1-27.")
+        verdict, evidence = rd.match_record(
+            parsed, {"title": "The role of actors and actresses in the success of films: "
+                             "how much is a movie star worth?",
+                     "authors": ["Wallace"], "year": 1993,
+                     "container": "Journal of Cultural Economics", "volume": "17",
+                     "issue": "1", "page": "1-27"}, "article")
+        self.assertEqual(verdict, "title_conflict_at_coordinates")
+        self.assertLess(evidence["title"], 0.3)
+
+    def test_match_record_calls_a_wrong_author_a_bibliographic_conflict(self):
+        parsed = rd.parse_reference(
+            "Smith, J. (1993). The role of actors and actresses in the success of films: "
+            "How much is a movie star worth?. Journal of cultural economics, 17(1), 1-27.")
+        verdict, _ = rd.match_record(
+            parsed, {"title": "The role of actors and actresses in the success of films: "
+                             "how much is a movie star worth?",
+                     "authors": ["Wallace"], "year": 1993,
+                     "container": "Journal of Cultural Economics", "volume": "17",
+                     "issue": "1", "page": "1-27"}, "article")
+        self.assertEqual(verdict, "bibliographic_conflict")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
