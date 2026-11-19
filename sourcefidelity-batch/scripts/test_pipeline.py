@@ -3090,6 +3090,19 @@ class LinkStatesTests(unittest.TestCase):
         self.assertEqual(block["verified"], 1)
         self.assertEqual(block["hl_total"], 2)
 
+    def test_a_fetched_body_is_kept_as_a_source_copy(self):
+        tmp = tempfile.TemporaryDirectory()
+        old = ha.SAVE_DIR
+        try:
+            ha.SAVE_DIR = tmp.name
+            path = ha._save_body(b"<html>body</html>", "text/html; charset=utf-8",
+                                 "https://example.org/x")
+        finally:
+            ha.SAVE_DIR = old
+        exists = bool(path) and os.path.exists(path)
+        tmp.cleanup()
+        self.assertTrue(exists)
+
     def test_refresh_updates_summary_and_scope_line(self):
         tmp = tempfile.TemporaryDirectory()
         folder = tmp.name

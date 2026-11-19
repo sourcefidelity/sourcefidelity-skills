@@ -7,7 +7,12 @@ writes `_work/<paper>/hyperlinks.json`. `render_review.py` reads that file when
 the findings do not supply the block, so the pipeline gets the new scope line
 without a worker change.
 
-    python -I link_states.py --paper PAPER.docx --out ROOT/_work/PID [--fetch]
+    python -I link_states.py --paper PAPER.docx --out ROOT/_work/PID [--no-fetch]
+
+Link fetching is on by default, because a request is both the reachability test
+and a retrieval attempt. A fetched full-text body is written under
+`<out>/_links/` and recorded on its row, so a working link gives the reviewer a
+copy of the source. `--no-fetch` gives a fast classification pass only.
 
 `refresh()` rewrites `summary.json` and the review's scope line after a
 reappraisal, when new sources change a link's state.
@@ -62,9 +67,10 @@ def block_from_report(report):
     return counts
 
 
-def audit_paper(paper_docx, fetch=False, timeout=10):
-    """(report, block) for one paper; no network unless `fetch` is true."""
-    report = ha.audit(paper_docx, fetch=fetch, timeout=timeout)
+def audit_paper(paper_docx, fetch=True, timeout=15, delay=0.5, save_dir=None):
+    """(report, block) for one paper; fetches links unless `fetch` is false."""
+    ha.SAVE_DIR = save_dir
+    report = ha.audit(paper_docx, fetch=fetch, timeout=timeout, delay=delay)
     report["paper_path"] = os.path.abspath(paper_docx)
     return report, block_from_report(report)
 
@@ -80,7 +86,8 @@ def reaudit_from_cache(root, paper_id):
     paper_docx = data.get("paper") or ""
     if not paper_docx or not os.path.exists(paper_docx):
         return None
-    report, block = audit_paper(paper_docx, fetch=False)
+    report, block = audit_paper(paper_docx, fetch=True,
+                                save_dir=os.path.join(root, "_work", paper_id, "_links"))
     write(os.path.join(root, "_work", paper_id), report, block)
     return block
 
@@ -92,6 +99,7 @@ def write(work_dir, report, block):
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump({"hyperlinks": block, "checked": report.get("checked", ""),
                    "paper": report.get("paper_path", ""),
+                   "links_dir": os.path.join(work_dir, "_links"),
                    "rows": report.get("rows", [])}, handle,
                   indent=1, ensure_ascii=False)
         handle.write("\n")
@@ -148,10 +156,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--paper", required=True, help="masked paper DOCX")
     parser.add_argument("--out", required=True, help="work directory for one paper")
-    parser.add_argument("--fetch", action="store_true", help="request each link")
+    parser.add_argument("--no-fetch", action="store_true",
+                        help="classify only; do not request links")
     parser.add_argument("--timeout", type=int, default=10)
     args = parser.parse_args(argv)
-    report, block = audit_paper(args.paper, fetch=args.fetch, timeout=args.timeout)
+    report, block = audit_paper(args.paper, fetch=not args.no_fetch,
+                                timeout=args.timeout,
+                                save_dir=os.path.join(args.out, "_links"))
     path = write(args.out, report, block)
     print(json.dumps({"path": path, "hyperlinks": block}, indent=1))
     return 0

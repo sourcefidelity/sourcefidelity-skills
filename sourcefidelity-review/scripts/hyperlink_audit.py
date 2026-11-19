@@ -13,10 +13,12 @@ scope lines the review opens with.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +27,9 @@ from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
 UA = "sourcefidelity-hyperlink-audit/1.0"
+# When set, a fetched body is written here and recorded on the row, so a
+# working full-text link also serves as a retrieved source copy.
+SAVE_DIR = None
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 CLOUD_HOSTS = ("pan.baidu.com", "aliyundrive.com", "aliyundrive.net", "123pan.com",
@@ -213,6 +218,28 @@ def classify_media_link(entry_text, link):
 ENVIRONMENT_STATES = ("unreachable", "tls", "timeout")
 
 
+def _save_body(body, content_type, final):
+    """Write a fetched body under SAVE_DIR; return its path, or ""."""
+    if not SAVE_DIR or not body:
+        return ""
+    lowered = (content_type or "").lower()
+    extension = ""
+    if "application/pdf" in lowered:
+        extension = ".pdf"
+    elif "text/html" in lowered:
+        extension = ".html"
+    elif "text/plain" in lowered:
+        extension = ".txt"
+    if not extension or len(body) > 10_000_000:
+        return ""
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    path = os.path.join(SAVE_DIR, hashlib.sha256(body).hexdigest()[:12] + extension)
+    if not os.path.exists(path):
+        with open(path, "wb") as handle:
+            handle.write(body)
+    return path
+
+
 def fetch_state(url, timeout=10):
     """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
 
@@ -258,10 +285,11 @@ def fetch_state(url, timeout=10):
                 "environment": False}
     return {"state": "ok", "status": status,
             "detail": f"{content_type or 'unknown'} {len(body)} B",
+            "saved": _save_body(body, content_type, final),
             "environment": False}
 
 
-def audit(path, fetch=True, timeout=10):
+def audit(path, fetch=True, timeout=10, delay=0.5):
     entries = reference_entries(paragraph_records(path))
     rows = []
     for number, entry in enumerate(entries, start=1):
@@ -274,6 +302,8 @@ def audit(path, fetch=True, timeout=10):
             row["fetch"] = {"state": "not required", "status": None,
                             "detail": "traditional audio-visual media: no link expected"}
         elif fetch and link and state != "non-permanent":
+            if delay:
+                time.sleep(delay)
             row["fetch"] = fetch_state(link, timeout=timeout)
         elif fetch and state == "non-permanent":
             row["fetch"] = {"state": "not attempted",
