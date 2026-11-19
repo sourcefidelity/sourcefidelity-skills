@@ -398,7 +398,8 @@ def cache_get(kind, key, ttl=CACHE_TTL_SECONDS):
     entry = (cache_load().get(kind) or {}).get(key)
     if not isinstance(entry, dict):
         return None
-    if time.time() - float(entry.get("stored_at") or 0) > ttl:
+    effective = entry.get("ttl") or ttl
+    if time.time() - float(entry.get("stored_at") or 0) > effective:
         return None
     return entry.get("value")
 
@@ -417,7 +418,7 @@ def _cache_lock_file(path):
         return None
 
 
-def cache_put(kind, key, value):
+def cache_put(kind, key, value, ttl=None):
     path = cache_path()
     if not path:
         return
@@ -426,7 +427,10 @@ def cache_put(kind, key, value):
         lock = _cache_lock_file(path)
         try:
             data = cache_load()
-            data.setdefault(kind, {})[key] = {"stored_at": time.time(), "value": value}
+            record = {"stored_at": time.time(), "value": value}
+            if ttl is not None:
+                record["ttl"] = ttl
+            data.setdefault(kind, {})[key] = record
             temporary = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
             with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
                 json.dump(data, handle, indent=1, ensure_ascii=False)
@@ -1077,6 +1081,10 @@ BOOK_FALLBACK_ROUTES = (
     ("Open Library", "_probe_openlibrary"),
 )
 HOST_FAILURE_TTL_SECONDS = 900
+# An HTTP status (quota, rate limit, key not yet active) is transient; a
+# changed key or a recovered quota should be picked up in minutes, while a
+# dead network route is paid for once per run.
+HOST_HTTP_FAILURE_TTL_SECONDS = 120
 HOST_FAILURE_REASONS = frozenset({
     "URLError", "HTTPError", "TimeoutError", "RateLimited", "ConnectionError",
     "ConnectionResetError", "RemoteDisconnected", "socket.timeout", "timeout",
@@ -1100,7 +1108,12 @@ def _catalogue_record(name, probe_name, parsed, key):
     record, detail = globals()[probe_name](parsed)
     if record is None:
         if detail in HOST_FAILURE_REASONS:
-            cache_put("host", name, {"reason": detail})
+            network = detail in ("URLError", "TimeoutError", "ConnectionError",
+                                 "ConnectionResetError", "RemoteDisconnected",
+                                 "socket.timeout", "timeout")
+            cache_put("host", name, {"reason": detail},
+                      ttl=HOST_FAILURE_TTL_SECONDS if network
+                      else HOST_HTTP_FAILURE_TTL_SECONDS)
         return None, detail
     if key:
         cache_put("catalogue", f"v2|{key}|{name}", record)

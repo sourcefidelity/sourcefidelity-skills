@@ -3497,6 +3497,13 @@ class RetrievalEfficiencyTests(unittest.TestCase):
                 rd._probe_googlebooks(parsed)
         self.assertNotIn("key=", captured["url"])
 
+    def test_an_http_host_failure_expires_before_a_dead_network(self):
+        rd.cache_put("host", "HTTPFlaky", {"reason": "HTTPError"}, ttl=120)
+        rd.cache_put("host", "DeadHost", {"reason": "URLError"}, ttl=900)
+        with mock.patch.object(rd.time, "time", return_value=rd.time.time() + 130):
+            self.assertIsNone(rd.cache_get("host", "HTTPFlaky", ttl=900))
+            self.assertEqual(rd.cache_get("host", "DeadHost", ttl=900)["reason"], "URLError")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
