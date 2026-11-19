@@ -14,6 +14,31 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+
+
+PAYWALL_RE = re.compile(r"\bsubscribe\b|\bsign in to (?:read|continue)\b|"
+                        r"purchase this article|institutional access", re.I)
+LENDING_RE = re.compile(r"\bborrow\b|lending library|controlled digital lending", re.I)
+BLOCK_RE = re.compile(r"just a moment|enable javascript|access denied|"
+                      r"unusual traffic|captcha", re.I)
+ABSTRACT_RE = re.compile(r"\babstract\b", re.I)
+
+
+def classify_text(text):
+    """What kind of page the fetched text is, so a block is not read as evidence."""
+    words = len(text.split()) if text else 0
+    if words < 20:
+        return "unreadable"
+    if words < 3000 and BLOCK_RE.search(text):
+        return "blocked"
+    if PAYWALL_RE.search(text):
+        return "paywalled"
+    if LENDING_RE.search(text):
+        return "lending_only"
+    if words < 1500 and ABSTRACT_RE.search(text):
+        return "abstract_only"
+    return "full_text"
 
 
 def cache_key(url):
@@ -34,6 +59,7 @@ def store(root, url, result):
             ("requested_url", "final_url", "status", "content_type", "bytes",
              "truncated", "limitation", "error")}
     meta["requested_url"] = meta.get("requested_url") or url
+    meta["classification"] = result.get("classification") or classify_text(text)
     meta["text_chars"] = len(text)
     with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as handle:
         json.dump(meta, handle, ensure_ascii=False, indent=1)

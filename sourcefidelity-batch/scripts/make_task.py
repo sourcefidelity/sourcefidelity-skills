@@ -133,6 +133,8 @@ def web_windows(root, url_entries, phrases, width, limit=2):
         text, meta = web_cache.text_for(root, url)
         if not text:
             continue
+        if meta.get("classification", "full_text") != "full_text":
+            continue  # a block, paywall, abstract or lending page is not evidence
         hits = windows(text, [], {}, phrases, width, None, limit=limit)
         for hit in hits:
             hit["locator"] = f"web: {meta.get('final_url') or url}"
@@ -406,9 +408,16 @@ def main():
                     "fallbacks": [], "source": "web", "page_range": [],
                 }
             elif web_urls:
+                classes = sorted({web_cache.text_for(root, item["url"])[1].get(
+                    "classification", "") for item in web_urls} - {""})
+                if classes:
+                    reason = ("web source; cached page is "
+                              + "/".join(classes) + " and is not evidence")
+                else:
+                    reason = "web source; inspect the supplied URL before judging"
                 window_status[cit["id"]] = {
                     "status": "web_url",
-                    "reason": "web source; inspect the supplied URL before judging",
+                    "reason": reason,
                     "urls": web_urls,
                     "likely_r_ids": likely,
                 }

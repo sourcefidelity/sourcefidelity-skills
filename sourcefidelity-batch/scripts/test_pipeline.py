@@ -847,10 +847,32 @@ class WebFetchTests(unittest.TestCase):
         self.assertEqual(blocked_text, "")
         self.assertEqual(blocked_meta["limitation"], "private_host")
 
+    def test_page_classification_separates_blocks_from_evidence(self):
+        body = "Hollywood stars and their images. " * 120
+        self.assertEqual(web_cache.classify_text("Subscribe to continue reading. " * 20),
+                         "paywalled")
+        self.assertEqual(web_cache.classify_text("Borrow this book. " + body),
+                         "lending_only")
+        self.assertEqual(web_cache.classify_text("Abstract " + "star image " * 60),
+                         "abstract_only")
+        self.assertEqual(web_cache.classify_text(body), "full_text")
+        self.assertEqual(web_cache.classify_text(""), "unreadable")
+
+    def test_a_classified_block_is_not_used_as_a_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            url = "https://example.com/paywalled"
+            web_cache.store(tmp, url, {"text": "Subscribe to continue reading. " * 20,
+                                       "final_url": url, "status": 200})
+            hits = mt.web_windows(tmp, [{"r_id": "R1", "url": url}],
+                                  ["subscribe continue reading"], 120)
+            _, meta = web_cache.text_for(tmp, url)
+        self.assertEqual(hits, [])
+        self.assertEqual(meta["classification"], "paywalled")
+
     def test_fetch_stage_uses_cached_web_text_for_windows(self):
         with tempfile.TemporaryDirectory() as tmp:
             url = "https://example.com/article"
-            web_cache.store(tmp, url, {"text": "the cited phrase appears in this article",
+            web_cache.store(tmp, url, {"text": "the cited phrase appears in this article " * 80,
                                        "final_url": url, "status": 200})
             hits = mt.web_windows(tmp, [{"r_id": "R1", "url": url}],
                                   ["cited phrase appears"], 120)
