@@ -83,14 +83,14 @@ else
     # and every script resolves it (an existing per-skill venv still wins).
     SHARED="$TARGET/sourcefidelity-review/.venv"
     if [ "$DRY_RUN" = "1" ]; then
-      echo "would create: $SHARED (pypdf, pymupdf, shared by all three skills)"
-    elif "$SHARED/bin/python" -c "import pypdf, pymupdf" >/dev/null 2>&1; then
+      echo "would create: $SHARED (pypdf, pymupdf, zstandard, shared by all three skills)"
+    elif "$SHARED/bin/python" -c "import pypdf, pymupdf, zstandard" >/dev/null 2>&1; then
       echo "venv ready (already complete): sourcefidelity-review"
     else
-      echo "building the shared venv in sourcefidelity-review (pip downloads pypdf and pymupdf)"
+      echo "building the shared venv in sourcefidelity-review (pip downloads pypdf, pymupdf and zstandard)"
       "$PYTHON" -m venv "$SHARED"
       "$SHARED/bin/python" -m pip install --quiet --upgrade pip || true
-      if "$SHARED/bin/python" -m pip install --quiet pypdf pymupdf; then
+      if "$SHARED/bin/python" -m pip install --quiet pypdf pymupdf zstandard; then
         echo "venv ready: sourcefidelity-review"
       else
         echo "the shared venv is incomplete; re-run this installer" >&2
