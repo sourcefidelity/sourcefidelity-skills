@@ -96,8 +96,33 @@ def parse_reference(text):
     if book:
         isbn = book.group(1)
     surname = authors.split(",")[0].strip() if authors else ""
+    tail = rest[len(title):] if rest.startswith(title) else rest
+    tail_clean = DOI_RE.sub(" ", tail)
+    volume = issue = pages = ""
+    volumeless = re.search(r"(\d+)\s*\((\d+)\)", tail_clean)
+    if volumeless:
+        volume, issue = volumeless.group(1), volumeless.group(2)
+    pagematch = re.search(r",\s*([A-Za-z]?\d+)\s*[-\u2013]\s*([A-Za-z]?\d+)", tail_clean)
+    if pagematch:
+        pages = f"{pagematch.group(1)}-{pagematch.group(2)}"
+    edition = ""
+    ed = re.search(r"\((\d+)(?:st|nd|rd|th)\s+ed\.\)", text, re.I)
+    if ed:
+        edition = ed.group(1)
+    publisher = ""
+    for part in reversed([piece.strip(" .;,") for piece in tail_clean.split(". ") if piece.strip(" .;,")]):
+        if re.search(r"(?:Press|Books|Publishers?|Routledge|Wiley|Springer|iUniverse|Aurum|"
+                     r"University|Univ|Macmillan|Palgrave|Sage)\b", part):
+            publisher = part
+            break
+    container = ""
+    match = re.search(r"^(.*?),\s*[A-Za-z]?\d", tail_clean)
+    if match:
+        container = match.group(1).strip(" .,;")
     return {"entry": text, "authors": authors, "surname": surname, "year": year,
-            "title": title, "doi": doi, "isbn": isbn}
+            "title": title, "doi": doi, "isbn": isbn, "container": container,
+            "volume": volume, "issue": issue, "pages": pages, "edition": edition,
+            "publisher": publisher}
 
 
 def entry_kind(entry, parsed=None):
@@ -163,6 +188,79 @@ def year_ok(parsed, record_year):
     return abs(cited - other) <= 1
 
 
+def match_record(parsed, candidate, kind):
+    """One candidate's verdict, from independent fields rather than title alone.
+
+    A title alone is weak evidence: many works share words, and a record can be
+    right about the work while the student is wrong about the year, the volume
+    or the publisher. Two independent agreements identify a work; a title and
+    author agreement with a different year is the *same work in another
+    edition*, which is a version difference to record, not a failed match.
+    """
+    evidence = {}
+    score = title_score(parsed["title"], candidate.get("title") or "")
+    evidence["title"] = score
+    author = author_match(parsed, candidate.get("authors"))
+    evidence["author"] = author
+    delta = None
+    try:
+        if parsed.get("year") and candidate.get("year"):
+            delta = abs(int(parsed["year"]) - int(candidate["year"]))
+    except (TypeError, ValueError):
+        delta = None
+    evidence["year_delta"] = delta
+    container = None
+    if parsed.get("container") and candidate.get("container"):
+        container = title_score(parsed["container"], candidate["container"])
+    evidence["container"] = container
+    volume_ok = None
+    if parsed.get("volume") and candidate.get("volume"):
+        volume_ok = str(parsed["volume"]) == str(candidate["volume"])
+    evidence["volume"] = volume_ok
+    pages_ok = None
+    if parsed.get("pages") and candidate.get("page"):
+        pages_ok = str(candidate["page"]).split("-")[0] == parsed["pages"].split("-")[0]
+    evidence["pages"] = pages_ok
+    publisher_ok = None
+    if parsed.get("publisher") and candidate.get("publisher"):
+        # A publisher is a name, not a sentence: the record's name has to appear
+        # inside the entry's segment ("London: Routledge, 1986" contains Routledge).
+        record_tokens = _tokens(candidate["publisher"])
+        entry_tokens = _tokens(parsed["publisher"])
+        publisher_ok = bool(record_tokens) and record_tokens <= entry_tokens
+    evidence["publisher"] = publisher_ok
+    edition_ok = None
+    if parsed.get("edition") and candidate.get("edition"):
+        edition_ok = str(parsed["edition"]) == str(candidate["edition"])
+    evidence["edition"] = edition_ok
+
+    supporting = sum(1 for value in (author, container, volume_ok, pages_ok,
+                                     publisher_ok, edition_ok) if value is True)
+    wrong_details = [name for name, value in (("volume", volume_ok), ("pages", pages_ok),
+                                              ("publisher", publisher_ok),
+                                              ("edition", edition_ok)) if value is False]
+    title_ok = score >= 0.6
+
+    if title_ok and author is not False:
+        # Same work. Decide whether the entry's details or its edition differ.
+        if delta is not None and delta > 1:
+            return "same_work_other_edition", evidence
+        if wrong_details and author is True:
+            return "bibliographic_conflict", evidence
+        if author is True or supporting >= 1:
+            return "confirmed", evidence
+        return "possible_match", evidence
+    if not title_ok and supporting >= 2:
+        # The other fields agree even though the title does not: same work, an
+        # entry whose title is wrong.
+        return "bibliographic_conflict", evidence
+    if title_ok and author is False:
+        return "possible_match", evidence
+    if supporting == 1:
+        return "possible_match", evidence
+    return "unlocated_after_search", evidence
+
+
 def _request(url, accept="application/json", timeout=25, referer=""):
     headers = {"User-Agent": UA, "Accept": accept}
     if referer:
@@ -183,11 +281,18 @@ def crossref_by_doi(doi):
             "title": (meta.get("title") or [""])[0],
             "container": (meta.get("container-title") or [""])[0],
             "publisher": meta.get("publisher"),
-            "type": meta.get("type")}
+            "type": meta.get("type"),
+            "authors": [author.get("family") for author in (meta.get("author") or [])],
+            "year": (meta.get("issued", {}).get("date-parts") or [[None]])[0][0],
+            "volume": meta.get("volume"), "issue": meta.get("issue"),
+            "page": meta.get("page"),
+            "edition": meta.get("edition-number")}
 
 
 def crossref_search(parsed, mailto=""):
-    params = {"rows": "3", "select": "DOI,title,container-title,publisher,type,author,issued",
+    params = {"rows": "3",
+              "select": "DOI,title,container-title,publisher,type,author,issued,"
+                        "volume,issue,page,edition-number",
               "query.bibliographic": f"{parsed['title']} {parsed['authors']} {parsed['year']}"}
     if mailto:
         params["mailto"] = mailto
@@ -200,6 +305,9 @@ def crossref_search(parsed, mailto=""):
                            "publisher": item.get("publisher"), "type": item.get("type"),
                            "authors": [author.get("family") for author in (item.get("author") or [])],
                            "year": (item.get("issued", {}).get("date-parts") or [[None]])[0][0],
+                           "volume": item.get("volume"), "issue": item.get("issue"),
+                           "page": item.get("page"),
+                           "edition": item.get("edition-number"),
                            "score": title_score(parsed["title"], title)})
     candidates.sort(key=lambda candidate: candidate["score"], reverse=True)
     return candidates
@@ -213,11 +321,16 @@ def openalex_search(parsed):
     for item in data.get("results", []):
         title = item.get("title") or ""
         doi = (item.get("doi") or "").replace("https://doi.org/", "")
+        biblio = item.get("biblio") or {}
         candidates.append({"doi": doi, "title": title,
                            "score": title_score(parsed["title"], title),
                            "authors": [((authorship.get("author") or {}).get("display_name"))
                                        for authorship in (item.get("authorships") or [])],
                            "year": item.get("publication_year"),
+                           "volume": biblio.get("volume"),
+                           "issue": biblio.get("issue"),
+                           "page": (f"{biblio.get('first_page')}-{biblio.get('last_page')}"
+                                    if biblio.get("first_page") else None),
                            "is_oa": (item.get("open_access") or {}).get("is_oa")})
     candidates.sort(key=lambda candidate: candidate["score"], reverse=True)
     return candidates
@@ -352,75 +465,71 @@ def process(entry, out_dir, attempt, mailto):
         return record
 
     routes = KIND_ROUTES[kind]
-    ran, failed = [], []
-    best_score = 0.0
+    ran, failed, seen = [], [], []
+
+    def consider(candidate):
+        verdict, evidence = match_record(parsed, candidate, kind)
+        seen.append((candidate, verdict, evidence))
 
     if parsed["doi"]:
         try:
             meta = crossref_by_doi(parsed["doi"])
             ran.append("crossref(doi)")
-            best_score = title_score(parsed["title"], meta["title"])
-            record["record_title"] = meta["title"]
-            record["identity"] = ("confirmed" if best_score >= 0.5
-                                  else "bibliographic_conflict")
+            verdict, evidence = match_record(parsed, meta, kind)
+            if verdict in ("possible_match", "unlocated_after_search"):
+                # A supplied DOI is decisive for identity; a title difference is
+                # an entry defect, not a failed match.
+                verdict = ("confirmed" if evidence["title"] >= 0.5
+                           else "bibliographic_conflict")
+            seen.append((meta, verdict, evidence))
         except Exception as exc:  # noqa: BLE001
             failed.append(f"crossref(doi) {type(exc).__name__}")
-    elif "crossref" in routes:
-        try:
-            candidates = crossref_search(parsed, mailto)
-            ran.append("crossref")
-            if candidates:
-                best = candidates[0]
-                best_score = best["score"]
-                record["record_title"] = best["title"]
-                authors_ok = author_match(parsed, best.get("authors"))
-                years_ok = year_ok(parsed, best.get("year"))
-                if best_score >= 0.6 and authors_ok is not False and years_ok:
-                    record["identity"] = "confirmed"
-                    record["doi"] = best["doi"] or ""
-                elif best_score >= 0.3:
-                    record["identity"] = "possible_match"
-                    if authors_ok is False:
-                        record["notes"].append("author mismatch on the best record")
-                    if not years_ok:
-                        record["notes"].append(f"year mismatch: record {best.get('year')}")
-        except Exception as exc:  # noqa: BLE001
-            failed.append(f"crossref {type(exc).__name__}")
+    else:
+        if "crossref" in routes:
+            try:
+                for candidate in crossref_search(parsed, mailto)[:3]:
+                    consider(candidate)
+                ran.append("crossref")
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"crossref {type(exc).__name__}")
+        if "openalex" in routes:
+            try:
+                for candidate in openalex_search(parsed)[:3]:
+                    consider(candidate)
+                ran.append("openalex")
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"openalex {type(exc).__name__}")
+        if "openlibrary" in routes:
+            try:
+                for candidate in openlibrary_search(parsed)[:2]:
+                    consider(candidate)
+                ran.append("openlibrary")
+            except Exception as exc:  # noqa: BLE001
+                failed.append(f"openlibrary {type(exc).__name__}")
 
-    if "openalex" in routes and record["identity"] != "confirmed":
-        try:
-            candidates = openalex_search(parsed)
-            ran.append("openalex")
-            threshold = 0.5 if kind == "book" else 0.6
-            if candidates and candidates[0]["score"] >= threshold:
-                best = candidates[0]
-                authors_ok = author_match(parsed, best.get("authors"))
-                if authors_ok is False:
-                    record["notes"].append("openalex author mismatch")
-                elif year_ok(parsed, best.get("year")):
-                    best_score = max(best_score, best["score"])
-                    record["identity"] = "confirmed"
-                    record["doi"] = best["doi"] or record["doi"]
-                    record["record_title"] = record["record_title"] or best["title"]
-        except Exception as exc:  # noqa: BLE001
-            failed.append(f"openalex {type(exc).__name__}")
-
-    if "openlibrary" in routes and record["identity"] != "confirmed" and not record["doi"]:
-        try:
-            candidates = openlibrary_search(parsed)
-            ran.append("openlibrary")
-            if candidates and candidates[0]["score"] >= 0.5 \
-                    and author_match(parsed, candidates[0].get("authors")) is not False:
-                best = candidates[0]
-                record["identity"] = "confirmed"
-                record["record_title"] = record["record_title"] or best["title"]
-                record["notes"].append(
-                    f"openlibrary {best.get('year')} {best.get('publisher')}")
-        except Exception as exc:  # noqa: BLE001
-            failed.append(f"openlibrary {type(exc).__name__}")
+    order = ("confirmed", "same_work_other_edition", "bibliographic_conflict",
+             "possible_match", "unlocated_after_search")
+    if seen:
+        seen.sort(key=lambda item: order.index(item[1]))
+        candidate, verdict, evidence = seen[0]
+        record["identity"] = verdict
+        record["record_title"] = candidate.get("title") or ""
+        if candidate.get("doi") and not record["doi"]:
+            record["doi"] = candidate["doi"]
+        record["evidence"] = evidence
+        if verdict == "same_work_other_edition":
+            record["notes"].append(
+                f"same work in another edition: record year {candidate.get('year')}, "
+                f"cited {parsed['year']}")
+        if verdict == "bibliographic_conflict":
+            wrong = [name for name, value in (("volume", evidence.get("volume")),
+                                              ("pages", evidence.get("pages")),
+                                              ("publisher", evidence.get("publisher")),
+                                              ("edition", evidence.get("edition")))
+                     if value is False]
+            record["notes"].append("details differ: " + (", ".join(wrong) or "title"))
 
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
-    record["notes"].append(f"best title score {best_score}")
     if failed:
         record["notes"].append("route failures: " + "; ".join(failed))
     if not record["identity"]:
@@ -431,7 +540,8 @@ def process(entry, out_dir, attempt, mailto):
         else:
             record["identity"] = "unlocated_after_search"
 
-    if attempt and record["doi"] and record["identity"] in ("confirmed", "bibliographic_conflict"):
+    if attempt and record["doi"] and record["identity"] in (
+            "confirmed", "same_work_other_edition", "bibliographic_conflict"):
         try:
             record["copy"] = resolve_copy(record["doi"], out_dir)
         except Exception as exc:  # noqa: BLE001

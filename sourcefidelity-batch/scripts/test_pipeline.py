@@ -2675,6 +2675,36 @@ class ResolveDoisTests(unittest.TestCase):
                                           "Role of actors in films"), 0.9)
         self.assertLess(rd.title_score("Love done her wrong", "A book review"), 0.2)
 
+    def test_match_record_treats_another_edition_as_the_same_work(self):
+        parsed = rd.parse_reference(
+            "Dyer, R. (1986). Heavenly bodies: Film stars and society. Macmillan.")
+        verdict, evidence = rd.match_record(
+            parsed, {"title": "Heavenly Bodies: Film Stars and Society",
+                     "authors": ["Dyer"], "year": 2004, "publisher": "Routledge"}, "book")
+        self.assertEqual(verdict, "same_work_other_edition")
+        self.assertEqual(evidence["year_delta"], 18)
+
+    def test_match_record_conflicts_on_pages_without_losing_identity(self):
+        parsed = rd.parse_reference(
+            "Wallace, W. T. (1993). The role of actors and actresses in the success of "
+            "films: How much is a movie star worth?. Journal of cultural economics, 1-27.")
+        verdict, evidence = rd.match_record(
+            parsed, {"title": "The role of actors and actresses in the success of films: "
+                             "how much is a movie star worth?",
+                     "authors": ["Wallace"], "year": 1993,
+                     "container": "Journal of Cultural Economics", "page": "210-240"},
+            "article")
+        self.assertEqual(verdict, "bibliographic_conflict")
+        self.assertFalse(evidence["pages"])
+
+    def test_match_record_needs_more_than_a_similar_title(self):
+        parsed = rd.parse_reference(
+            "Smith, J. (2001). Heavenly bodies: Film stars and society.")
+        verdict, _ = rd.match_record(
+            parsed, {"title": "Heavenly Bodies: Film Stars and Society",
+                     "authors": ["Dyer"], "year": 2004}, "book")
+        self.assertEqual(verdict, "possible_match")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
