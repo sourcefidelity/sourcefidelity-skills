@@ -3515,6 +3515,20 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         self.assertEqual(len(slept), 1)
         self.assertAlmostEqual(slept[0], 1.0, places=1)
 
+    def test_a_discovery_route_holds_on_a_partial_title_match(self):
+        parsed = rd.parse_reference(
+            "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
+        failed = (None, "URLError")
+        partial = ({"count": 1, "title": "Heavenly Bodies", "score": 0.33}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=failed), \
+                mock.patch.object(rd, "_probe_bnf", return_value=failed), \
+                mock.patch.object(rd, "_probe_dnb", return_value=failed), \
+                mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_googlebooks", return_value=partial):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "present")
+        self.assertEqual(result["first_title"], "Heavenly Bodies")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

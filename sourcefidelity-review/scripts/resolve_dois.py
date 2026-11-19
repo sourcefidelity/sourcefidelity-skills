@@ -1198,7 +1198,12 @@ def book_affirmative(parsed):
                     primary_zeros += 1
                     if primary_zeros >= 2:
                         break
-            elif record.get("score", 0.0) >= 0.4 or name in ("DNB", "Internet Archive"):
+            # A union catalogue needs a strong title match. A discovery route
+            # (CiNii, Google Books, Internet Archive) was already queried by
+            # title and author, so a returned record with a partial title match
+            # is enough to hold; it can never establish absence.
+            elif (record.get("score", 0.0) >= (0.4 if strong else 0.25)
+                  or name in ("DNB", "Internet Archive")):
                 held = entry
                 break
             else:
