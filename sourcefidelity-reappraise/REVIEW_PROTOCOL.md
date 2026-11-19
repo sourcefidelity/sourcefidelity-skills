@@ -2,7 +2,7 @@
 
 ## Purpose and inputs
 
-**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else the same path beside `sourcefidelity-review`, the one venv the installer builds for all three skills; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
 
 Review one complete student paper for source use, academic practice, and APA 7 citation and reference errors using original documents. Produce inspectable findings, not a grade or an inference about intent. The Category A/B labels are reporting categories for confirmed findings; they do not establish intent, a formal misconduct determination, or a sanction.
 
@@ -171,7 +171,7 @@ Absence is a claim about coverage, so record which catalogues were actually sear
 
 | Strength | Sources | What they establish |
 | --- | --- | --- |
-| Decisive for books | **WorldCat**, the **publisher's catalogue** (Routledge, Palgrave/Springer, Sage, Edinburgh UP, Bloomsbury, University of California Press), the **national library of the country of publication** | a union catalogue or the issuing publisher has no such work |
+| Decisive for books | **WorldCat**, the **publisher's catalogue** (university presses, academic imprints, trade publishers), the **national library of the country of publication** | a union catalogue or the issuing publisher has no such work |
 | Strong, queryable now | **K10plus** (`k10plus_lookup`, ~200M holdings), **Internet Archive** (`internet_archive_lookup`), **DNB** (`dnb_lookup`), **CiNii Books** (`cinii_lookup`), **Jisc Library Hub Discover**, **JSTOR** and **Project MUSE** book records | a large union or national catalogue has no record |
 | Weak alone | OpenLibrary, Google Books, Crossref, OpenAlex, general web search | partial or derived coverage; silence proves little |
 | Decisive for articles | The journal's **complete volume or issue contents**, from the publisher's TOC or Crossref's issue listing, plus the page range's actual occupants | no article occupies the cited pages |

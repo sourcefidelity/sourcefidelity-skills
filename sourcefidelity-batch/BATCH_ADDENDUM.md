@@ -44,7 +44,7 @@ A probe is a snapshot. A service that is `ok` at probe time can still rate-limit
 
 ## Efficient pipeline (default)
 
-**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
+**Interpreter.** Run every script with the skill's own interpreter. Resolve it in this order: `<skill>/.venv/bin/python` on macOS or Linux, or `<skill>\.venv\Scripts\python.exe` on Windows; else the same path beside `sourcefidelity-review`, the one venv the installer builds for all three skills; else `python3.12`; else `python3` if it is 3.12 or newer. `scripts/which_python.py --json` prints the choice. If none qualifies, work in prompt-only mode and state which checks are unavailable. Below, `<python>` means this resolved interpreter.
 
 Run the stages in order. Scripts do everything deterministic; a worker does only adjudication and judgment.
 
@@ -113,8 +113,8 @@ The worker must use the general-purpose agent type, because it writes files. The
   ],
   "misrepresented_sources": [
     {
-      "source": "D23 (2026, June 18) Tom Hanks/Tim Allen interview",
-      "source_key": "d23-2026-tom-hanks-interview",
+      "source": "Studio Expo (2026, June 18) Lena Marsh/Theo Grant interview",
+      "source_key": "studio-expo-2026-marsh-grant-interview",
       "r_id": "R13",
       "claim": "the film recorded a $312 million opening",
       "evidence": "the cited interview contains no box-office figures",
@@ -169,7 +169,7 @@ The worker must use the general-purpose agent type, because it writes files. The
 Rules for the fields:
 
 - `schema_version`: `"4"` for this schema. Schema 4 removes the authorship-signal block, `replacement_profile`, the authorship flag and the `formatting_notes` field; readers must accept older summaries without them, record the difference as a limitation, and continue. Do not compare category counts across schema versions without saying that schema-2 counts include unverifiable sources in Category B.
-- `source_key`: a stable lowercase key for grouping across papers, made from author/organization, year, and a short title, e.g. `zhang-2026-record-screening`, `d23-2026-tom-hanks-interview`. Use the same key for the same work across papers.
+- `source_key`: a stable lowercase key for grouping across papers, made from author/organization, year, and a short title, e.g. `zhang-2026-record-screening`, `studio-expo-2026-marsh-grant-interview`. Use the same key for the same work across papers.
 - `sources`: **one entry for every cited work**, not only the problematic ones. `retrieval` is the controlled vocabulary that makes acquisition possible; do not leave it to prose. Use `retrieved` only when a usable full text was inspected; `identity_only` when the work was identified but no text was available; `unverifiable` when the work could not be located; `nonexistent` only where the review found affirmative evidence. `citation_count` is the number of C occurrences citing the work.
 - `sources[].identity_outcome`: the eight-value vocabulary from the protocol. `unlocated_after_search` may be reported as `unverifiable`; `nonexistent_as_cited` is reported as `nonexistent_sources` and counts toward the fabrication flag, and requires the evidence tier defined in the protocol's "Proving a work does not exist". `possible_match`, `bibliographic_conflict`, `insufficient_metadata` and `search_incomplete` are recorded states, not absences, and are excluded from the unverifiable count. `bibliographic_conflict` requires that the cited work exists; an entry that cannot describe any existing work is `nonexistent_as_cited`.
 - `sources[].search_status`: `searched | partial | not_searched`, per the protocol's adapter rule. Only `searched` may be recorded as `unverifiable`. A work left `partial` or `not_searched` because an adapter was rate-limited, circuit-broken or unreachable is a review limitation, not a finding about the work, and it is excluded from the acquisition ranking.

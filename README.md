@@ -24,7 +24,7 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 
 ## Installation
 
-The skills run their scripts with a Python 3.12 interpreter, which the installer builds beside each skill. Do not assume the system `python3`: `scripts/which_python.py --json` reports the interpreter to use, and the skills fall back to prompt-only mode when none qualifies.
+The skills run their scripts with a Python 3.12 interpreter, which the installer builds once, beside `sourcefidelity-review`. Do not assume the system `python3`: `scripts/which_python.py --json` reports the interpreter to use, and the skills fall back to prompt-only mode when none qualifies.
 
 Run the installer for your platform from the repository folder:
 
@@ -33,7 +33,7 @@ Run the installer for your platform from the repository folder:
 .\install.ps1         # Windows PowerShell
 ```
 
-Both scripts find your harness skills directory, copy the three skills, check for Python 3.12, and build each skill's `.venv`. Pass `--dry-run` (or `-DryRun`) to see the plan first, and `--target DIR` (or `-Target DIR`) to choose the skills directory yourself.
+Both scripts find your harness skills directory, copy the three skills, check for Python 3.12, and build the `.venv` they share. Pass `--dry-run` (or `-DryRun`) to see the plan first, and `--target DIR` (or `-Target DIR`) to choose the skills directory yourself.
 
 If Python is missing, the installer still copies the skills and explains prompt-only mode: a review still runs, but word counts, page mapping and the verbatim checks are unavailable. Install Python from https://www.python.org/downloads/ and run the installer again to enable them.
 
@@ -50,7 +50,7 @@ Copy the three skill directories into the skills directory used by your agent ho
 
 Keep the directory names unchanged; the batch and reappraisal skills refer to scripts in the sibling skills.
 
-Each skill resolves its extraction layer from a `.venv` beside itself (`<skill>/.venv/bin/python`), because the installed skills run from that directory. Build it once per skill that will read PDFs:
+The three skills share one venv, built beside `sourcefidelity-review` (`sourcefidelity-review/.venv`), because the installed skills run from that directory. Each skill resolves that venv; a skill that has its own `.venv` keeps using it first. Build it once:
 
 ```bash
 python3.12 -m venv sourcefidelity-review/.venv
