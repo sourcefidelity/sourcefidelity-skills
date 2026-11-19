@@ -334,9 +334,10 @@ def fetch_state(url, timeout=10):
             "environment": False}
 
 
-def audit(path, fetch=True, timeout=10, delay=0.5):
+def audit(path, fetch=True, timeout=8, delay=0.5):
     entries = reference_entries(paragraph_records(path))
     rows = []
+    unreachable_streak = 0
     for number, entry in enumerate(entries, start=1):
         urls, dois = entry_links(entry)
         link = urls[0] if urls else (f"https://doi.org/{dois[0]}" if dois else "")
@@ -350,9 +351,14 @@ def audit(path, fetch=True, timeout=10, delay=0.5):
             if delay:
                 time.sleep(delay)
             row["fetch"] = fetch_state(link, timeout=timeout)
-            if row["fetch"].get("state") in ("dead", "unreachable", "tls", "timeout",
-                                             "blocked", "login-page"):
-                archive = wayback_url(link)
+            state = row["fetch"].get("state")
+            if state in ("unreachable", "tls", "timeout"):
+                unreachable_streak += 1
+            elif state == "ok":
+                unreachable_streak = 0
+            if state in ("dead", "unreachable", "tls", "timeout", "blocked",
+                         "login-page") and unreachable_streak < 2:
+                archive = wayback_url(link, timeout=min(timeout, 6))
                 if archive:
                     archived = fetch_state(archive, timeout=timeout)
                     if archived.get("state") == "ok":
@@ -436,7 +442,7 @@ def main(argv=None):
     parser.add_argument("--out", required=True, help="directory for the outputs")
     parser.add_argument("--no-fetch", action="store_true",
                         help="classify links without requesting them")
-    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--timeout", type=int, default=8)
     args = parser.parse_args(argv)
     report = audit(args.paper, fetch=not args.no_fetch, timeout=args.timeout)
     os.makedirs(args.out, exist_ok=True)

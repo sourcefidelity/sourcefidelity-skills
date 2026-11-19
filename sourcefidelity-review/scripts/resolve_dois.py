@@ -320,7 +320,7 @@ class RateLimited(Exception):
     """A 429 with a long Retry-After: the route is closed for this run."""
 
 
-def _request(url, accept="application/json", timeout=25, referer="", attempts=3,
+def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
              extra_headers=None):
     """One request, with a short backoff for a transient status.
 
@@ -1186,7 +1186,7 @@ def _resolve_copy(doi, out_dir, mailto=""):
         return record
     try:
         status, final, headers, body = _request("https://doi.org/" + doi,
-                                                accept="text/html,application/pdf", timeout=40)
+                                                accept="text/html,application/pdf", timeout=15)
         record.update({"resolver": "doi.org", "status": status, "final_url": final,
                        "content_type": headers.get("Content-Type", ""), "bytes": len(body)})
         if body[:4] == b"%PDF":
@@ -1234,7 +1234,7 @@ def _resolve_copy(doi, out_dir, mailto=""):
     for candidate in oa_pdf_urls(doi, mailto)[:2]:
         try:
             status4, final4, headers4, body4 = _request(candidate, accept="application/pdf",
-                                                        timeout=60)
+                                                        timeout=30)
         except Exception:  # noqa: BLE001
             continue
         if body4[:4] == b"%PDF":
@@ -1287,7 +1287,7 @@ def landing_metadata(doi, mailto=""):
               "volume": "", "issue": "", "journal": "", "toc_url": ""}
     try:
         status, final, headers, body = _request("https://doi.org/" + doi,
-                                                accept="text/html", timeout=40)
+                                                accept="text/html", timeout=15)
     except Exception:  # noqa: BLE001
         return record
     record["page"] = final
@@ -1318,7 +1318,7 @@ def toc_entries(url, limit=15):
     if not url:
         return []
     try:
-        status, final, headers, body = _request(url, accept="text/html", timeout=40)
+        status, final, headers, body = _request(url, accept="text/html", timeout=15)
     except Exception:  # noqa: BLE001
         return []
     if body[:4] == b"%PDF":
@@ -1624,6 +1624,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refs", default="", help="text file, one reference per line")
     parser.add_argument("--entry", action="append", default=[], help="one reference; repeatable")
+    parser.add_argument("--jobs", type=int, default=4,
+                        help="references resolved in parallel")
     parser.add_argument("--cache-root", default="",
                         help="batch source cache directory")
     parser.add_argument("--paper", default="", help="a DOCX/PDF whose references to resolve")
@@ -1660,10 +1662,19 @@ def main(argv=None):
     out_dir = os.path.abspath(args.out or (os.path.dirname(args.refs) if args.refs else "."))
     os.makedirs(out_dir, exist_ok=True)
     records = []
-    for entry in entries:
-        records.append(process(entry, out_dir, not args.no_attempt, args.mailto,
-                               check_contents=args.check_contents))
-        time.sleep(1.0)
+    jobs = max(1, int(args.jobs or 1))
+    if jobs > 1 and len(entries) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        def run(entry):
+            return process(entry, out_dir, not args.no_attempt, args.mailto,
+                           check_contents=args.check_contents)
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            records = list(pool.map(run, entries))
+    else:
+        for entry in entries:
+            records.append(process(entry, out_dir, not args.no_attempt, args.mailto,
+                                   check_contents=args.check_contents))
+            time.sleep(1.0)
 
     payload = {"source": source, "checked_at": now(), "records": records}
     with open(os.path.join(out_dir, "accession.json"), "w", encoding="utf-8", newline="\n") as handle:
