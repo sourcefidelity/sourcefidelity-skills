@@ -46,7 +46,9 @@ from collections import defaultdict
 SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS_ROOT = os.path.dirname(SKILL_ROOT)
 REVIEW_SKILL = os.path.join(SKILLS_ROOT, "sourcefidelity-review")
-PDF_VENV_PYTHON = os.path.join(REVIEW_SKILL, ".venv", "bin", "python")
+PDF_VENV_PYTHON = (os.path.join(REVIEW_SKILL, ".venv", "Scripts", "python.exe")
+                   if os.name == "nt"
+                   else os.path.join(REVIEW_SKILL, ".venv", "bin", "python"))
 PDF_QUALITY = os.path.join(REVIEW_SKILL, "scripts", "pdf_quality.py")
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"

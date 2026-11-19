@@ -43,6 +43,13 @@ WORD_RE = re.compile(r"\S+")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _venv_python(skill_dir):
+    """This skill's own interpreter, per the platform's venv layout."""
+    if os.name == "nt":
+        return os.path.join(skill_dir, ".venv", "Scripts", "python.exe")
+    return os.path.join(skill_dir, ".venv", "bin", "python")
+
+
 def _extraction_layer():
     """(python, pdf_quality.py) beside this skill, else its review sibling.
 
@@ -53,7 +60,7 @@ def _extraction_layer():
     skill = os.path.dirname(HERE)
     candidates = [skill, os.path.join(os.path.dirname(skill), "sourcefidelity-review")]
     for base in candidates:
-        python = os.path.join(base, ".venv", "bin", "python")
+        python = _venv_python(base)
         quality = os.path.join(base, "scripts", "pdf_quality.py")
         if os.path.exists(python) and os.path.exists(quality):
             return python, quality
