@@ -77,6 +77,10 @@ The masker also removes email addresses and long digit strings anywhere. If it f
 
 Every skill works with prompts alone. Without Python you lose word counts, page locators, OCR and the verbatim checks, and the review says which checks were unavailable. The scripts are an accuracy upgrade, not a requirement.
 
+## Resolving cited works
+
+`python -I scripts/resolve_dois.py --paper PAPER --out DIR` reads the paper's reference list, resolves each entry to a DOI or a book record, verifies author and year against that record, and then attempts the DOI resolver. A PDF the publisher serves publicly is kept in DIR; everything else is recorded as an identity outcome or an access limitation. `--refs FILE` and repeated `--entry TEXT` accept references directly, and `--no-attempt` resolves identity without retrieval. Two files are written: `accession.json` for the full record and `accession.md` for the summary table.
+
 ## Data and privacy
 
 The skills process student papers and may process copyrighted sources. Keep these outside the repository:
