@@ -3504,6 +3504,17 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             self.assertIsNone(rd.cache_get("host", "HTTPFlaky", ttl=900))
             self.assertEqual(rd.cache_get("host", "DeadHost", ttl=900)["reason"], "URLError")
 
+    def test_provider_calls_are_spaced_within_one_process(self):
+        slept = []
+        rd._LAST_CALL.clear()
+        with mock.patch.object(rd.time, "sleep", side_effect=slept.append), \
+                mock.patch.object(rd.time, "time", return_value=1000.0):
+            rd._throttle("https://www.googleapis.com/books/v1/volumes?q=x")
+            rd._throttle("https://www.googleapis.com/books/v1/volumes?q=y")
+        rd._LAST_CALL.clear()
+        self.assertEqual(len(slept), 1)
+        self.assertAlmostEqual(slept[0], 1.0, places=1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

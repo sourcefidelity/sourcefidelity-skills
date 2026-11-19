@@ -326,6 +326,35 @@ def match_record(parsed, candidate, kind):
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
+# Per-provider spacing shared by the reference threads. The app's provider_gate
+# does this properly; this is the same idea at the scale one review needs: no
+# burst at a single API when four references are resolved in parallel.
+PROVIDER_INTERVALS = (
+    ("googleapis.com", 1.0),
+    ("api.openalex.org", 0.25),
+    ("api.crossref.org", 0.2),
+    ("api.semanticscholar.org", 1.1),
+    ("core.ac.uk", 1.0),
+    ("archive.org", 0.6),
+    ("catalogue.bnf.fr", 0.6),
+    ("sru.k10plus.de", 0.6),
+    ("services.dnb.de", 0.6),
+    ("ci.nii.ac.jp", 0.4),
+)
+_THROTTLE_LOCK = threading.Lock()
+_LAST_CALL = {}
+
+
+def _throttle(url):
+    host = urllib.parse.urlparse(url).netloc
+    interval = next((value for suffix, value in PROVIDER_INTERVALS
+                     if host.endswith(suffix)), 0.1)
+    with _THROTTLE_LOCK:
+        last = _LAST_CALL.get(host, 0.0)
+        wait = interval - (time.time() - last)
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_CALL[host] = time.time()
 DECISIVE_IDENTITIES = frozenset({"confirmed", "same_work_other_edition",
                                  "bibliographic_conflict",
                                  "title_conflict_at_coordinates"})
@@ -348,6 +377,7 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
         headers["Referer"] = referer
     last = None
     for attempt in range(attempts):
+        _throttle(url)
         request = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -998,6 +1028,8 @@ def _probe_internet_archive(parsed):
            "&fl%5B%5D=title&q=" + urllib.parse.quote(query))
     try:
         data = _json(url, timeout=10)
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     found = data.get("response") or {}
@@ -1015,6 +1047,8 @@ def _probe_cinii(parsed):
            + urllib.parse.quote(query))
     try:
         data = _json(url, timeout=10)
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     total = 0
@@ -1034,6 +1068,8 @@ def _probe_openlibrary(parsed):
            + "&author=" + urllib.parse.quote(parsed.get("surname") or ""))
     try:
         data = _json(url, timeout=10)
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     docs = data.get("docs") or []
@@ -1054,6 +1090,8 @@ def _probe_googlebooks(parsed):
         url += "&key=" + urllib.parse.quote(key)
     try:
         data = _json(url, timeout=10)
+    except urllib.error.HTTPError as exc:
+        return None, f"HTTP{exc.code}"
     except Exception as exc:  # noqa: BLE001
         return None, type(exc).__name__
     items = data.get("items") or []
@@ -1107,7 +1145,7 @@ def _catalogue_record(name, probe_name, parsed, key):
         return cached, "cache"
     record, detail = globals()[probe_name](parsed)
     if record is None:
-        if detail in HOST_FAILURE_REASONS:
+        if detail in HOST_FAILURE_REASONS or str(detail).startswith("HTTP"):
             network = detail in ("URLError", "TimeoutError", "ConnectionError",
                                  "ConnectionResetError", "RemoteDisconnected",
                                  "socket.timeout", "timeout")
