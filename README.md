@@ -87,17 +87,6 @@ Run `python -I scripts/user_settings.py --prompt` once to store a contact addres
 
 Retrieval tries, in order: the supplied copy; a DOI PDF at the publisher (including `citation_pdf_url`); open copies from Unpaywall, OpenAlex, Semantic Scholar, Europe PMC and CORE; a Wayback snapshot for a dead or blocked link; the keyless book catalogues (K10plus, BnF, DNB, Internet Archive, CiNii, Open Library, Google Books, HathiTrust). In a batch, pass `--cache-root ROOT/_work`: DOI metadata, contents verdicts and fetched copies are cached once for the whole cohort, keyed by DOI, with a 30-day time to live, a 500 MB cap on fetched PDFs, and an identity entry per cited work so a second paper skips the provider queries. The cache root defaults to the batch `_work` directory (override with SOURCEFIDELITY_CACHE_ROOT or --cache-root), so a batch shares one warm cache across all its papers and across runs. Cache caps are settings: `cache_max_pdf_bytes` (default 3 GB), `cache_max_text_bytes` and `cache_max_web_bytes` (200 MB each), in `~/.dsh/sourcefidelity.json` or the matching SOURCEFIDELITY_MAX_* variables. `user_settings.py --show` prints them. Fetched PDFs form a batch source library under `_work/_fetched/`, hard-linked from each paper that needs the same copy, so a book cited by many papers costs one file. Extracted text under `_work/_extracted/` is capped by `cache_max_text_bytes`. A blocked or empty page is cached for one hour, a good page for seven days; both stores are trimmed to a 200 MB cap after expired entries are removed. A failed provider is recorded as a limitation, not as absence. For an article, the resolver also reads the publisher landing page: its Highwire tags give the true page range and volume, and its issue link is followed for a table of contents. A PDF that the resolver saves is extracted automatically with `prepare_source.py`, so a retrieved copy becomes inspectable text. Gallica is used by the batch acquisition stage for digitised periodicals; the single-paper resolver has no non-DOI periodical identifier to query it with.
 
-## Data and privacy
-
-The skills process student papers and may process copyrighted sources. Keep these outside the repository:
-
-- student papers and submissions
-- review outputs, ledgers, summaries and batch reports
-- supplied source files and extracted text
-- agent metadata and logs
-
-The `.gitignore` excludes the common working directories, but check `git status` before every commit. Review outputs can contain names, student IDs, quoted passages and source links.
-
 ## Updating
 
 Releases are tagged on GitHub. To update, replace the skill folders with the new release and run the installer again; your reviews and working folders are outside the repository and are not touched. The installed version is in `VERSION`.
