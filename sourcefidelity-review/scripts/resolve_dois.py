@@ -1587,8 +1587,8 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
 
 def markdown(records, source):
     lines = [f"# Accession record — {source}", "", f"Checked: {now()}", "",
-             "| # | Entry (short) | Identity | DOI | Copy | Contents |",
-             "| --- | --- | --- | --- | --- | --- |"]
+             "| # | Entry (short) | Identity | DOI | Copy | Contents | Note |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
     for number, record in enumerate(records, start=1):
         short = (record["parsed"]["authors"] or record["parsed"]["title"])[:42].replace("|", "/")
         copy = record.get("copy") or {}
@@ -1610,8 +1610,9 @@ def markdown(records, source):
             shown = status
         else:
             shown = "—"
+        note = (record.get("notes") or [""])[0]
         lines.append(f"| {number} | {short} | {record['identity'] or '-'} | "
-                     f"{record.get('doi') or '-'} | {got} | {shown} |")
+                     f"{record.get('doi') or '-'} | {got} | {shown} | {note[:80]} |")
     counts = {}
     for record in records:
         counts[record["identity"]] = counts.get(record["identity"], 0) + 1

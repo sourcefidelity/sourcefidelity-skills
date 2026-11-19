@@ -163,6 +163,14 @@ def redact_docx(source, output, tier=1):
             elif item.filename == "docProps/app.xml":
                 data = strip_app_metadata(data.decode("utf-8")).encode("utf-8")
                 report["metadata_stripped"].append("docProps/app.xml")
+            elif item.filename == "docProps/custom.xml":
+                data = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                        b'<Properties xmlns="http://schemas.openxmlformats.org/'
+                        b'officeDocument/2006/custom-properties"/>')
+                report["metadata_stripped"].append("docProps/custom.xml")
+            elif item.filename.startswith("docProps/thumbnail"):
+                report["metadata_stripped"].append(item.filename)
+                continue
             elif tier == 2 and (item.filename == "word/document.xml"
                                 or re.match(r"word/(?:header|footer)\d*\.xml$",
                                             item.filename)):
