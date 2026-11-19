@@ -343,6 +343,12 @@ def build(path, paper_id):
                   "signals": signals,
             })
 
+    final_order = {p["id"]: index for index, p in enumerate(paragraphs)}
+    citations.sort(key=lambda c: (final_order.get(c["paragraph_id"], 0),
+                                  int(c.get("start") or 0)))
+    for number, citation in enumerate(citations, 1):
+        citation["id"] = f"X{number}"
+
     ambiguity = ambiguity_for(paragraphs, references, citations)
     return {
         "paper_id": paper_id,
