@@ -236,26 +236,6 @@ def main():
 
     write_metrics_section(w, aggregate_review_metrics(rows))
 
-    w("## Paper summary\n")
-    w("| Paper | Total words | Text words | Ref words | C | Supports | Qualified | Contradicts "
-      "| Not supported | Not judged | Misrep. sources | Nonexistent | Unverifiable | Not searched "
-      "| Missing links | Flag |")
-    w("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-    for r in rows:
-        o, ref = r["occurrences"], r["references"]
-        pid = r["paper_id"]
-        classes, auth = sig_for(pid)
-        mis, fab = flags(r)
-        unsearched = sum(1 for s in r.get("sources", [])
-                         if s.get("search_status") == "not_searched")
-        w(f"| {pid} | {r['word_counts']['total']:,} | {r['word_counts']['text']:,} | "
-          f"{r['word_counts']['references']:,} | {o['total']} | {o['supports']} | {o['qualified']} | "
-          f"{o['contradicts']} | {o['not_supported']} | {o['not_judged']} | "
-          f"{len(r['misrepresented_sources'])} | {len(r['nonexistent_sources'])} | "
-          f"{len(r.get('unverifiable_sources', []))} | {unsearched} | {ref['missing_links']} | "
-          f"{flag_label(mis, fab)} |")
-    w("")
-
     w("## Flagged papers\n")
     flagged = []
     for r in rows:
@@ -344,36 +324,6 @@ def main():
               f"{', '.join(pair.get('shared_headings', [])[:5]) or '—'} | "
               f"{(sentences[0][:120] if sentences else '—')} | "
               f"{pair.get('shared_ngram_count', 0)} |")
-        w("")
-
-    w("## Source-level patterns (secondary)\n")
-    pattern = {}
-    for r in rows:
-        for key in ([_rid(s) for s in r["misrepresented_sources"]]
-                    + [_rid(s) for s in r["nonexistent_sources"]]
-                    + [_rid(s) for s in r["unverifiable_sources"]]):
-            if not key:
-                continue
-            pattern.setdefault(key, []).append(r["paper_id"])
-    hits = {k: v for k, v in pattern.items() if len(set(v)) >= SOURCE_PATTERN_THRESHOLD}
-    if not hits:
-        w(f"No source reached the pattern threshold of {SOURCE_PATTERN_THRESHOLD} papers. "
-          f"All {len(pattern)} distinct flagged sources appear in "
-          f"{'one paper each' if len(pattern) else 'no paper'}.\n")
-    else:
-        w("| Source | Papers | Status | Paper IDs |")
-        w("| --- | --- | --- | --- |")
-        for key, papers in sorted(hits.items()):
-            statuses = set()
-            for r in rows:
-                if any(_rid(s) == key for s in r["misrepresented_sources"]):
-                    statuses.add("misrepresented")
-                if any(_rid(s) == key for s in r["nonexistent_sources"]):
-                    statuses.add("nonexistent")
-                if any(_rid(s) == key for s in r["unverifiable_sources"]):
-                    statuses.add("unverifiable")
-            w(f"| {key} | {len(set(papers))} | {' / '.join(sorted(statuses))} | "
-              f"{', '.join(sorted(set(papers)))} |")
         w("")
 
     w("## Sources to acquire\n")
