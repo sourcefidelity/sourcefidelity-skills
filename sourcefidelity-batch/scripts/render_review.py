@@ -206,7 +206,9 @@ def hyperlink_scope_lines(summary):
         return []
     hl = links.get("hl_total")
     if hl is None:
-        hl = counts["absent"] + counts["non_permanent"]
+        # HL is an APA-requirement judgment supplied by the findings. Do not
+        # infer it from link states: a print work with no DOI needs no URL.
+        hl = 0
     unreachable = (counts["unreachable"] + counts["blocked"] + counts["dead"])
     parts = [f"{counts['absent']} absent",
              f"{counts['non_linkable']} excluded as non-linkable",
@@ -215,7 +217,7 @@ def hyperlink_scope_lines(summary):
              f"{counts['full_text']} full-text",
              f"{unreachable} unreachable or blocked (environment)",
              f"{counts['verified']} verified"]
-    return ["Hyperlinks: " + "; ".join(parts) + f". HL total: {hl} (Category A)."]
+    return ["Hyperlinks: " + "; ".join(parts) + f". HL total: {hl} (HL = distinct works missing a required DOI or URL under APA 7, or supplying a non-permanent or wrong-work one; counted once per work)."]
 
 
 def render_summary(*args, **kwargs):
@@ -297,9 +299,6 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         f"uncited substantive passages {len(findings.get('uncited', []))}.")
     lines.append("")
 
-    if findings.get("limitations"):
-        lines.append(f"**Limitations.** {findings['limitations']}")
-        lines.append("")
     refs = findings.get("references", [])
 
     lines.append("## 2. Numbered citation entries, in paper order")
@@ -361,6 +360,12 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
                      f"{item.get('source_status', '')} {item.get('search', '')} "
                      f"Category B ({item.get('type', 'uncited claim')}).")
     lines.append("")
+
+    if findings.get("limitations"):
+        lines.append("## 5. Limitations")
+        lines.append("")
+        lines.append(findings["limitations"])
+        lines.append("")
 
     return "\n".join(lines)
 

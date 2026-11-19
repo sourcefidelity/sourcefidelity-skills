@@ -53,6 +53,12 @@ URL_RE = re.compile(r"https?://[^\s\"'<>\])]+")
 REFERENCE_HEADING = re.compile(r"^\s*(references?|reference list|bibliography|works cited)"
                                r"\s*:?\s*$", re.I)
 ENTRY_START = re.compile(r"^\s*[A-Z][A-Za-z'\u2019-]+,\s+[A-Z]\.?")
+# Corporate authors do not start name-comma-initial: "Burger King. (2025,
+# December 1)." or "American Psychological Association. (2020).".
+CORPORATE_ENTRY = re.compile(
+    r"^\s*[A-Z][A-Za-z0-9&'\u2019.\- ]{1,90}\.\s*"
+    r"\((?:n\.d\.|\d{4}[a-z]?(?:,\s*[A-Z][a-z]+\s+\d{1,2})?)\)")
+APA_DATE = re.compile(r"\((?:n\.d\.|\d{4}[a-z]?)(?:,\s*[^)]*)?\)")
 
 
 def now():
@@ -117,11 +123,30 @@ def looks_like_entry(text):
     """Entry start: personal author, corporate author, or a film credit."""
     if ENTRY_START.match(text) or "[Film]" in text:
         return True
-    # Corporate authors ("Library of Congress, MBRS, & ...", "Media History
-    # Digital Library.") do not start name-comma-initial, so accept a capital
-    # letter followed by an APA year near the start.
-    return bool(re.match(r"^\s*[A-Z]", text)
-                and re.search(r"\(\d{4}[a-z]?\)", text[:90]))
+    if CORPORATE_ENTRY.match(text):
+        return True
+    # A corporate author or title followed by an APA date near the start.
+    # This fallback also matches some body paragraphs, so the caller requires
+    # a run of consecutive entry-like paragraphs before choosing a start.
+    return bool(re.match(r"^\s*[A-Z]", text) and APA_DATE.search(text[:120]))
+
+
+def _first_entry_run(records):
+    """First index where entry-like paragraphs form a run.
+
+    A headingless paper can contain a body sentence with a bare year, so a
+    single match is not enough. Two consecutive entry-like paragraphs are a
+    reliable signal for the reference list; a one-entry list falls back to the
+    first entry-like paragraph.
+    """
+    flags = [looks_like_entry(text) for text, _links in records]
+    for index, flag in enumerate(flags):
+        if flag and index + 1 < len(flags) and flags[index + 1]:
+            return index
+    for index, flag in enumerate(flags):
+        if flag:
+            return index
+    return None
 
 
 def reference_entries(paragraphs):
@@ -129,18 +154,17 @@ def reference_entries(paragraphs):
     records = []
     for item in paragraphs:
         if isinstance(item, dict):
-            records.append((item.get("text", ""), item.get("links") or []))
+            text, links = item.get("text", ""), item.get("links") or []
         else:
-            records.append((item, []))
+            text, links = item, []
+        if text or links:
+            records.append((text, links))
     start = None
     for index, (text, _links) in enumerate(records):
         if REFERENCE_HEADING.match(text):
             start = index + 1
     if start is None:
-        for index, (text, _links) in enumerate(records):
-            if looks_like_entry(text):
-                start = index
-                break
+        start = _first_entry_run(records)
     if start is None:
         return []
     entries = []
@@ -175,6 +199,20 @@ def entry_links(entry):
 
 
 
+COURSE_PATH_HINTS = ("/pluginfile.php/", "/mod/resource/", "/mod/forum/",
+                     "/course/view.php", "/webapps/blackboard/")
+COURSE_HOST_HINTS = ("instructure.com", "blackboard.com", "brightspace.com")
+
+
+def is_course_platform(url):
+    """Heuristic: a course-platform file link that will not remain for a reader."""
+    parsed = urllib.parse.urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    return (any(hint in path for hint in COURSE_PATH_HINTS)
+            or any(hint in host for hint in COURSE_HOST_HINTS))
+
+
 def classify_link(url):
     """Link class: absent, doi, non-permanent, full-text, record-only, permanent.
 
@@ -184,6 +222,8 @@ def classify_link(url):
     """
     if not url:
         return "absent"
+    if is_course_platform(url):
+        return "non-permanent"
     host = urllib.parse.urlparse(url).netloc.lower()
     if re.match(r"^https?://(dx\.)?doi\.org/", url):
         return "doi"
@@ -347,11 +387,13 @@ def audit(path, fetch=True, timeout=8, delay=0.5):
         if state == "not-linkable":
             row["fetch"] = {"state": "not required", "status": None,
                             "detail": "traditional audio-visual media: no link expected"}
-        elif fetch and link and state != "non-permanent":
+        elif fetch and link and (state != "non-permanent" or is_course_platform(link)):
             if delay:
                 time.sleep(delay)
             row["fetch"] = fetch_state(link, timeout=timeout)
             state = row["fetch"].get("state")
+            if state == "login-page" and is_course_platform(link):
+                row["link_class"] = "non-permanent"
             if state in ("unreachable", "tls", "timeout"):
                 unreachable_streak += 1
             elif state == "ok":

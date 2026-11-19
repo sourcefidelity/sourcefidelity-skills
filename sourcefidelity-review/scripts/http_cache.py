@@ -3,7 +3,9 @@
 
 The batch skill keeps its own web cache; this one serves the review skill and
 uses the same idea: one file per URL under a directory that survives runs. Point
-SOURCEFIDELITY_WEB_CACHE at a shared directory to reuse it across tools.
+SOURCEFIDELITY_WEB_CACHE at a shared directory to reuse it across tools. If the
+default directory is not writable (for example under a file sandbox), the cache
+falls back to the platform temp directory.
 
     cache_get(url) -> {"state", "status", "final", "content_type", "body"} or None
     cache_put(url, state, status, final, content_type, body)
@@ -15,6 +17,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import time
 
 TTL_SECONDS = 7 * 24 * 3600
@@ -45,13 +48,49 @@ def max_web_bytes():
     return _setting_bytes("cache_max_web_bytes", TEXT_CACHE_MAX_BYTES)
 CACHE_DIR = (os.environ.get("SOURCEFIDELITY_WEB_CACHE")
              or os.path.join(os.path.expanduser("~"), ".dsh", "cache", "web"))
+FALLBACK_CACHE_DIR = os.path.join(tempfile.gettempdir(), "sourcefidelity-web-cache")
+_RESOLVED_CACHE_DIR = None
+
+
+def _writable(directory):
+    """True when `directory` can be created and written to."""
+    try:
+        os.makedirs(directory, exist_ok=True)
+        probe = os.path.join(directory, ".write-test")
+        with open(probe, "w", encoding="utf-8") as handle:
+            handle.write("")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def cache_dir():
+    """The first writable cache directory, or "" when none is available.
+
+    The default under ~/.dsh is outside the workspace and a file sandbox can
+    deny it. Fall back to the platform temp directory so a fetch that succeeded
+    is still cached instead of failing in `cache_put`.
+    """
+    global _RESOLVED_CACHE_DIR
+    if _RESOLVED_CACHE_DIR is None:
+        if _writable(CACHE_DIR):
+            _RESOLVED_CACHE_DIR = CACHE_DIR
+        elif _writable(FALLBACK_CACHE_DIR):
+            _RESOLVED_CACHE_DIR = FALLBACK_CACHE_DIR
+        else:
+            _RESOLVED_CACHE_DIR = ""
+    return _RESOLVED_CACHE_DIR
 
 
 def _path(url):
     if not url:
         return ""
+    directory = cache_dir()
+    if not directory:
+        return ""
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, digest + ".json")
+    return os.path.join(directory, digest + ".json")
 
 
 def cache_get(url):
@@ -74,15 +113,22 @@ def cache_get(url):
 
 def cache_put(url, state, status, final, content_type, body):
     path = _path(url)
-    if not path:
+    directory = cache_dir()
+    if not path or not directory:
         return
-    os.makedirs(CACHE_DIR, exist_ok=True)
     temporary = path + ".tmp"
-    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump({"stored_at": time.time(), "state": state, "status": status,
-                   "final": final, "content_type": content_type,
-                   "body": base64.b64encode(body or b"").decode("ascii")}, handle)
-    os.replace(temporary, path)
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump({"stored_at": time.time(), "state": state, "status": status,
+                       "final": final, "content_type": content_type,
+                       "body": base64.b64encode(body or b"").decode("ascii")}, handle)
+        os.replace(temporary, path)
+    except OSError:
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
 
 
 PAYWALL_RE = re.compile(r"\bsubscribe\b|\bsign in to (?:read|continue)\b|"
@@ -199,12 +245,13 @@ def prune_url_cache(max_bytes=None):
     """Trim the URL response cache to a size cap after removing expired files."""
     if max_bytes is None:
         max_bytes = max_web_bytes()
-    if not os.path.isdir(CACHE_DIR):
+    directory = cache_dir()
+    if not directory or not os.path.isdir(directory):
         return 0
     files = []
     now = time.time()
-    for name in os.listdir(CACHE_DIR):
-        path = os.path.join(CACHE_DIR, name)
+    for name in os.listdir(directory):
+        path = os.path.join(directory, name)
         if not os.path.isfile(path):
             continue
         try:
