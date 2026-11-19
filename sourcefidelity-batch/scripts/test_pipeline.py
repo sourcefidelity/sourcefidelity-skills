@@ -798,18 +798,42 @@ class ReportModeTests(unittest.TestCase):
 
 
 class InstallerTests(unittest.TestCase):
-    SCRIPT = os.path.join(os.path.dirname(os.path.dirname(HERE)), "install.sh")
+    SCRIPT = os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                          "install.ps1" if os.name == "nt" else "install.sh")
     SKILLS = ("sourcefidelity-review", "sourcefidelity-batch", "sourcefidelity-reappraise")
 
     def _run(self, *args, env=None):
         environment = {**os.environ, **(env or {})}
-        return subprocess.run(["/bin/bash", self.SCRIPT, *args], capture_output=True,
+        if os.name == "nt":
+            powershell = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                      "System32", "WindowsPowerShell", "v1.0",
+                                      "powershell.exe")
+            command = [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                       "-File", self.SCRIPT]
+        else:
+            command = ["/bin/bash", self.SCRIPT]
+        return subprocess.run([*command, *args], capture_output=True,
                               text=True, env=environment)
+
+    def _flags(self, target=None, dry_run=False):
+        """The installed platform's spellings for --dry-run and --target."""
+        args = []
+        if os.name == "nt":
+            if dry_run:
+                args.append("-DryRun")
+            if target:
+                args.extend(["-Target", target])
+        else:
+            if dry_run:
+                args.append("--dry-run")
+            if target:
+                args.extend(["--target", target])
+        return args
 
     def test_dry_run_lists_every_skill_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "skills")
-            proc = self._run("--dry-run", "--target", target)
+            proc = self._run(*self._flags(target, dry_run=True))
             self.assertEqual(proc.returncode, 0, proc.stderr)
             for skill in self.SKILLS:
                 self.assertIn(f"would install: {skill}", proc.stdout)
@@ -817,21 +841,25 @@ class InstallerTests(unittest.TestCase):
 
     def test_a_missing_target_is_explained(self):
         with tempfile.TemporaryDirectory() as tmp:
-            proc = self._run(env={"HOME": tmp})
+            proc = self._run(env={"HOME": tmp, "USERPROFILE": tmp})
             self.assertNotEqual(proc.returncode, 0)
-            self.assertIn("--target", proc.stderr)
+            self.assertIn("No harness skills directory found", proc.stderr)
 
     def test_absent_python_reports_prompt_only_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = os.path.join(tmp, "skills")
             shim = os.path.join(tmp, "shim-bin")
             os.makedirs(shim)
-            for name in ("python3", "python3.12"):
-                path = os.path.join(shim, name)
-                open(path, "w").write("#!/bin/sh\nexit 1\n")
-                os.chmod(path, 0o755)
-            proc = self._run("--dry-run", "--target", target,
-                             env={"PATH": shim + os.pathsep + "/usr/bin:/bin"})
+            if os.name == "nt":
+                # An empty PATH hides py.exe and python.exe from the installer.
+                environment = {"PATH": shim}
+            else:
+                for name in ("python3", "python3.12"):
+                    path = os.path.join(shim, name)
+                    open(path, "w").write("#!/bin/sh\nexit 1\n")
+                    os.chmod(path, 0o755)
+                environment = {"PATH": shim + os.pathsep + "/usr/bin:/bin"}
+            proc = self._run(*self._flags(target, dry_run=True), env=environment)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("prompt-only", proc.stdout)
 
@@ -946,16 +974,18 @@ class InterpreterResolutionTests(unittest.TestCase):
         skill = os.path.join(tmp, "sourcefidelity-review")
         os.makedirs(os.path.join(skill, "scripts"))
         if venv:
-            os.makedirs(os.path.join(skill, ".venv", "bin"))
-            os.symlink(sys.executable, os.path.join(skill, ".venv", "bin", "python"))
+            venv_python = wp.venv_candidates(skill)[0]
+            os.makedirs(os.path.dirname(venv_python), exist_ok=True)
+            open(venv_python, "w").close()
         return skill
 
     def test_the_skill_venv_is_preferred(self):
         with tempfile.TemporaryDirectory() as tmp:
             skill = self._skill(tmp)
-            result = wp.resolve(skill)
+            expected = wp.venv_candidates(skill)[0]
+            result = wp.resolve(skill, check=lambda candidate: True)
         self.assertEqual(result["source"], "venv")
-        self.assertTrue(result["python"].endswith(os.path.join(".venv", "bin", "python")))
+        self.assertEqual(result["python"], expected)
         self.assertEqual(result["limitation"], "")
 
     def test_python312_on_path_is_the_fallback(self):
@@ -981,16 +1011,15 @@ class InterpreterResolutionTests(unittest.TestCase):
         candidate = wp.venv_candidates("C:/skills/sourcefidelity-review", "nt")[0]
         self.assertTrue(candidate.replace("\\", "/").endswith(".venv/Scripts/python.exe"))
 
-    @unittest.skipIf(os.name == "nt", "the fixture needs POSIX symlink support")
     def test_the_review_venv_serves_a_sibling_skill(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._skill(tmp)
             batch = os.path.join(tmp, "sourcefidelity-batch")
             os.makedirs(os.path.join(batch, "scripts"))
-            result = wp.resolve(batch)
+            expected = wp.venv_candidates(batch)[1]
+            result = wp.resolve(batch, check=lambda candidate: True)
         self.assertEqual(result["source"], "venv")
-        self.assertTrue(result["python"].replace("\\", "/").endswith(
-            "sourcefidelity-review/.venv/bin/python"))
+        self.assertEqual(result["python"], expected)
 
 
 class OcrBackendTests(unittest.TestCase):
@@ -1755,6 +1784,19 @@ class InventoryValidationTests(unittest.TestCase):
 
 
 class PaperPathTests(unittest.TestCase):
+    @staticmethod
+    def _link_directory(target, link):
+        """Link a directory: a POSIX symlink, or a junction on Windows.
+
+        A junction needs no privilege, unlike a Windows symbolic link, and
+        os.path.realpath resolves it the same way.
+        """
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", link, target],
+                           check=True, capture_output=True)
+        else:
+            os.symlink(target, link)
+
     def test_paper_folder_rejects_escaping_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
             for bad in ("", ".", "..", "../evil", "/tmp/evil", "a/b", "a\\b"):
@@ -1770,10 +1812,12 @@ class PaperPathTests(unittest.TestCase):
     def test_paper_folder_rejects_symlinked_paper_directory(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as outside:
-            os.symlink(outside, os.path.join(tmp, "P2"))
+            self._link_directory(outside, os.path.join(tmp, "P2"))
             with self.assertRaises(SystemExit):
                 bp.paper_folder(tmp, "P2")
 
+    @unittest.skipIf(os.name == "nt",
+                     "a Windows file symlink needs SeCreateSymbolicLinkPrivilege")
     def test_artifact_rejects_a_symlinked_file(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as outside:
@@ -1785,6 +1829,8 @@ class PaperPathTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 bp.artifact(folder, "review.md")
 
+    @unittest.skipIf(os.name == "nt",
+                     "a Windows file symlink needs SeCreateSymbolicLinkPrivilege")
     def test_apply_all_refuses_a_symlinked_review_before_writing(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 tempfile.TemporaryDirectory() as outside:
