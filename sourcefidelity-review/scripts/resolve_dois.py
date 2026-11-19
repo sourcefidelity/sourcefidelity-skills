@@ -499,6 +499,93 @@ def contents_check(parsed):
     result.update({"status": "sparse",
                    "note": f"{len(scope)} listed article(s); coverage is incomplete"})
     return result
+
+
+SRU_K10PLUS = ("https://sru.k10plus.de/gvk?version=1.1&operation=searchRetrieve"
+               "&recordSchema=dc&maximumRecords=1&query=")
+SRU_DNB = ("https://services.dnb.de/sru/dnb?version=1.1&operation=searchRetrieve"
+           "&recordSchema=oai_dc&maximumRecords=1&query=")
+
+
+def _cql_terms(text, limit=6):
+    """Significant words only: CQL chokes on parentheses, digits and ordinals."""
+    text = re.sub(r"\b\d+\s*(?:st|nd|rd|th|ed)\b", " ", text or "", flags=re.I)
+    text = re.sub(r"\d+", " ", text)
+    words = [word for word in re.findall(r"[A-Za-z][A-Za-z'-]+", text)
+             if word.lower() not in STOPWORDS
+             and word.lower() not in {"ed", "nd", "st", "rd", "th", "vol", "pp"}]
+    return " ".join(words[:limit])
+
+
+def sru_probe(base, query):
+    """(numberOfRecords, first dc:title) from an SRU catalogue, or (None, reason)."""
+    try:
+        status, final, headers, body = _request(base + urllib.parse.quote(query),
+                                                accept="application/xml")
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    text = body.decode("utf-8", "replace")
+    count = re.search(r"numberOfRecords>(\d+)<", text)
+    if not count:
+        # A diagnostic without a record count is an unknown, never a zero.
+        return None, "no record count in the response"
+    title = re.search(r"<dc:title[^>]*>(.*?)</dc:title>", text, re.S)
+    clean = re.sub(r"<[^>]+>", "", title.group(1)).strip() if title else ""
+    return int(count.group(1)), clean
+
+
+def book_affirmative(parsed):
+    """Ask book catalogues whether the work exists, and say who answered.
+
+    A publisher's own catalogue is the decisive source for a book but is rarely
+    machine-readable; the union and national catalogues are. K10plus (~200M
+    holdings) and DNB are the strong routes here, Google Books supporting.
+    Absence needs two strong answers before it can be called absence.
+    """
+    title = parsed.get("title") or ""
+    surname = parsed.get("surname") or ""
+    routes = []
+    result = {"status": "search_incomplete", "routes": routes, "note": "",
+              "first_title": "", "score": 0.0}
+    k10_query = f"pica.all={_cql_terms(title)}" + (f" and pica.all={surname}" if surname else "")
+    k10_count, k10_title = sru_probe(SRU_K10PLUS, k10_query)
+    routes.append({"catalogue": "K10plus", "count": k10_count, "strong": True,
+                   "detail": "" if k10_count is not None else k10_title})
+    dnb_count, dnb_detail = sru_probe(SRU_DNB, f"WOE={title} {surname}".strip())
+    routes.append({"catalogue": "DNB", "count": dnb_count, "strong": True,
+                   "detail": "" if dnb_count is not None else dnb_detail})
+    try:
+        data = _json("https://www.googleapis.com/books/v1/volumes?maxResults=1&q="
+                     + urllib.parse.quote(f"intitle:{title} inauthor:{surname}"))
+        routes.append({"catalogue": "Google Books", "count": data.get("totalItems"),
+                       "strong": False, "detail": ""})
+    except Exception as exc:  # noqa: BLE001
+        routes.append({"catalogue": "Google Books", "count": None, "strong": False,
+                       "detail": type(exc).__name__})
+
+    answered = [route for route in routes if route["strong"] and route["count"] is not None]
+    zero = [route for route in answered if route["count"] == 0]
+    held = [route for route in answered if route["count"]]
+    if held:
+        result["status"] = "present"
+        result["note"] = f"held by {held[0]['catalogue']} ({held[0]['count']} record(s))"
+        if k10_count:
+            result["first_title"] = k10_title
+            result["score"] = title_score(title, k10_title)
+            if result["score"] < 0.4:
+                result["status"] = "present_title_mismatch"
+                result["note"] = f"K10plus returns a different title: {k10_title}"
+    elif len(zero) >= 2:
+        result["status"] = "absent"
+        result["note"] = "no record in " + " and ".join(route["catalogue"] for route in zero)
+    elif len(zero) == 1:
+        result["status"] = "absent_single_catalogue"
+        result["note"] = (f"no record in {zero[0]['catalogue']}; only one strong catalogue "
+                          f"answered, so absence is not established")
+    return result
+
+
+def resolve_copy(doi, out_dir):
     """Call the DOI resolver and keep a PDF only when the publisher serves one."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
@@ -715,6 +802,23 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
         else:
             record["notes"].append("contents check: "
                                    + (contents.get("note") or contents["status"]))
+
+    if check_contents and kind == "book":
+        check = book_affirmative(parsed)
+        record["contents"] = check
+        if check["status"] == "present" and record["identity"] not in (
+                "confirmed", "same_work_other_edition"):
+            record["identity"] = "confirmed"
+            record["notes"].append("catalogue: " + check["note"])
+        elif check["status"] == "present_title_mismatch":
+            record["identity"] = "title_conflict_at_coordinates"
+            record["notes"].append("catalogue: " + check["note"])
+        elif check["status"] == "absent":
+            record["identity"] = "nonexistent_as_cited"
+            record["notes"].append("affirmative absence: " + check["note"])
+        else:
+            record["notes"].append("catalogue check: "
+                                   + (check.get("note") or check["status"]))
 
     if attempt and record["doi"] and record["identity"] in (
             "confirmed", "same_work_other_edition", "bibliographic_conflict"):

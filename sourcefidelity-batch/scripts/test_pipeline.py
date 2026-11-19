@@ -2771,6 +2771,53 @@ class ResolveDoisTests(unittest.TestCase):
         self.assertEqual(result["status"], "occupied")
         self.assertEqual(result["occupants"][0]["doi"], "10.1/x")
 
+    def test_book_catalogue_presence_confirms_a_book(self):
+        parsed = rd.parse_reference(
+            "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
+        with mock.patch.object(rd, "sru_probe",
+                               side_effect=[(10, "Heavenly Bodies: Film Stars and Society"),
+                                            (None, "HTTPError")]), \
+                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "present")
+        self.assertGreater(result["score"], 0.6)
+
+    def test_book_catalogue_absence_needs_two_strong_answers(self):
+        parsed = rd.parse_reference(
+            "Doe, J. (2019). A fabricated monograph. Invented Press.")
+        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (0, "")]), \
+                mock.patch.object(rd, "_json", return_value={"totalItems": 0}):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "absent")
+        # One catalogue answering zero is not absence.
+        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (None, "HTTPError")]), \
+                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+            single = rd.book_affirmative(parsed)
+        self.assertEqual(single["status"], "absent_single_catalogue")
+
+    def test_book_catalogue_flags_a_different_title(self):
+        parsed = rd.parse_reference(
+            "Doe, J. (2019). A fabricated monograph. Routledge.")
+        with mock.patch.object(rd, "sru_probe",
+                               side_effect=[(3, "Something Else Entirely"), (None, "HTTPError")]), \
+                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "present_title_mismatch")
+
+    def test_resolve_copy_still_exists(self):
+        self.assertTrue(callable(rd.resolve_copy))
+
+    def test_cql_terms_drops_ordinals_and_punctuation(self):
+        self.assertEqual(rd._cql_terms("Heavenly bodies: Film stars and society (2nd ed.)"),
+                         "Heavenly bodies Film stars society")
+
+    def test_sru_probe_treats_a_diagnostic_as_unknown(self):
+        with mock.patch.object(rd, "_request",
+                               return_value=(200, "u", {}, b"<zs:diagnostics/>")):
+            count, detail = rd.sru_probe("https://example.invalid/sru", "q")
+        self.assertIsNone(count)
+        self.assertIn("no record count", detail)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
