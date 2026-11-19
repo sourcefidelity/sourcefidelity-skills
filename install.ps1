@@ -126,4 +126,16 @@ if ($Incomplete) {
     Write-Host "Re-run this installer to finish it: .\install.ps1 -Target `"$Target`""
     exit 1
 }
+if (-not (Get-Command tesseract -ErrorAction SilentlyContinue)) {
+    Write-Host "Tesseract OCR not found: image-only PDFs will be recorded as limitations."
+    Write-Host "  Install it from https://github.com/tesseract-ocr/tesseract"
+    $hintPython = "python"
+    if ($venv) {
+        # A real run that reached this line has a complete venv (an incomplete
+        # one exits above), so the planned path is the one to show.
+        $hintPython = Join-Path $venv "Scripts\python.exe"
+    }
+    Write-Host "  Then add language data, for example:"
+    Write-Host "    `"$hintPython`" -I scripts/pdf_quality.py languages --install chi_sim"
+}
 Write-Host "Next: relaunch your harness and ask for a source-use review."

@@ -98,6 +98,17 @@ else
       fi
     fi
   fi
+  if ! command -v tesseract >/dev/null 2>&1; then
+    echo "Tesseract OCR not found: image-only PDFs will be recorded as limitations."
+    echo "  Install it from https://github.com/tesseract-ocr/tesseract"
+    HINT_PY="python"
+    if [ "$WITH_VENV" = "1" ]; then
+      # A run that reached here either built the venv or is a dry run of one.
+      HINT_PY="$TARGET/sourcefidelity-review/.venv/bin/python"
+    fi
+    echo "  Then add language data, for example:"
+    echo "    \"$HINT_PY\" -I scripts/pdf_quality.py languages --install chi_sim"
+  fi
   echo
   echo "Next: relaunch your harness and ask for a source-use review."
 fi
