@@ -4,9 +4,10 @@
     python3 scripts/which_python.py [--json] [--skill DIR]
 
 Order: the skill's own .venv (``bin/python`` on POSIX, ``Scripts\\python.exe``
-on Windows), then ``python3.12`` on PATH, then ``python3`` if it is 3.12 or
-newer. If none qualifies, the skill runs in prompt-only mode and this script
-prints the limitation instead of a path.
+on Windows), then ``python3.12`` or ``python3`` on PATH, and on Windows also
+``python`` and the interpreter behind the ``py`` launcher. A candidate qualifies
+when it is 3.12 or newer. If none qualifies, the skill runs in prompt-only mode
+and this script prints the limitation instead of a path.
 
 This file itself runs on older interpreters and uses only the standard library,
 so it is safe to call before the venv exists.
@@ -46,16 +47,45 @@ def version_ok(path):
     return proc.returncode == 0
 
 
+def _py_launcher(launcher, check):
+    """Absolute interpreter behind the Windows ``py`` launcher, if 3.12 or newer.
+
+    The launcher itself cannot be returned: it takes its own version flags, so
+    callers could not run it as ``<python> -I script``. Ask it which executable
+    answers, then validate that path like any other candidate.
+    """
+    for version in ("-3.12", "-3"):
+        try:
+            proc = subprocess.run(
+                [launcher, version, "-c", "import sys; print(sys.executable)"],
+                capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        lines = os.fsdecode(proc.stdout).strip().splitlines()
+        if proc.returncode == 0 and lines and check(lines[-1].strip()):
+            return lines[-1].strip()
+    return ""
+
+
 def resolve(skill_dir, os_name=None, path_env=None, check=None):
     """The interpreter to use, with its source, or the prompt-only limitation."""
     check = check or version_ok
+    os_name = os_name or os.name
     for candidate in venv_candidates(skill_dir, os_name):
         if os.path.exists(candidate) and check(candidate):
             return {"python": candidate, "source": "venv", "limitation": ""}
-    for name in ("python3.12", "python3"):
+    names = (("python3.12", "python3", "python") if os_name == "nt"
+             else ("python3.12", "python3"))
+    for name in names:
         found = shutil.which(name, path=path_env)
         if found and check(found):
             return {"python": found, "source": "path", "limitation": ""}
+    if os_name == "nt":
+        launcher = shutil.which("py", path=path_env)
+        if launcher:
+            found = _py_launcher(launcher, check)
+            if found:
+                return {"python": found, "source": "path", "limitation": ""}
     return {"python": "", "source": "", "limitation": LIMITATION}
 
 
