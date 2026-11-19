@@ -1014,6 +1014,88 @@ def _keep_pdf(record, body, doi, out_dir):
     return record
 
 
+def landing_metadata(doi, mailto=""):
+    """Publisher landing-page metadata: Highwire tags, pages, volume, TOC link.
+
+    The publisher's own page is the last mile of the affirmative test: it states
+    the article's page range even when a Crossref volume listing is thin.
+    """
+    if not doi:
+        return {}
+    record = {"page": "", "title": "", "first_page": "", "last_page": "",
+              "volume": "", "issue": "", "journal": "", "toc_url": ""}
+    try:
+        status, final, headers, body = _request("https://doi.org/" + doi,
+                                                accept="text/html", timeout=40)
+    except Exception:  # noqa: BLE001
+        return record
+    record["page"] = final
+    if body[:4] == b"%PDF":
+        return record
+    html = body.decode("utf-8", "replace")
+
+    def meta(name):
+        match = re.search(r'<meta[^>]+name="' + name + r'"[^>]+content="([^"]*)"',
+                          html, re.I)
+        return match.group(1).strip() if match else ""
+
+    for key, tag in (("title", "citation_title"),
+                     ("first_page", "citation_firstpage"),
+                     ("last_page", "citation_lastpage"),
+                     ("volume", "citation_volume"),
+                     ("issue", "citation_issue"),
+                     ("journal", "citation_journal_title")):
+        record[key] = meta(tag)
+    toc = re.search(r'href="([^"]*(?:/toc/|/issue/|/loi/)[^"]*)"', html, re.I)
+    if toc:
+        record["toc_url"] = urllib.parse.urljoin(final, toc.group(1))
+    return record
+
+
+def toc_entries(url, limit=15):
+    """Titles and links from a publisher issue page, when it is readable."""
+    if not url:
+        return []
+    try:
+        status, final, headers, body = _request(url, accept="text/html", timeout=40)
+    except Exception:  # noqa: BLE001
+        return []
+    if body[:4] == b"%PDF":
+        return []
+    html = body.decode("utf-8", "replace")
+    entries = []
+    for href, text in re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html, re.I | re.S):
+        label = re.sub(r"<[^>]+>", " ", text)
+        label = re.sub(r"\s+", " ", label).strip()
+        if not (8 <= len(label) <= 200):
+            continue
+        if any(word in label.lower() for word in ("sign in", "log in", "cookies",
+                                                 "submit", "subscribe", "advert")):
+            continue
+        entries.append({"title": label, "url": urllib.parse.urljoin(final, href)})
+        if len(entries) >= limit:
+            break
+    return entries
+
+
+def extract_pdf(pdf_path, out_dir):
+    """Extract text from a retrieved PDF with the skill's own extractor."""
+    if not pdf_path or not os.path.exists(pdf_path):
+        return {}
+    name = os.path.splitext(os.path.basename(pdf_path))[0]
+    target = os.path.join(out_dir, "extracted", name)
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prepare_source.py")
+    if not os.path.exists(script):
+        return {"status": "unavailable", "reason": "prepare_source.py missing"}
+    try:
+        result = subprocess.run([sys.executable, "-I", script, "--pdf", pdf_path,
+                                 "--out", target], capture_output=True, timeout=900)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "failed", "reason": type(exc).__name__}
+    return {"status": "ok" if result.returncode == 0 else "failed", "dir": target,
+            "returncode": result.returncode}
+
+
 def read_paper_references(paper):
     """Ask the sibling extract_candidates.py for the paper's reference list."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -1044,6 +1126,14 @@ KIND_ROUTES = {
 def process(entry, out_dir, attempt, mailto, check_contents=False):
     parsed = parse_reference(entry)
     kind = entry_kind(parsed["entry"], parsed)
+    if kind == "article" and parsed["doi"]:
+        record["publisher"] = landing_metadata(parsed["doi"], mailto)
+        if record["publisher"].get("toc_url"):
+            record["publisher"]["toc"] = toc_entries(record["publisher"]["toc_url"])
+        if (not parsed.get("pages") and record["publisher"].get("first_page")
+                and record["publisher"].get("last_page")):
+            record["notes"].append("publisher pages: " + record["publisher"]["first_page"]
+                                   + "-" + record["publisher"]["last_page"])
     record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
               "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
     if kind == "film":

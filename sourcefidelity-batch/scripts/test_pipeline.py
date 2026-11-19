@@ -3164,5 +3164,35 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(seen["headers"], {"Authorization": "Bearer secret"})
 
 
+class PublisherPathTests(unittest.TestCase):
+    def test_landing_metadata_reads_the_highwire_tags(self):
+        html = ('<meta name="citation_title" content="A paper">'
+                '<meta name="citation_firstpage" content="1">'
+                '<meta name="citation_lastpage" content="27">'
+                '<meta name="citation_volume" content="17">'
+                '<a href="/toc/x">Issue</a>').encode()
+        with mock.patch.object(rd, "_request",
+                               return_value=(200, "https://x/y", {}, html)):
+            meta = rd.landing_metadata("10.1000/x")
+        self.assertEqual(meta["title"], "A paper")
+        self.assertEqual(meta["first_page"], "1")
+        self.assertEqual(meta["last_page"], "27")
+        self.assertEqual(meta["volume"], "17")
+        self.assertEqual(meta["toc_url"], "https://x/toc/x")
+
+    def test_toc_entries_skip_navigation_text(self):
+        html = ('<a href="/a">Sign in to your account</a>'
+                '<a href="/b">The role of actors and actresses in the success of films</a>'
+                '<a href="/c">About this journal</a>').encode()
+        with mock.patch.object(rd, "_request",
+                               return_value=(200, "https://x/y", {}, html)):
+            entries = rd.toc_entries("https://x/toc")
+        self.assertEqual(entries[0]["url"], "https://x/b")
+
+    def test_extract_pdf_skips_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(rd.extract_pdf(os.path.join(folder, "none.pdf"), folder), {})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
