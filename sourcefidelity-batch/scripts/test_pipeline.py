@@ -2809,9 +2809,10 @@ class ResolveDoisTests(unittest.TestCase):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "absent")
 
-    def test_unreachable_route_is_not_counted_as_absence(self):
-        # A host that fails here may answer on another machine: failures are
-        # recorded as failures, never as zeros.
+    def test_unreachable_primary_routes_do_not_establish_absence(self):
+        # A host that fails here may answer on another machine, and a
+        # secondary catalogue's zero is not proof of absence: the verdict must
+        # stay incomplete rather than name a real book nonexistent.
         parsed = rd.parse_reference(
             "Doe, J. (2019). A fabricated monograph. Invented Press.")
         failed = (None, "URLError")
@@ -2823,8 +2824,7 @@ class ResolveDoisTests(unittest.TestCase):
                 mock.patch.object(rd, "_probe_cinii", return_value=failed), \
                 mock.patch.object(rd, "_probe_openlibrary", return_value=(None, "URLError")):
             result = rd.book_affirmative(parsed)
-        self.assertEqual(result["status"], "absent_single_catalogue")
-        self.assertIn("Internet Archive", result["note"])
+        self.assertEqual(result["status"], "search_incomplete")
 
     def test_book_catalogue_flags_a_different_title(self):
         parsed = rd.parse_reference(

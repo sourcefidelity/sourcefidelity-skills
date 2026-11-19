@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -391,17 +392,42 @@ def cache_get(kind, key, ttl=CACHE_TTL_SECONDS):
     return entry.get("value")
 
 
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_lock_file(path):
+    """Cross-process lock beside the cache file; None when unavailable."""
+    try:
+        import fcntl
+        handle = open(path + ".lock", "a+")
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return handle
+    except (ImportError, OSError):
+        return None
+
+
 def cache_put(kind, key, value):
     path = cache_path()
     if not path:
         return
-    data = cache_load()
-    data.setdefault(kind, {})[key] = {"stored_at": time.time(), "value": value}
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    temporary = path + ".tmp"
-    with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump(data, handle, indent=1, ensure_ascii=False)
-    os.replace(temporary, path)
+    with _CACHE_LOCK:
+        lock = _cache_lock_file(path)
+        try:
+            data = cache_load()
+            data.setdefault(kind, {})[key] = {"stored_at": time.time(), "value": value}
+            temporary = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+            with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, indent=1, ensure_ascii=False)
+            os.replace(temporary, path)
+        finally:
+            if lock is not None:
+                try:
+                    import fcntl
+                    fcntl.flock(lock, fcntl.LOCK_UN)
+                    lock.close()
+                except OSError:
+                    pass
 
 
 FETCH_DIR = "_fetched"
@@ -1055,7 +1081,7 @@ def _catalogue_record(name, probe_name, parsed, key):
     reason = _host_unavailable(name)
     if reason:
         return None, f"host unavailable ({reason})"
-    cached = cache_get("catalogue", f"{key}|{name}") if key else None
+    cached = cache_get("catalogue", f"v2|{key}|{name}") if key else None
     if isinstance(cached, dict):
         return cached, "cache"
     record, detail = globals()[probe_name](parsed)
@@ -1064,7 +1090,7 @@ def _catalogue_record(name, probe_name, parsed, key):
             cache_put("host", name, {"reason": detail})
         return None, detail
     if key:
-        cache_put("catalogue", f"{key}|{name}", record)
+        cache_put("catalogue", f"v2|{key}|{name}", record)
     return record, ""
 
 
@@ -1081,13 +1107,13 @@ def book_affirmative(parsed):
               "first_title": "", "score": 0.0}
     key = identity_key(parsed)
     if key:
-        cached = cache_get("catalogue", f"{key}|verdict")
+        cached = cache_get("catalogue", f"v2|{key}|verdict")
         if isinstance(cached, dict) and cached.get("status"):
             cached = dict(cached)
             cached["note"] = (cached.get("note") or "") + " (cached)"
             return cached
 
-    zeros, held, mismatch, answered = 0, None, 0, 0
+    primary_zeros, zeros, held, mismatch, answered = 0, 0, None, 0, 0
     tiers = ((True, BOOK_PRIMARY_ROUTES), (False, BOOK_SECONDARY_ROUTES),
              (False, BOOK_FALLBACK_ROUTES))
     for strong, routes_in_tier in tiers:
@@ -1104,14 +1130,16 @@ def book_affirmative(parsed):
             routes.append(entry)
             if record["count"] == 0:
                 zeros += 1
-                if zeros >= 2:
-                    break
+                if strong:
+                    primary_zeros += 1
+                    if primary_zeros >= 2:
+                        break
             elif record.get("score", 0.0) >= 0.4 or name in ("DNB", "Internet Archive"):
                 held = entry
                 break
             else:
                 mismatch += 1
-        if held is not None or zeros >= 2:
+        if held is not None or primary_zeros >= 2:
             break
 
     if held is not None:
@@ -1119,12 +1147,14 @@ def book_affirmative(parsed):
                        "note": f"held by {held['catalogue']} ({held['count']} record(s))",
                        "first_title": held.get("detail", ""),
                        "score": held.get("score", 0.0)})
-    elif zeros >= 2:
-        zero_names = [route["catalogue"] for route in routes if route["count"] == 0]
+    elif primary_zeros >= 2:
+        zero_names = [route["catalogue"] for route in routes
+                      if route["count"] == 0 and route.get("strong")]
         result.update({"status": "absent",
                        "note": "no record in " + " and ".join(zero_names)})
-    elif zeros == 1:
-        zero_name = [route["catalogue"] for route in routes if route["count"] == 0][0]
+    elif primary_zeros == 1:
+        zero_name = [route["catalogue"] for route in routes
+                     if route["count"] == 0 and route.get("strong")][0]
         result.update({"status": "absent_single_catalogue",
                        "note": (f"no record in {zero_name}; fewer than two strong "
                                  f"catalogues answered, so absence is not established")})
@@ -1136,7 +1166,7 @@ def book_affirmative(parsed):
                                 f"record(s) but none matches this title; nearest: "
                                 f"{(first.get('detail') or '')[:90]}")})
     if key:
-        cache_put("catalogue", f"{key}|verdict", result)
+        cache_put("catalogue", f"v2|{key}|verdict", result)
     return result
 
 
