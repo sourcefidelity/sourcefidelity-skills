@@ -23,6 +23,19 @@ import json
 import os
 import sys
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 REQUIRED = ["schema_version", "paper_id", "word_counts", "occurrences",
             "references", "works_discussed", "uncited_passages",
             "category_a_findings", "category_b",

@@ -30,6 +30,19 @@ import batch_paths  # noqa: E402
 import review_metrics  # noqa: E402
 
 
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
+
 def load(path, default=None):
     try:
         return json.load(open(path, encoding="utf-8"))

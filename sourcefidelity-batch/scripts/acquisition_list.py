@@ -26,6 +26,19 @@ import re
 import sys
 from collections import defaultdict
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 DOI_RE = re.compile(r"10\.\d{4,9}/[^\s,;\)\]\}]+")
 ISBN_RE = re.compile(r"\b(?:97[89]\d{10}|\d{9}[\dXx])\b")
 URL_RE = re.compile(r"https?://[^\s\)\]\}>\"']+")

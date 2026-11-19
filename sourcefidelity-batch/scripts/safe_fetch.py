@@ -27,6 +27,19 @@ import urllib.parse
 import urllib.error
 import urllib.request
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 # Local proxy clients (Clash and similar) answer DNS with addresses in this
 # IANA benchmark range. It is not a private network, so it is not an SSRF path.
 PROXY_FAKE_IP = ipaddress.ip_network("198.18.0.0/15")

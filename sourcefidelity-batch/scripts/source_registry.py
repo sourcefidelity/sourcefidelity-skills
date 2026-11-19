@@ -43,6 +43,19 @@ sys.path.insert(0, REVIEW_SCRIPTS)
 import acquisition_list  # noqa: E402
 import detect_structure  # noqa: E402
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 YEAR_RE = re.compile(r"\b((?:19|20)\d{2})[a-z]?\b")
 URL_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 STOP = {"the", "and", "for", "with", "from", "that", "this", "into", "media", "new", "its"}

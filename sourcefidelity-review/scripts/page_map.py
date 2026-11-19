@@ -19,6 +19,19 @@ import json
 import re
 import sys
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 ARABIC_RE = re.compile(r"^\s*(\d{1,4})\s*$")
 ARABIC_LEAD_RE = re.compile(r"^\s*(\d{1,4})\s+\S")
 ARABIC_TRAIL_RE = re.compile(r"\S\s+(\d{1,4})\s*$")

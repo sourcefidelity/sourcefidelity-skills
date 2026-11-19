@@ -25,6 +25,19 @@ import sys
 
 from pypdf import PdfReader
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 CHAPTER_NUM_RE = re.compile(r"^\s*(\d{1,3})[\.\)]?\s+([A-Z][^\n]{6,180})$")
 EDITOR_MARKERS = (
     "copyright in the collection",

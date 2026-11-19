@@ -42,6 +42,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
 import enrich_registry as er  # noqa: E402
 import source_registry as sr  # noqa: E402
 
+
+# Windows pipes stdout through the ANSI code page, which cannot encode CJK
+# paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
+def _utf8_streams():
+    """Reconfigure stdout/stderr to UTF-8 where the stream supports it."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
+_utf8_streams()
+
+
 ACADEMIC = {"article", "monograph", "chapter_authored_book",
             "chapter_edited_collection", "chapter_unknown_authorship"}
 CACHE_TTL = er.CACHE_TTL
