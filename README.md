@@ -79,7 +79,7 @@ Every skill works with prompts alone. Without Python you lose word counts, page 
 
 ## Resolving cited works
 
-`python -I scripts/resolve_dois.py --paper PAPER --out DIR` reads the paper's reference list, resolves each entry to a DOI or a book record, verifies author and year against that record, and then attempts the DOI resolver. A PDF the publisher serves publicly is kept in DIR; everything else is recorded as an identity outcome or an access limitation. `--refs FILE` and repeated `--entry TEXT` accept references directly, and `--no-attempt` resolves identity without retrieval. Two files are written: `accession.json` for the full record and `accession.md` for the summary table.
+`python -I scripts/resolve_dois.py --paper PAPER --out DIR` reads the paper's reference list, resolves each entry to a DOI or a book record, verifies author and year against that record, and then attempts the DOI resolver. A PDF the publisher serves publicly is kept in DIR; everything else is recorded as an identity outcome or an access limitation. `--refs FILE` and repeated `--entry TEXT` accept references directly, `--no-attempt` resolves identity without retrieval, and `--check-contents` adds the affirmative test for articles: it lists the cited volume's records and reports which article occupies the cited pages, treating a cited range outside the issue's own pagination as evidence the cited article is not there. Two files are written: `accession.json` for the full record and `accession.md` for the summary table.
 
 ## Data and privacy
 

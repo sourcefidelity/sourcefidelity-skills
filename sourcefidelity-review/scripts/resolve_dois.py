@@ -362,7 +362,143 @@ def openlibrary_search(parsed):
     return candidates
 
 
-def resolve_copy(doi, out_dir):
+def journal_issn(container):
+    """ISSN for a journal name, or (None, reason)."""
+    data = _json("https://api.crossref.org/journals?rows=3&query="
+                 + urllib.parse.quote(container))
+    best, score = None, 0.0
+    for item in data.get("message", {}).get("items", []):
+        candidate = title_score(container, item.get("title") or "")
+        if candidate > score:
+            best, score = item, candidate
+    if not best or score < 0.6:
+        return None, f"no journal record matched ({score})"
+    issns = best.get("ISSN") or []
+    return (issns[0] if issns else None), f"issn {issns[0] if issns else 'missing'}"
+
+
+def volume_listing(issn, volume):
+    """Crossref's article records for one volume of a journal."""
+    url = ("https://api.crossref.org/works?rows=1000&sort=published&order=asc"
+           "&select=DOI,title,volume,issue,page,author,type&filter=issn:"
+           + urllib.parse.quote(issn))
+    data = _json(url)
+    items = []
+    for item in data.get("message", {}).get("items", []):
+        if str(item.get("volume") or "").strip() != str(volume).strip():
+            continue
+        items.append({"doi": item.get("DOI"),
+                      "title": (item.get("title") or [""])[0],
+                      "page": item.get("page") or "",
+                      "issue": item.get("issue") or "",
+                      "authors": [author.get("family") for author in (item.get("author") or [])]})
+    return items
+
+
+def page_span(value):
+    """(first, last) page numbers from '123-130', 'e123', or '123'."""
+    text = (value or "").strip()
+    numbers = re.findall(r"\d+", text.replace("\u2013", "-"))
+    if not numbers:
+        return None
+    if len(numbers) == 1:
+        start = int(numbers[0])
+        return (start, start)
+    return (int(numbers[0]), int(numbers[1]))
+
+
+def occupancy(listing, span):
+    """Listed articles whose pages overlap the span."""
+    hits = []
+    for item in listing:
+        other = page_span(item.get("page"))
+        if not other:
+            continue
+        if other[0] <= span[1] and other[1] >= span[0]:
+            hits.append(item)
+    return hits
+
+
+def contents_check(parsed):
+    """The affirmative test: what does the cited volume actually contain?
+
+    The protocol's decisive route for a fabricated article is the journal's own
+    contents: if the volume is listed and nothing occupies the cited pages, the
+    entry cannot describe an article in that volume. Completeness is stated, not
+    assumed -- a thin listing yields `sparse`, never absence.
+    """
+    container, volume = parsed.get("container") or "", parsed.get("volume") or ""
+    span = page_span(parsed.get("pages"))
+    result = {"status": "not_applicable", "issn": "", "volume": volume,
+              "listed": 0, "occupants": [], "note": ""}
+    if not container or not volume:
+        result["note"] = "needs a journal name and a volume"
+        return result
+    try:
+        issn, detail = journal_issn(container)
+    except Exception as exc:  # noqa: BLE001
+        result.update({"status": "search_incomplete",
+                       "note": f"journal lookup failed: {type(exc).__name__}"})
+        return result
+    if not issn:
+        result.update({"status": "search_incomplete", "note": detail})
+        return result
+    result["issn"] = issn
+    try:
+        listing = volume_listing(issn, volume)
+    except Exception as exc:  # noqa: BLE001
+        result.update({"status": "search_incomplete",
+                       "note": f"volume listing failed: {type(exc).__name__}"})
+        return result
+    result["listed"] = len(listing)
+    if not listing:
+        result.update({"status": "search_incomplete",
+                       "note": "Crossref returned no records for that volume"})
+        return result
+    if not span:
+        result.update({"status": "sparse", "note": "the entry gives no usable page range"})
+        return result
+    hits = occupancy(listing, span)
+    if hits:
+        best = max(hits, key=lambda item: title_score(parsed["title"], item.get("title") or ""))
+        result.update({"status": "occupied",
+                       "occupants": [{"doi": item.get("doi"), "title": item.get("title"),
+                                      "page": item.get("page"),
+                                      "score": title_score(parsed["title"], item.get("title") or "")}
+                                     for item in hits],
+                       "note": f"{len(hits)} listed article(s) occupy pp. {span[0]}-{span[1]}"})
+        result["best_score"] = title_score(parsed["title"], best.get("title") or "")
+        return result
+
+    # No occupant. A single issue's pagination is bounded, so a cited range
+    # outside the issue's own extent cannot be an article in it; a range inside
+    # a gap is only evidence, because not every page worth of text is indexed.
+    issue = (parsed.get("issue") or "").strip()
+    scope = [item for item in listing if issue and str(item.get("issue")) == issue] or listing
+    result["scope"] = f"issue {issue}" if issue and scope is not listing else "volume"
+    spans = [page_span(item.get("page")) for item in scope]
+    spans = [item for item in spans if item]
+    covered = (min(s[0] for s in spans), max(s[1] for s in spans)) if spans else None
+    result["covered"] = covered
+    result["listed"] = len(scope)
+    if not covered:
+        result.update({"status": "sparse", "note": "no usable page data in the listing"})
+        return result
+    if span[0] > covered[1] or span[1] < covered[0]:
+        result.update({"status": "vacant_out_of_extent",
+                       "note": (f"the {result['scope']} lists {len(scope)} articles spanning "
+                                f"pp. {covered[0]}-{covered[1]}; pp. {span[0]}-{span[1]} lie "
+                                f"outside that extent")})
+        return result
+    if covered[0] <= span[0] and span[1] <= covered[1]:
+        result.update({"status": "vacant_gap",
+                       "note": (f"no listed article occupies pp. {span[0]}-{span[1]}; the "
+                                f"{result['scope']} lists {len(scope)} articles spanning "
+                                f"pp. {covered[0]}-{covered[1]}")})
+        return result
+    result.update({"status": "sparse",
+                   "note": f"{len(scope)} listed article(s); coverage is incomplete"})
+    return result
     """Call the DOI resolver and keep a PDF only when the publisher serves one."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
@@ -459,7 +595,7 @@ KIND_ROUTES = {
 }
 
 
-def process(entry, out_dir, attempt, mailto):
+def process(entry, out_dir, attempt, mailto, check_contents=False):
     parsed = parse_reference(entry)
     kind = entry_kind(parsed["entry"], parsed)
     record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
@@ -553,6 +689,33 @@ def process(entry, out_dir, attempt, mailto):
         else:
             record["identity"] = "unlocated_after_search"
 
+    if check_contents and kind == "article":
+        contents = contents_check(parsed)
+        record["contents"] = contents
+        if contents["status"] == "occupied":
+            record["notes"].append("volume listing: " + contents["note"])
+            occupants = contents.get("occupants") or []
+            best = max(occupants, key=lambda item: item.get("score", 0)) if occupants else {}
+            occupant_score = contents.get("best_score", 0.0)
+            if occupant_score >= 0.6 and record["identity"] not in (
+                    "confirmed", "same_work_other_edition"):
+                record["identity"] = "confirmed"
+                if not record["doi"] and best.get("doi"):
+                    record["doi"] = best["doi"]
+            elif occupant_score < 0.3:
+                record["identity"] = "title_conflict_at_coordinates"
+                record["notes"].append("the occupant's title differs: "
+                                       + (best.get("title") or "")[:140])
+        elif contents["status"] == "vacant_out_of_extent" and record["identity"] not in (
+                "confirmed", "same_work_other_edition"):
+            record["identity"] = "nonexistent_as_cited"
+            record["notes"].append("affirmative absence: " + contents["note"])
+        elif contents["status"] == "vacant_gap":
+            record["notes"].append("pages unoccupied in the listing: " + contents["note"])
+        else:
+            record["notes"].append("contents check: "
+                                   + (contents.get("note") or contents["status"]))
+
     if attempt and record["doi"] and record["identity"] in (
             "confirmed", "same_work_other_edition", "bibliographic_conflict"):
         try:
@@ -564,8 +727,8 @@ def process(entry, out_dir, attempt, mailto):
 
 def markdown(records, source):
     lines = [f"# Accession record — {source}", "", f"Checked: {now()}", "",
-             "| # | Entry (short) | Identity | DOI | Copy |",
-             "| --- | --- | --- | --- | --- |"]
+             "| # | Entry (short) | Identity | DOI | Copy | Contents |",
+             "| --- | --- | --- | --- | --- | --- |"]
     for number, record in enumerate(records, start=1):
         short = (record["parsed"]["authors"] or record["parsed"]["title"])[:42].replace("|", "/")
         copy = record.get("copy") or {}
@@ -575,8 +738,20 @@ def markdown(records, source):
             got = f"HTTP {copy['status']}, {copy.get('content_type') or 'no PDF'}"
         else:
             got = "not attempted"
+        contents = record.get("contents") or {}
+        status = contents.get("status", "")
+        if status == "occupied":
+            occupants = contents.get("occupants") or [{}]
+            best = max(occupants, key=lambda item: item.get("score", 0))
+            shown = f"pp. {best.get('page') or '?'}: {(best.get('title') or '')[:36]}"
+        elif status == "vacant":
+            shown = "pages vacant"
+        elif status:
+            shown = status
+        else:
+            shown = "—"
         lines.append(f"| {number} | {short} | {record['identity'] or '-'} | "
-                     f"{record.get('doi') or '-'} | {got} |")
+                     f"{record.get('doi') or '-'} | {got} | {shown} |")
     counts = {}
     for record in records:
         counts[record["identity"]] = counts.get(record["identity"], 0) + 1
@@ -591,6 +766,8 @@ def main(argv=None):
     parser.add_argument("--paper", default="", help="a DOCX/PDF whose references to resolve")
     parser.add_argument("--out", default="", help="output directory")
     parser.add_argument("--no-attempt", action="store_true", help="resolve identity only")
+    parser.add_argument("--check-contents", action="store_true",
+                        help="for articles, list what occupies the cited pages in that volume")
     parser.add_argument("--limit", type=int, default=0, help="stop after N references")
     parser.add_argument("--mailto", default="", help="contact address for polite Crossref use")
     args = parser.parse_args(argv)
@@ -614,7 +791,8 @@ def main(argv=None):
     os.makedirs(out_dir, exist_ok=True)
     records = []
     for entry in entries:
-        records.append(process(entry, out_dir, not args.no_attempt, args.mailto))
+        records.append(process(entry, out_dir, not args.no_attempt, args.mailto,
+                               check_contents=args.check_contents))
         time.sleep(1.0)
 
     payload = {"source": source, "checked_at": now(), "records": records}

@@ -2733,5 +2733,44 @@ class ResolveDoisTests(unittest.TestCase):
         self.assertEqual(verdict, "bibliographic_conflict")
 
 
+    def test_page_span_and_occupancy(self):
+        self.assertEqual(rd.page_span("1-27"), (1, 27))
+        self.assertEqual(rd.page_span("e123"), (123, 123))
+        self.assertEqual(rd.page_span("223\u2013235"), (223, 235))
+        listing = [{"page": "1-27", "title": "A"}, {"page": "28-40", "title": "B"}]
+        self.assertEqual([item["title"] for item in rd.occupancy(listing, (10, 20))], ["A"])
+        self.assertEqual(rd.occupancy(listing, (41, 50)), [])
+
+    def test_contents_check_needs_a_journal_and_volume(self):
+        parsed = rd.parse_reference(
+            "Bret, D. (2014). Jean Harlow: tarnished angel. Aurum.")
+        result = rd.contents_check(parsed)
+        self.assertEqual(result["status"], "not_applicable")
+
+    def test_contents_check_treats_pages_outside_the_issue_as_absent(self):
+        parsed = rd.parse_reference(
+            "Wallace, W. T. (1993). Stardom and the studio accountants. "
+            "Journal of cultural economics, 17(1), 500-520.")
+        listing = [{"page": "1-27", "title": "A", "issue": "1", "doi": "10.1/a"},
+                   {"page": "29-61", "title": "B", "issue": "1", "doi": "10.1/b"}]
+        with mock.patch.object(rd, "journal_issn", return_value=("1234-5678", "issn")), \
+                mock.patch.object(rd, "volume_listing", return_value=listing):
+            result = rd.contents_check(parsed)
+        self.assertEqual(result["status"], "vacant_out_of_extent")
+        self.assertEqual(result["covered"], (1, 61))
+
+    def test_contents_check_names_the_occupant_of_the_cited_pages(self):
+        parsed = rd.parse_reference(
+            "Wallace, W. T. (1993). Stardom and the studio accountants. "
+            "Journal of cultural economics, 17(1), 1-27.")
+        listing = [{"page": "1-27", "title": "The role of actors and actresses",
+                    "issue": "1", "doi": "10.1/x"}]
+        with mock.patch.object(rd, "journal_issn", return_value=("1234-5678", "issn")), \
+                mock.patch.object(rd, "volume_listing", return_value=listing):
+            result = rd.contents_check(parsed)
+        self.assertEqual(result["status"], "occupied")
+        self.assertEqual(result["occupants"][0]["doi"], "10.1/x")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
