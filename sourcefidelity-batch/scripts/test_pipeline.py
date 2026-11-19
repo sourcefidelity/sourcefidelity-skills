@@ -58,6 +58,7 @@ from retrieval import providers  # noqa: E402
 import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
+import hyperlink_audit as ha  # noqa: E402
 
 
 def page(pdf, printed, text):
@@ -2837,6 +2838,75 @@ class ResolveDoisTests(unittest.TestCase):
             count, detail = rd.sru_probe("https://example.invalid/sru", "q")
         self.assertIsNone(count)
         self.assertIn("no record count", detail)
+
+
+class HyperlinkAuditTests(unittest.TestCase):
+    def test_link_classes_separate_absence_from_permanence(self):
+        self.assertEqual(ha.classify_link("https://pan.baidu.com/s/1abc?pwd=1234"),
+                         "non-permanent")
+        self.assertEqual(ha.classify_link("https://lantern.mediahist.org/catalog/x"),
+                         "record-only")
+        self.assertEqual(ha.classify_link("https://doi.org/10.1007/bf00820765"), "doi")
+        self.assertEqual(ha.classify_link("https://www.routledge.com/book/1"), "permanent")
+        self.assertEqual(ha.classify_link(""), "absent")
+
+    def test_corporate_authors_start_an_entry(self):
+        self.assertTrue(ha.looks_like_entry(
+            "Library of Congress, MBRS, & Moving Image Section. (1931). Dressed in Dignity."))
+        self.assertTrue(ha.looks_like_entry("Dyer, R. (2004). Heavenly bodies."))
+        self.assertFalse(ha.looks_like_entry("see the appendix for the full list"))
+
+    def test_reference_entries_attach_a_url_only_line(self):
+        paragraphs = ["Reference:", "Addison, H. (2005). Transcending time.",
+                      "https://pan.baidu.com/s/1abc?pwd=1234",
+                      "Brown, C. (Director). (1936). Wife vs. Secretary [Film].",
+                      "Library of Congress. (1931). Dressed in Dignity. "
+                      "https://lantern.mediahist.org/catalog/x"]
+        entries = ha.reference_entries(paragraphs)
+        self.assertEqual(len(entries), 3)
+        self.assertIn("pan.baidu.com", entries[0]["text"])
+        self.assertNotIn("pan.baidu.com", entries[1]["text"])
+        self.assertIn("lantern.mediahist.org", entries[2]["text"])
+
+    def test_scope_lines_separate_the_counts(self):
+        report = {"rows": [
+            {"id": "R1", "link_class": "absent", "fetch": None},
+            {"id": "R2", "link_class": "non-permanent", "fetch": None},
+            {"id": "R3", "link_class": "record-only",
+             "fetch": {"state": "unreachable", "status": None, "detail": "reset"}},
+            {"id": "R4", "link_class": "permanent",
+             "fetch": {"state": "ok", "status": 200, "detail": "text/html"}},
+        ]}
+        lines = "\n".join(ha.scope_lines(report))
+        self.assertIn("Hyperlinks absent: 1", lines)
+        self.assertIn("not permanent: 1", lines)
+        self.assertIn("catalogue or record page: 1", lines)
+        self.assertIn("unreachable 1", lines)
+        self.assertIn("Hyperlink findings (HL): 2", lines)
+
+    def test_fetch_state_names_the_failure_kind(self):
+        with mock.patch.object(ha.urllib.request, "urlopen",
+                               side_effect=urllib.error.HTTPError("u", 404, "no", {}, None)):
+            self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "dead")
+        with mock.patch.object(ha.urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError("timed out")):
+            self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "timeout")
+        with mock.patch.object(ha.urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError(
+                                   "certificate verify failed: CERTIFICATE_VERIFY_FAILED")):
+            self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "tls")
+
+    def test_login_page_is_not_counted_as_working(self):
+        response = mock.MagicMock()
+        response.status = 200
+        response.geturl.return_value = "https://example.org/login"
+        response.headers = {"Content-Type": "text/html"}
+        response.read.return_value = b"<html>please sign in</html>"
+        response.__enter__ = lambda self: self
+        response.__exit__ = lambda self, *args: False
+        with mock.patch.object(ha.urllib.request, "urlopen", return_value=response):
+            state = ha.fetch_state("https://example.org/x")
+        self.assertEqual(state["state"], "login-page")
 
 
 if __name__ == "__main__":
