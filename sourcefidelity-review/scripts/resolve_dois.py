@@ -1078,12 +1078,41 @@ def toc_entries(url, limit=15):
     return entries
 
 
+def extraction_root(out_dir):
+    """Shared extraction cache for a batch, per-paper otherwise.
+
+    In a batch the resolver writes under `ROOT/_work/<PID>/`, so the cache is
+    `ROOT/_work/_extracted/`: one entry per unique PDF, reused by every paper
+    that retrieved the same copy.
+    """
+    parts = os.path.abspath(out_dir).split(os.sep)
+    if "_work" in parts:
+        # Use the nearest `_work` ancestor: a workspace path may contain one
+        # higher up, and that must not collapse the cache into it.
+        index = len(parts) - 1 - parts[::-1].index("_work")
+        return os.sep.join(parts[:index + 1] + ["_extracted"])
+    return os.path.join(out_dir, "extracted")
+
+
 def extract_pdf(pdf_path, out_dir):
-    """Extract text from a retrieved PDF with the skill's own extractor."""
+    """Extract text from a retrieved PDF, once per unique content.
+
+    The cache key is the PDF's content hash, so two papers that fetched the same
+    article share one extraction. A hit is reported as `cached`, never redone.
+    """
     if not pdf_path or not os.path.exists(pdf_path):
         return {}
-    name = os.path.splitext(os.path.basename(pdf_path))[0]
-    target = os.path.join(out_dir, "extracted", name)
+    digest = hashlib.sha256()
+    with open(pdf_path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    target = os.path.join(extraction_root(out_dir), digest.hexdigest()[:16])
+    if os.path.exists(os.path.join(target, "meta.json")):
+        return {"status": "cached", "dir": target}
+    return _run_extraction(pdf_path, target)
+
+
+def _run_extraction(pdf_path, target):
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prepare_source.py")
     if not os.path.exists(script):
         return {"status": "unavailable", "reason": "prepare_source.py missing"}

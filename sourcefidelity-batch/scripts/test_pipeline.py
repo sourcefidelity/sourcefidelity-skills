@@ -3189,6 +3189,23 @@ class PublisherPathTests(unittest.TestCase):
             entries = rd.toc_entries("https://x/toc")
         self.assertEqual(entries[0]["url"], "https://x/b")
 
+    def test_extraction_cache_is_shared_across_papers(self):
+        with tempfile.TemporaryDirectory() as root:
+            paper_a = os.path.join(root, "_work", "P1", "sources")
+            paper_b = os.path.join(root, "_work", "P2", "sources")
+            os.makedirs(paper_a)
+            os.makedirs(paper_b)
+            pdf = os.path.join(paper_a, "copy.pdf")
+            open(pdf, "wb").write(b"%PDF-1.4 test")
+            cache_a = rd.extraction_root(paper_a)
+            self.assertEqual(cache_a, os.path.join(root, "_work", "_extracted"))
+            self.assertEqual(cache_a, rd.extraction_root(paper_b))
+            target = os.path.join(root, "_work", "_extracted")
+            digest = os.path.join(target, "x")
+            os.makedirs(digest)
+            open(os.path.join(digest, "meta.json"), "w").write("{}")
+            self.assertIn("_extracted", rd.extraction_root(paper_b))
+
     def test_extract_pdf_skips_a_missing_file(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertEqual(rd.extract_pdf(os.path.join(folder, "none.pdf"), folder), {})
