@@ -3222,6 +3222,25 @@ class SourceCacheTests(unittest.TestCase):
         rd.CACHE_ROOT = self.old
         self._tmp.cleanup()
 
+    def test_identity_cache_skips_provider_routes(self):
+        entry = ("Wallace, W. T. (1993). The role of actors in films. "
+                 "https://doi.org/10.1000/x")
+        rd.cache_put("identity", "doi:10.1000/x",
+                     {"identity": "confirmed", "doi": "10.1000/x",
+                      "record_title": "Cached title"})
+        with mock.patch.object(rd, "crossref_by_doi_cached",
+                               side_effect=AssertionError("network used")), \
+                mock.patch.object(rd, "crossref_search",
+                                  side_effect=AssertionError("network used")):
+            record = rd.process(entry, self.root, False, "", check_contents=False)
+        self.assertEqual(record["identity"], "confirmed")
+        self.assertTrue(any("cache hit" in note for note in record["notes"]))
+
+    def test_default_cache_root_is_the_batch_work_directory(self):
+        batch = os.path.join(self.root, "batch")
+        out = os.path.join(batch, "_work", "P1", "sources")
+        self.assertEqual(rd.default_cache_root(out), os.path.join(batch, "_work"))
+
     def test_a_fetched_copy_is_reused_without_a_request(self):
         pdf = os.path.join(self.root, "copy.pdf")
         with open(pdf, "wb") as handle:

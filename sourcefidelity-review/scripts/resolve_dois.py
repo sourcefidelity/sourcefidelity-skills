@@ -396,6 +396,25 @@ def cache_put(kind, key, value):
 FETCH_DIR = "_fetched"
 
 
+def identity_key(parsed):
+    """One cache key per cited work: DOI, else title plus surname."""
+    doi = (parsed.get("doi") or "").strip().lower()
+    if doi:
+        return "doi:" + doi
+    title = (parsed.get("title") or "").strip().lower()
+    surname = (parsed.get("surname") or "").strip().lower()
+    return ("work:" + title + "|" + surname) if title else ""
+
+
+def default_cache_root(out_dir):
+    """The nearest `_work` ancestor, so a batch shares one cache by default."""
+    parts = os.path.abspath(out_dir).split(os.sep)
+    if "_work" in parts:
+        index = len(parts) - 1 - parts[::-1].index("_work")
+        return os.sep.join(parts[:index + 1])
+    return ""
+
+
 def _cache_fetch_pdf(pdf_path):
     """Copy a saved PDF into the cache, so the entry never dangles."""
     if not CACHE_ROOT or not pdf_path or not os.path.exists(pdf_path):
@@ -1320,48 +1339,60 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
         record["notes"].append("no title found in the entry")
         return record
 
+    _identity_key = identity_key(parsed)
+    if _identity_key:
+        _cached_identity = cache_get("identity", _identity_key)
+        if _cached_identity and _cached_identity.get("identity"):
+            record["identity"] = _cached_identity["identity"]
+            record["doi"] = _cached_identity.get("doi") or record["doi"]
+            record["record_title"] = _cached_identity.get("record_title") or ""
+            record["notes"].append("identity: cache hit")
     routes = KIND_ROUTES[kind]
     ran, failed, seen = [], [], []
+    if not record["identity"]:
+        routes = KIND_ROUTES[kind]
+        ran, failed, seen = [], [], []
 
-    def consider(candidate):
-        verdict, evidence = match_record(parsed, candidate, kind)
-        seen.append((candidate, verdict, evidence))
+        def consider(candidate):
+            verdict, evidence = match_record(parsed, candidate, kind)
+            seen.append((candidate, verdict, evidence))
 
-    if parsed["doi"]:
-        try:
-            meta = crossref_by_doi_cached(parsed["doi"])
-            ran.append("crossref(doi)")
-            verdict, evidence = match_record(parsed, meta, kind)
-            if verdict in ("possible_match", "unlocated_after_search"):
-                # A supplied DOI is decisive for identity; a title difference is
-                # an entry defect, not a failed match.
-                verdict = ("confirmed" if evidence["title"] >= 0.5
-                           else "bibliographic_conflict")
-            seen.append((meta, verdict, evidence))
-        except Exception as exc:  # noqa: BLE001
-            failed.append(f"crossref(doi) {type(exc).__name__}")
-    else:
-        if "crossref" in routes:
+        if parsed["doi"]:
             try:
-                for candidate in crossref_search(parsed, mailto)[:3]:
-                    consider(candidate)
-                ran.append("crossref")
+                meta = crossref_by_doi_cached(parsed["doi"])
+                ran.append("crossref(doi)")
+                verdict, evidence = match_record(parsed, meta, kind)
+                if verdict in ("possible_match", "unlocated_after_search"):
+                    # A supplied DOI is decisive for identity; a title difference is
+                    # an entry defect, not a failed match.
+                    verdict = ("confirmed" if evidence["title"] >= 0.5
+                               else "bibliographic_conflict")
+                seen.append((meta, verdict, evidence))
             except Exception as exc:  # noqa: BLE001
-                failed.append(f"crossref {type(exc).__name__}")
-        if "openalex" in routes:
-            try:
-                for candidate in openalex_search(parsed)[:3]:
-                    consider(candidate)
-                ran.append("openalex")
-            except Exception as exc:  # noqa: BLE001
-                failed.append(f"openalex {type(exc).__name__}")
-        if "openlibrary" in routes:
-            try:
-                for candidate in openlibrary_search(parsed)[:2]:
-                    consider(candidate)
-                ran.append("openlibrary")
-            except Exception as exc:  # noqa: BLE001
-                failed.append(f"openlibrary {type(exc).__name__}")
+                failed.append(f"crossref(doi) {type(exc).__name__}")
+        else:
+            if "crossref" in routes:
+                try:
+                    for candidate in crossref_search(parsed, mailto)[:3]:
+                        consider(candidate)
+                    ran.append("crossref")
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"crossref {type(exc).__name__}")
+            if "openalex" in routes:
+                try:
+                    for candidate in openalex_search(parsed)[:3]:
+                        consider(candidate)
+                    ran.append("openalex")
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"openalex {type(exc).__name__}")
+            if "openlibrary" in routes:
+                try:
+                    for candidate in openlibrary_search(parsed)[:2]:
+                        consider(candidate)
+                    ran.append("openlibrary")
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"openlibrary {type(exc).__name__}")
+
 
     order = ("confirmed", "same_work_other_edition", "bibliographic_conflict",
              "title_conflict_at_coordinates", "possible_match", "unlocated_after_search")
@@ -1399,6 +1430,11 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["identity"] = "not_indexed"
         else:
             record["identity"] = "unlocated_after_search"
+
+    if _identity_key and record["identity"]:
+        cache_put("identity", _identity_key, {
+            "identity": record["identity"], "doi": record["doi"],
+            "record_title": record.get("record_title", "")})
 
     if check_contents and kind == "article":
         contents = contents_check_cached(parsed)
@@ -1502,7 +1538,9 @@ def main(argv=None):
     parser.add_argument("--mailto", default="", help="contact address for polite Crossref use")
     args = parser.parse_args(argv)
     global CACHE_ROOT
-    CACHE_ROOT = args.cache_root or ""
+    CACHE_ROOT = (args.cache_root
+                  or os.environ.get("SOURCEFIDELITY_CACHE_ROOT", "")
+                  or default_cache_root(args.out))
     if CACHE_ROOT:
         cache_prune()
     args.mailto = args.mailto or email_for_requests()
