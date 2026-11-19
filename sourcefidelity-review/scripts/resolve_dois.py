@@ -755,11 +755,12 @@ def crossref_by_doi(doi):
 def crossref_search(parsed, mailto=""):
     params = {"rows": "3",
               "select": "DOI,title,container-title,publisher,type,author,issued,"
-                        "volume,issue,page,edition-number",
+                        "volume,issue,page",
               "query.bibliographic": f"{parsed['title']} {parsed['authors']} {parsed['year']}"}
     if mailto:
         params["mailto"] = mailto
-    data = _json("https://api.crossref.org/works?" + urllib.parse.urlencode(params))
+    data = _json("https://api.crossref.org/works?" + urllib.parse.urlencode(params),
+                 timeout=10)
     candidates = []
     for item in data["message"]["items"]:
         title = (item.get("title") or [""])[0]
@@ -779,7 +780,7 @@ def crossref_search(parsed, mailto=""):
 def openalex_search(parsed):
     """Second identity route: catches records Crossref indexes poorly."""
     data = _json("https://api.openalex.org/works?per-page=3&search="
-                 + urllib.parse.quote(parsed["title"]))
+                 + urllib.parse.quote(parsed["title"]), timeout=10)
     candidates = []
     for item in data.get("results", []):
         title = item.get("title") or ""

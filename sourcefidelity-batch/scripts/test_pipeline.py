@@ -3593,6 +3593,20 @@ class RetrievalEfficiencyTests(unittest.TestCase):
                 rd._request(url)
         self.assertEqual(len(calls), 3)
 
+    def test_crossref_search_sends_only_valid_select_fields(self):
+        captured = {}
+
+        def fake_json(url, timeout=25, headers=None):
+            captured["url"] = url
+            return {"message": {"items": []}}
+
+        parsed = rd.parse_reference(
+            "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
+        with mock.patch.object(rd, "_json", side_effect=fake_json):
+            rd.crossref_search(parsed)
+        self.assertNotIn("edition-number", captured["url"])
+        self.assertIn("select=", captured["url"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
