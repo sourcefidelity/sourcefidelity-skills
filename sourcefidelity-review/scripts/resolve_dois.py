@@ -26,6 +26,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -390,6 +391,78 @@ def cache_put(kind, key, value):
     with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(data, handle, indent=1, ensure_ascii=False)
     os.replace(temporary, path)
+
+
+FETCH_DIR = "_fetched"
+
+
+def _cache_fetch_pdf(pdf_path):
+    """Copy a saved PDF into the cache, so the entry never dangles."""
+    if not CACHE_ROOT or not pdf_path or not os.path.exists(pdf_path):
+        return ""
+    digest = hashlib.sha256()
+    with open(pdf_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    directory = os.path.join(CACHE_ROOT, FETCH_DIR)
+    os.makedirs(directory, exist_ok=True)
+    target = os.path.join(directory, digest.hexdigest()[:16] + ".pdf")
+    if not os.path.exists(target):
+        shutil.copy2(pdf_path, target)
+    return target
+
+
+def cache_prune(max_fetch_bytes=500 * 1024 * 1024):
+    """Drop expired entries and keep the fetched-copy store under a size cap."""
+    path = cache_path()
+    if not path or not os.path.exists(path):
+        return {"expired": 0, "files": 0}
+    data = cache_load()
+    now = time.time()
+    expired = 0
+    for kind in list(data):
+        bucket = data.get(kind) or {}
+        for key in list(bucket):
+            entry = bucket.get(key) or {}
+            if now - float(entry.get("stored_at") or 0) > CACHE_TTL_SECONDS:
+                del bucket[key]
+                expired += 1
+    if expired:
+        temporary = path + ".tmp"
+        with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, indent=1, ensure_ascii=False)
+        os.replace(temporary, path)
+    directory = os.path.join(CACHE_ROOT, FETCH_DIR)
+    removed = 0
+    try:
+        files = [(os.path.getmtime(os.path.join(directory, name)),
+                  os.path.join(directory, name)) for name in os.listdir(directory)]
+    except OSError:
+        files = []
+    total = sum(os.path.getsize(path) for _mtime, path in files)
+    for _mtime, file_path in sorted(files):
+        if total <= max_fetch_bytes:
+            break
+        try:
+            total -= os.path.getsize(file_path)
+            os.remove(file_path)
+            removed += 1
+        except OSError:
+            pass
+    return {"expired": expired, "files": removed}
+
+
+def contents_check_cached(parsed):
+    """Contents verdict once per batch, keyed by DOI or title."""
+    key = (parsed.get("doi") or parsed.get("title") or "").strip().lower()
+    if not key:
+        return contents_check(parsed)
+    cached = cache_get("contents", key)
+    if cached:
+        return cached
+    result = contents_check(parsed)
+    cache_put("contents", key, result)
+    return result
 
 
 def crossref_by_doi_cached(doi, mailto=""):
@@ -1061,7 +1134,9 @@ def resolve_copy(doi, out_dir, mailto=""):
 def _keep_pdf(record, body, doi, out_dir):
     result = _keep_pdf_impl(record, body, doi, out_dir)
     if result.get("pdf") and doi:
-        cache_put("fetch", doi.lower(), {"pdf": result["pdf"],
+        owned = _cache_fetch_pdf(result["pdf"])
+        cache_put("fetch", doi.lower(), {"pdf": owned or result["pdf"],
+                                         "local": result["pdf"],
                                          "bytes": result.get("bytes", 0),
                                          "final_url": result.get("final_url", ""),
                                          "content_type": result.get("content_type", "")})
@@ -1326,7 +1401,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["identity"] = "unlocated_after_search"
 
     if check_contents and kind == "article":
-        contents = contents_check(parsed)
+        contents = contents_check_cached(parsed)
         record["contents"] = contents
         if contents["status"] == "occupied":
             record["notes"].append("volume listing: " + contents["note"])
@@ -1428,6 +1503,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     global CACHE_ROOT
     CACHE_ROOT = args.cache_root or ""
+    if CACHE_ROOT:
+        cache_prune()
     args.mailto = args.mailto or email_for_requests()
 
     entries = list(args.entry)

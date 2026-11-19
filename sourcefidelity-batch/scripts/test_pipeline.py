@@ -3242,6 +3242,24 @@ class SourceCacheTests(unittest.TestCase):
             meta = rd.crossref_by_doi_cached("10.1000/X", "me@example.org")
         self.assertEqual(meta["title"], "Cached")
 
+    def test_fetched_pdf_is_owned_by_the_cache(self):
+        pdf = os.path.join(self.root, "copy.pdf")
+        with open(pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4 owned")
+        owned = rd._cache_fetch_pdf(pdf)
+        self.assertTrue(owned.startswith(os.path.join(self.root, "_fetched")))
+        self.assertTrue(os.path.exists(owned))
+        self.assertEqual(rd._cache_fetch_pdf(owned), owned)
+
+    def test_prune_drops_expired_entries(self):
+        rd.cache_put("metadata", "10.1000/x", {"title": "Old"})
+        data = rd.cache_load()
+        data["metadata"]["10.1000/x"]["stored_at"] = 0
+        with open(rd.cache_path(), "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        rd.cache_prune()
+        self.assertIsNone(rd.cache_get("metadata", "10.1000/x"))
+
     def test_an_expired_entry_is_ignored(self):
         rd.cache_put("metadata", "10.1000/x", {"title": "Old"})
         data = rd.cache_load()
