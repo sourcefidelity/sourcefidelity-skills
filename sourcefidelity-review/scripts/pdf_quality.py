@@ -101,7 +101,13 @@ def sha256_file(path):
 
 def cache_dir(sha, kind):
     path = os.path.join(CACHE_ROOT, "pdf", sha, kind)
-    os.makedirs(path, mode=0o700, exist_ok=True)
+    # mode is a POSIX permission. On Windows it becomes an explicit DACL that
+    # drops inheritance, which leaves the directory unwritable for a sandboxed
+    # or differently-privileged reader, so let the parent's ACL apply instead.
+    if os.name == "nt":
+        os.makedirs(path, exist_ok=True)
+    else:
+        os.makedirs(path, mode=0o700, exist_ok=True)
     return path
 
 
@@ -167,10 +173,16 @@ def _run_helper(pdf, pages=None, dpi=300, ocr=True, render=False, langs=LANG_DEF
             record = {"pdf_page_1based": number, "page_label": "",
                       "width": width, "height": height}
             if render:
-                os.makedirs(out_dir, exist_ok=True)
                 path = os.path.join(out_dir, f"page-{number:04d}.png")
-                with open(path, "wb") as handle:
-                    handle.write(png)
+                try:
+                    os.makedirs(out_dir, exist_ok=True)
+                    with open(path, "wb") as handle:
+                        handle.write(png)
+                except OSError as exc:
+                    # An unwritable cache must not abort the inventory: report a
+                    # render failure the caller can record per page.
+                    return {"error": f"render failed: {type(exc).__name__}: {exc}",
+                            "service": "cache", "pages_requested": numbers}
                 record["png"] = path
             if ocr:
                 budget = timeout or OCR_TIMEOUT_PER_PAGE
