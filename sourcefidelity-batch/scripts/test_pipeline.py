@@ -3562,6 +3562,37 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             record = rd.process(entry, self._tmp.name, False, "", check_contents=True)
         self.assertIn("reference deadline", " ".join(record.get("notes", [])))
 
+    def test_a_keyed_provider_429_is_recorded_without_a_retry_ladder(self):
+        calls = []
+
+        def boom(request, timeout):
+            calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many",
+                                         {}, None)
+
+        url = "https://www.googleapis.com/books/v1/volumes?q=x"
+        with mock.patch.object(rd.urllib.request, "urlopen", side_effect=boom), \
+                mock.patch.object(rd, "google_books_key", return_value="key"), \
+                mock.patch.object(rd.time, "sleep"):
+            with self.assertRaises(urllib.error.HTTPError):
+                rd._request(url)
+        self.assertEqual(len(calls), 1)
+
+    def test_an_unkeyed_provider_still_retries_a_transient_429(self):
+        calls = []
+
+        def boom(request, timeout):
+            calls.append(request.full_url)
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many",
+                                         {}, None)
+
+        url = "https://api.crossref.org/works?query=x"
+        with mock.patch.object(rd.urllib.request, "urlopen", side_effect=boom), \
+                mock.patch.object(rd.time, "sleep"):
+            with self.assertRaises(urllib.error.HTTPError):
+                rd._request(url)
+        self.assertEqual(len(calls), 3)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

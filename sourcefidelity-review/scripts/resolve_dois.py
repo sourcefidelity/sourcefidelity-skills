@@ -376,6 +376,25 @@ class RateLimited(Exception):
     """A 429 with a long Retry-After: the route is closed for this run."""
 
 
+def _keyed_provider(url):
+    """True when this provider has a configured key, so a 429 is a quota answer.
+
+    A keyed provider that says 429 is telling us its budget for the moment is
+    used up; sleeping two and then four seconds does not buy a new budget. The
+    failure is recorded and the next reference tries again.
+    """
+    host = urllib.parse.urlparse(url).netloc
+    if host.endswith("googleapis.com"):
+        return bool(google_books_key())
+    if host.endswith("api.openalex.org"):
+        return bool(_key("openalex_api_key"))
+    if host.endswith("api.semanticscholar.org"):
+        return bool(_key("semantic_scholar_api_key"))
+    if host.endswith("core.ac.uk"):
+        return bool(core_api_key())
+    return False
+
+
 def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
              extra_headers=None):
     """One request, with a short backoff for a transient status.
@@ -402,6 +421,8 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
                 retry_after = 0
             if error.code == 429 and retry_after > 60:
                 raise RateLimited(f"rate limited: Retry-After {retry_after}s") from error
+            if error.code == 429 and _keyed_provider(url):
+                raise  # record the quota answer now; retry on the next reference
             if error.code in RETRY_STATUS and attempt < attempts - 1:
                 time.sleep(min(retry_after or 2 * (attempt + 1), 30))
                 continue
