@@ -19,7 +19,7 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 - Python 3.12 or newer for the scripts.
 - `pypdf` for PDF text extraction.
 - `pymupdf` for the preferred PDF extraction layer (layout, OCR-page detection). Without it, or without a virtual environment beside the skill, extraction falls back to bare `pypdf`: counts and passage windows still work for native-text PDFs, but are reported as `counts_available: unknown` (or `false` for a file with no extractable text) and the review says so.
-- Tesseract OCR (optional, cross-platform) for image-only PDFs. Native-text PDFs and DOCX files work without it. Find it at https://github.com/tesseract-ocr/tesseract; install the language data you need (for example `eng` and `chi_sim`).
+- Tesseract OCR (optional, cross-platform) for image-only PDFs. Native-text PDFs and DOCX files work without it. Find it at https://github.com/tesseract-ocr/tesseract; install the language data you need (for example `eng` and `chi_sim`). A requested language that is not installed is reported as a limitation instead of being read in another language, and `python -I scripts/pdf_quality.py languages` lists what is available. To fetch a missing pack into a writable `tessdata` directory, run `python -I scripts/pdf_quality.py languages --install chi_sim`; OCR never downloads anything on its own.
 - No API keys are required. Bibliographic lookup uses the free Crossref endpoint through `curl`. Coverage is smaller than a paid or multi-provider setup: an unlocated work is recorded as an access limitation, never as a finding.
 
 ## Installation

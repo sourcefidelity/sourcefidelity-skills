@@ -3,8 +3,9 @@
 
 Staged module: not yet imported by word_count.py or authorship_signals.py.
 
-    python3 -I pdf_quality.py inspect PAPER.pdf [--ocr-pages 1,5-7] [--render]
+    python3 -I pdf_quality.py inspect PAPER.pdf [--pages 1,5-7] [--render]
     python3 -I pdf_quality.py ocr PAPER.pdf --pages 1,5-7 [--dpi 300]
+    python3 -I pdf_quality.py languages [--install chi_sim]
 
 Prints JSON. Design follows PDF_EXTRACTION_REFERENCE.md:
 
@@ -40,6 +41,7 @@ import subprocess
 import tempfile
 import sys
 import time
+import urllib.request
 import warnings
 from datetime import datetime, timezone
 
@@ -150,6 +152,103 @@ def helper_status():
     return binary, None
 
 
+_LANGS_CACHE = {}
+LANG_PACK_URL = ("https://raw.githubusercontent.com/tesseract-ocr/"
+                 "tessdata_fast/main/{code}.traineddata")
+
+
+def available_languages(binary=None, refresh=False):
+    """Language codes the installed Tesseract can load, or None when unknown.
+
+    Asked once per binary per process: a review issues many OCR calls, and the
+    installed set cannot change while it runs. A requested language that is
+    absent makes Tesseract silently read the page in the languages it has, so
+    CJK pages turn into plausible-looking nonsense instead of a limitation.
+    """
+    binary = binary or shutil.which("tesseract")
+    if not binary:
+        return None
+    if not refresh and binary in _LANGS_CACHE:
+        return _LANGS_CACHE[binary]
+    try:
+        proc = subprocess.run([binary, "--list-langs"], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    text = (proc.stdout or b"").decode("utf-8", "replace")
+    text += (proc.stderr or b"").decode("utf-8", "replace")
+    codes = set()
+    for line in text.splitlines():
+        line = line.strip()
+        # The header names a directory and carries spaces; codes never do.
+        if line and " " not in line and ":" not in line:
+            codes.add(line)
+    _LANGS_CACHE[binary] = codes
+    return codes
+
+
+def language_hint(missing, binary=None):
+    """One actionable line for installing missing language data."""
+    codes = ",".join(missing)
+    return (f"install it with: <python> -I pdf_quality.py languages --install {codes} "
+            f"(Tesseract: {binary or 'tesseract'})")
+
+
+def tessdata_dirs(binary=None):
+    """Writable-candidate tessdata directories, most specific first."""
+    dirs = []
+    override = os.environ.get("TESSDATA_PREFIX")
+    if override:
+        dirs.append(override)
+    if binary:
+        dirs.append(os.path.join(os.path.dirname(binary), "tessdata"))
+    dirs.append(os.path.join(CACHE_ROOT, "tessdata"))
+    return dirs
+
+
+def install_language(code, binary=None):
+    """Download one language pack into a writable tessdata directory.
+
+    Explicit only: OCR never fetches anything on its own. Returns
+    (path, detail) on success, or (None, reason).
+    """
+    code = (code or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]{2,32}", code):
+        return None, f"invalid language code {code!r}"
+    target = None
+    for directory in tessdata_dirs(binary):
+        try:
+            os.makedirs(directory, exist_ok=True)
+            probe = os.path.join(directory, ".write-probe")
+            with open(probe, "wb"):
+                pass
+            os.remove(probe)
+            target = directory
+            break
+        except OSError:
+            continue
+    if target is None:
+        return None, ("no writable tessdata directory; set TESSDATA_PREFIX to a "
+                      "directory you can write")
+    url = LANG_PACK_URL.format(code=code.lower())
+    try:
+        with urllib.request.urlopen(url, timeout=120) as response:
+            payload = response.read()
+    except Exception as exc:  # noqa: BLE001 - reported, never raised
+        return None, f"download failed: {type(exc).__name__}: {exc}"
+    if len(payload) < 128 * 1024:
+        return None, f"download too small to be a language pack ({len(payload)} bytes)"
+    destination = os.path.join(target, f"{code}.traineddata")
+    temporary = destination + ".part"
+    with open(temporary, "wb") as handle:
+        handle.write(payload)
+    os.replace(temporary, destination)
+    if binary:
+        _LANGS_CACHE.pop(binary, None)
+    return destination, f"{len(payload)} bytes"
+
+
 def _render_page(document, number, dpi):
     page = document[number - 1]
     pixmap = page.get_pixmap(dpi=dpi)
@@ -176,6 +275,7 @@ def _run_helper(pdf, pages=None, dpi=300, ocr=True, render=False, langs=LANG_DEF
     except OSError:
         out_dir = tempfile.mkdtemp(prefix="sourcefidelity-pages-")
     records = []
+    missing_langs = set()
     try:
         numbers = ([int(number) for number in pages] if pages else
                    list(range(1, min(document.page_count, OCR_MAX_PAGES_DEFAULT) + 1)))
@@ -199,10 +299,23 @@ def _run_helper(pdf, pages=None, dpi=300, ocr=True, render=False, langs=LANG_DEF
                 record["png"] = path
             if ocr:
                 budget = timeout or OCR_TIMEOUT_PER_PAGE
+                codes = tesseract_langs(langs)
+                installed = available_languages(binary)
+                if installed is not None:
+                    missing = [code for code in codes if code not in installed]
+                    usable = [code for code in codes if code in installed]
+                    if not usable:
+                        return {"error": (f"no requested OCR language is installed "
+                                          f"({', '.join(codes)}); "
+                                          f"{language_hint(codes, binary)}"),
+                                "service": "tesseract", "languages_missing": codes}
+                    codes = usable
+                    if missing:
+                        missing_langs.update(missing)
+                        record["languages_missing"] = missing
                 try:
                     proc = subprocess.run(
-                        [binary, "stdin", "stdout", "-l",
-                         "+".join(tesseract_langs(langs))],
+                        [binary, "stdin", "stdout", "-l", "+".join(codes)],
                         input=png, capture_output=True, timeout=budget)
                 except subprocess.TimeoutExpired:
                     return {"error": "OCR timeout", "service": "tesseract",
@@ -218,7 +331,8 @@ def _run_helper(pdf, pages=None, dpi=300, ocr=True, render=False, langs=LANG_DEF
             records.append(record)
     finally:
         document.close()
-    return {"pages": records, "_render_dir": out_dir}
+    return {"pages": records, "_render_dir": out_dir,
+            "languages_missing": sorted(missing_langs)}
 
 
 # ---------------------------------------------------------------- classification
@@ -810,6 +924,7 @@ def inspect_pdf(path, *, dpi=300, langs=LANG_DEFAULT, ocr_pages=None,
                     "line_count": len(lines),
                     "mean_confidence": ocr.get("mean_confidence"),
                     "text": text,
+                    "languages_missing": ocr.get("languages_missing") or [],
                     "permitted_use": "provisional: OCR text not visually verified",
                 }
                 if ocr.get("png"):
@@ -922,11 +1037,18 @@ def extract_text(path, *, ocr=True, max_ocr_pages=None, langs=LANG_DEFAULT, dpi=
 
     ocr_records = {}
     limits = []
+    missing_languages = []
     if chosen:
         result = ocr_text(path, chosen, dpi=dpi, langs=langs, render=False)
+        missing_languages = result.get("languages_missing") or []
         if result.get("error"):
             limits.append(f"OCR unavailable: {result['error']}")
         else:
+            if missing_languages:
+                limits.append(
+                    f"requested OCR languages not installed: "
+                    f"{', '.join(missing_languages)}; affected pages may be misread. "
+                    f"{language_hint(missing_languages)}")
             for record in result.get("pages", []):
                 ocr_records[record["pdf_page_1based"]] = record
 
@@ -966,6 +1088,7 @@ def extract_text(path, *, ocr=True, max_ocr_pages=None, langs=LANG_DEFAULT, dpi=
         "permitted_use": ("provisional for OCR pages: verify passages against the rendered "
                           "page before quoting" if provisional else
                           "native text; verify material spans before findings"),
+        "languages_missing": missing_languages,
         "limits": limits,
     }
 
@@ -1043,6 +1166,7 @@ def extract_paragraphs(path, *, ocr=True, max_ocr_pages=None, langs=LANG_DEFAULT
 
     pages = native["pages"]
     paragraphs, provisional, limits = [], [], []
+    missing_languages = []
     for page in pages:
         lines = page.get("lines") or []
         if page["state"] != "usable_native" or not lines:
@@ -1059,9 +1183,15 @@ def extract_paragraphs(path, *, ocr=True, max_ocr_pages=None, langs=LANG_DEFAULT
                else (len(pages) if len(pages) <= 40 else OCR_MAX_PAGES_DEFAULT))
         chosen_pages = unusable[:cap]
         result = ocr_text(path, chosen_pages, dpi=dpi, langs=langs, render=False)
+        missing_languages = result.get("languages_missing") or []
         if result.get("error"):
             limits.append(f"OCR unavailable: {result['error']}")
         else:
+            if missing_languages:
+                limits.append(
+                    f"requested OCR languages not installed: "
+                    f"{', '.join(missing_languages)}; affected pages may be misread. "
+                    f"{language_hint(missing_languages)}")
             for record in result.get("pages", []):
                 if not (record.get("text") or "").strip():
                     continue
@@ -1095,6 +1225,7 @@ def extract_paragraphs(path, *, ocr=True, max_ocr_pages=None, langs=LANG_DEFAULT
                                if p["pdf_page_1based"] not in provisional
                                and p["state"] != "usable_native"],
         "limits": limits,
+        "languages_missing": missing_languages,
         "permitted_use": ("provisional for OCR pages: verify before quoting"
                           if provisional else
                           "native text; verify material spans before findings"),
@@ -1122,25 +1253,75 @@ def ocr_text(path, pages, *, dpi=300, langs=LANG_DEFAULT, render=True):
             "mean_confidence": record.get("mean_confidence"),
             "png": record.get("png"),
         })
-    return {
+    missing_languages = result.get("languages_missing") or []
+    payload = {
         "pdf": path,
         "sha256": sha256_file(path),
         "checked_at": _now(),
         "dpi": dpi,
         "languages": list(langs),
+        "languages_missing": missing_languages,
         "route": "tesseract-ocr",
         "permitted_use": "provisional: verify against the rendered page before quoting",
         "pages": out,
     }
+    if missing_languages:
+        payload["limitation"] = (
+            f"requested OCR languages not installed: {', '.join(missing_languages)}; "
+            f"affected pages were read with the remaining languages and may be "
+            f"misread. {language_hint(missing_languages)}")
+    return payload
 
 
 # ---------------------------------------------------------------- CLI
 
+def _languages_main(argv):
+    """List the OCR languages Tesseract can load, or install a missing pack."""
+    install = []
+    index = 0
+    while index < len(argv):
+        flag = argv[index]
+        if flag == "--install":
+            index += 1
+            install.extend(part.strip() for part in argv[index].split(",") if part.strip())
+        else:
+            print(f"unknown argument: {flag}", file=sys.stderr)
+            return 2
+        index += 1
+    binary = shutil.which("tesseract")
+    installed = available_languages(binary, refresh=True)
+    requested = list(LANG_DEFAULT)
+    codes = tesseract_langs(requested)
+    report = {"tesseract": binary or "", "installed": sorted(installed or []),
+              "requested": requested, "requested_codes": codes,
+              "tessdata_dirs": tessdata_dirs(binary),
+              "installed_files": [], "errors": []}
+    if binary is None:
+        report["errors"].append("Tesseract OCR not found on PATH")
+    for code in install:
+        destination, detail = install_language(code, binary)
+        if destination is None:
+            report["errors"].append(f"{code}: {detail}")
+        else:
+            report["installed_files"].append(destination)
+            report["notes"] = report.get("notes", []) + [f"{code}: {detail}"]
+    if install:
+        installed = available_languages(binary, refresh=True)
+        report["installed"] = sorted(installed or [])
+    report["missing"] = [code for code in codes
+                         if installed is None or code not in installed]
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if not report["errors"] else 1
+
+
 def _main(argv):
+    if len(argv) > 1 and argv[1] == "languages":
+        return _languages_main(argv[2:])
     if len(argv) < 3 or argv[1] not in ("inspect", "ocr", "extract", "paragraphs"):
         print(__doc__.strip().splitlines()[2], file=sys.stderr)
         print("usage: pdf_quality.py inspect|ocr|extract|paragraphs PATH [options]",
               file=sys.stderr)
+        print("       pdf_quality.py languages [--install LANG[,LANG]]", file=sys.stderr)
         return 2
     command, path = argv[1], argv[2]
     opts = {"dpi": 300, "pages": None, "render": False, "langs": list(LANG_DEFAULT),

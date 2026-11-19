@@ -1070,6 +1070,91 @@ class OcrBackendTests(unittest.TestCase):
             result = pq.ocr_text("paper.pdf", [1])
         self.assertIn("Tesseract", result["error"])
 
+    def test_a_missing_language_is_reported_and_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._pdf(tmp)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, b"Recognised text\n", b"")
+
+            with mock.patch.object(pq, "CACHE_ROOT", os.path.join(tmp, "cache")), \
+                    mock.patch.object(pq, "helper_status",
+                                      return_value=("tesseract", None)), \
+                    mock.patch.object(pq, "available_languages", return_value={"eng"}), \
+                    mock.patch.object(pq.subprocess, "run", side_effect=fake_run):
+                result = pq._run_helper(path, pages=[1], ocr=True,
+                                        langs=("en-US", "zh-Hans"))
+        self.assertEqual(result["languages_missing"], ["chi_sim"])
+        self.assertEqual(result["pages"][0]["languages_missing"], ["chi_sim"])
+        self.assertEqual(calls[0][calls[0].index("-l") + 1], "eng")
+
+    def test_no_installed_language_is_a_stated_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._pdf(tmp)
+            with mock.patch.object(pq, "helper_status",
+                                   return_value=("tesseract", None)), \
+                    mock.patch.object(pq, "available_languages",
+                                      return_value={"osd"}), \
+                    mock.patch.object(pq.subprocess, "run"):
+                result = pq._run_helper(path, pages=[1], ocr=True)
+        self.assertIn("no requested OCR language is installed", result["error"])
+        self.assertIn("--install", result["error"])
+        self.assertEqual(result["languages_missing"], ["eng", "chi_sim"])
+
+    def test_unknown_language_list_keeps_the_requested_languages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._pdf(tmp)
+            calls = []
+
+            def fake_run(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, b"text\n", b"")
+
+            with mock.patch.object(pq, "CACHE_ROOT", os.path.join(tmp, "cache")), \
+                    mock.patch.object(pq, "helper_status",
+                                      return_value=("tesseract", None)), \
+                    mock.patch.object(pq, "available_languages", return_value=None), \
+                    mock.patch.object(pq.subprocess, "run", side_effect=fake_run):
+                result = pq._run_helper(path, pages=[1], ocr=True)
+        self.assertEqual(calls[0][calls[0].index("-l") + 1], "eng+chi_sim")
+        self.assertEqual(result["languages_missing"], [])
+
+    def test_install_language_writes_the_pack(self):
+        payload = b"x" * (200 * 1024)
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"TESSDATA_PREFIX": tmp}), \
+                    mock.patch.object(pq.urllib.request, "urlopen",
+                                      return_value=FakeResponse()):
+                destination, detail = pq.install_language("chi_sim", binary=None)
+            self.assertIsNotNone(destination, detail)
+            self.assertTrue(os.path.exists(destination))
+            self.assertEqual(os.path.getsize(destination), len(payload))
+
+    def test_languages_command_reports_missing_packs(self):
+        buffer = io.StringIO()
+        with mock.patch.object(pq.shutil, "which", return_value="/usr/bin/tesseract"), \
+                mock.patch.object(pq, "available_languages",
+                                  return_value={"eng", "osd"}), \
+                redirect_stdout(buffer):
+            code = pq._languages_main([])
+        report = json.loads(buffer.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(report["installed"], ["eng", "osd"])
+        self.assertEqual(report["missing"], ["chi_sim"])
+
 
 class RedactionTests(unittest.TestCase):
     CONTENT_TYPES = ('<?xml version="1.0" encoding="UTF-8"?>'
