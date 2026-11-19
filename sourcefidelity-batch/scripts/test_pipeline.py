@@ -15,6 +15,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 import zipfile
 from contextlib import redirect_stdout
 from unittest import mock
@@ -1318,6 +1319,23 @@ class FetchPolicyTests(unittest.TestCase):
         out = sf.fetch("https://example.com/x", network=self._transport(routes),
                        resolver=lambda h: {"93.184.216.34"})
         self.assertEqual(out["limitation"], "content_type")
+
+
+    def test_accepts_json_for_api_adapters(self):
+        routes = {"https://example.com/x": (200, {"Content-Type": "application/json"},
+                                           b'{"ok": true}')}
+        out = sf.fetch("https://example.com/x", network=self._transport(routes),
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["limitation"], "")
+        self.assertIn('"ok"', out["text"])
+
+    def test_rate_limit_is_classified(self):
+        def network(url, timeout):
+            raise urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None)
+        out = sf.fetch("https://api.openalex.org/works", network=network,
+                       resolver=lambda h: {"93.184.216.34"})
+        self.assertEqual(out["status"], 429)
+        self.assertEqual(out["limitation"], "rate_limited")
 
 
 class CohortOverlapTests(unittest.TestCase):

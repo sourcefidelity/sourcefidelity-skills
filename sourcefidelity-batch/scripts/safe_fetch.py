@@ -24,6 +24,7 @@ import json
 import socket
 import sys
 import urllib.parse
+import urllib.error
 import urllib.request
 
 # Local proxy clients (Clash and similar) answer DNS with addresses in this
@@ -31,7 +32,8 @@ import urllib.request
 PROXY_FAKE_IP = ipaddress.ip_network("198.18.0.0/15")
 
 ALLOWED_TYPES = ("text/html", "text/plain", "application/xhtml+xml",
-                 "application/pdf")
+                 "application/pdf", "application/json", "application/ld+json",
+                 "application/xml", "text/xml")
 MAX_REDIRECTS = 5
 UA = "SourceFidelity/1.0 (read-only citation check)"
 
@@ -110,6 +112,20 @@ def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000):
             return result
         try:
             response = network(current, timeout)
+        except urllib.error.HTTPError as exc:  # provider answered with an error
+            result["status"] = exc.code
+            if exc.code == 429:
+                result["limitation"] = "rate_limited"
+            elif exc.code in (401, 403):
+                result["limitation"] = "access_denied"
+            elif exc.code == 404:
+                result["limitation"] = "not_found"
+            elif 500 <= exc.code < 600:
+                result["limitation"] = "server_error"
+            else:
+                result["limitation"] = f"http_{exc.code}"
+            result["error"] = f"HTTPError: {exc}"[:200]
+            return result
         except Exception as exc:  # network, TLS, timeout
             result["limitation"] = "fetch_failed"
             result["error"] = f"{type(exc).__name__}: {exc}"[:200]
