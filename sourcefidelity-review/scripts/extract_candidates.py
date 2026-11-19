@@ -166,9 +166,11 @@ def build(path, paper_id):
         })
 
     heading_index = reference_heading_index(paragraphs)
+    explicit_heading = (heading_index is not None
+                        and bool(REF_HEAD_RE.match(paragraphs[heading_index]["text"])))
     references = []
     if heading_index is not None:
-        for p in paragraphs[heading_index + 1:]:
+        for p in paragraphs[heading_index + (1 if explicit_heading else 0):]:
             if APPENDIX_RE.match(p["text"]):
                 break
             if len(p["text"].split()) < 2:
@@ -299,7 +301,8 @@ def build(path, paper_id):
         "kind": kind,
         "words": sum(p["words"] for p in paragraphs),
         "paragraphs": paragraphs,
-        "reference_heading": paragraphs[heading_index]["text"] if heading_index is not None else "",
+        "reference_heading": (paragraphs[heading_index]["text"]
+                              if heading_index is not None and explicit_heading else ""),
         "references": references,
         "citations": citations,
         "year_mentions": year_mentions,
