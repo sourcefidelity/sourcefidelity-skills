@@ -20,10 +20,16 @@ import sys
 
 CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".dsh", "sourcefidelity.json")
 ENV_NAMES = {"email": "SOURCEFIDELITY_EMAIL",
-             "google_books_key": "GOOGLE_BOOKS_API_KEY"}
+             "google_books_key": "GOOGLE_BOOKS_API_KEY",
+             "openalex_api_key": "OPENALEX_API_KEY",
+             "semantic_scholar_api_key": "SEMANTIC_SCHOLAR_API_KEY"}
 SIGNUP = {
     "email": "your own address (no signup needed)",
     "google_books_key": "https://console.cloud.google.com/apis/library/books.googleapis.com",
+    "openalex_api_key": "https://help.openalex.org/auth (free key; raises the daily budget "
+                        "and the per-second limit)",
+    "semantic_scholar_api_key": "https://www.semanticscholar.org/product/api#api-key-form "
+                                "(free key; 1 request/second)",
 }
 
 
@@ -84,6 +90,14 @@ def prompt(path=None):
     value = input("  key (enter to keep): ").strip()
     if value:
         save({"google_books_key": value}, path)
+    for name, label in (("openalex_api_key", "OpenAlex"),
+                        ("semantic_scholar_api_key", "Semantic Scholar")):
+        print(f"{label} API key (optional but recommended; free).")
+        print(f"  create one at {SIGNUP[name]}")
+        print(f"  current: {'set' if data.get(name) else '(unset)'}")
+        value = input("  key (enter to keep): ").strip()
+        if value:
+            save({name: value}, path)
     print(f"saved to {path or CONFIG_PATH}")
     return 0
 

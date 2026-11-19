@@ -71,6 +71,15 @@ def email_for_requests():
         return (os.environ.get("SOURCEFIDELITY_EMAIL") or "").strip()
 
 
+def _key(name):
+    try:
+        import user_settings
+        return user_settings.get(name)
+    except Exception:  # noqa: BLE001
+        return (os.environ.get(user_settings.ENV_NAMES.get(name, "")) or "").strip() \
+            if False else ""
+
+
 def google_books_key():
     try:
         import user_settings
@@ -294,12 +303,15 @@ class RateLimited(Exception):
     """A 429 with a long Retry-After: the route is closed for this run."""
 
 
-def _request(url, accept="application/json", timeout=25, referer="", attempts=3):
+def _request(url, accept="application/json", timeout=25, referer="", attempts=3,
+             extra_headers=None):
     """One request, with a short backoff for a transient status.
 
     The public APIs rate-limit: a 429 is a "try later", not an absence.
     """
     headers = {"User-Agent": UA, "Accept": accept}
+    if extra_headers:
+        headers.update(extra_headers)
     if referer:
         headers["Referer"] = referer
     last = None
@@ -323,8 +335,9 @@ def _request(url, accept="application/json", timeout=25, referer="", attempts=3)
     raise last
 
 
-def _json(url, timeout=25):
-    status, final, headers, body = _request(url, timeout=timeout)
+def _json(url, timeout=25, headers=None):
+    status, final, headers, body = _request(url, timeout=timeout,
+                                            extra_headers=headers)
     return json.loads(body.decode("utf-8", "replace"))
 
 
@@ -801,8 +814,14 @@ UNPAYWALL = "https://api.unpaywall.org/v2/"
 def _openalex_oa(doi):
     """Open-access URL from an OpenAlex work record."""
     mailto = urllib.parse.quote(email_for_requests())
+    key = _key("openalex_api_key")
+    query = ""
+    if mailto:
+        query += f"?mailto={mailto}"
+    if key:
+        query += ("&" if query else "?") + "api_key=" + urllib.parse.quote(key)
     data = _json("https://api.openalex.org/works/https://doi.org/"
-                 + urllib.parse.quote(doi) + (f"?mailto={mailto}" if mailto else ""))
+                 + urllib.parse.quote(doi) + query)
     urls = []
     value = ((data.get("open_access") or {}).get("oa_url") or "")
     if value:
@@ -816,8 +835,11 @@ def _openalex_oa(doi):
 
 def _semantic_scholar_oa(doi):
     """Open-access PDF from Semantic Scholar, when the record has one."""
+    key = _key("semantic_scholar_api_key")
+    headers = {"Authorization": "Bearer " + key} if key else None
     data = _json("https://api.semanticscholar.org/graph/v1/paper/DOI:"
-                 + urllib.parse.quote(doi) + "?fields=openAccessPdf")
+                 + urllib.parse.quote(doi) + "?fields=openAccessPdf",
+                 headers=headers)
     value = ((data.get("openAccessPdf") or {}).get("url") or "")
     return [value] if value else []
 
