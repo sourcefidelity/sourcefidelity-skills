@@ -353,35 +353,27 @@ def main():
               f"file is acquired. Both lists are in the acquisition file.\n")
 
     w("## Adapter availability\n")
+    unavailable = []
     if adapter_status.get("probe"):
-        w(f"Probe at {adapter_status.get('checked_at', 'unknown')}:\n")
-        w("| Adapter | State | HTTP | Latency |")
-        w("| --- | --- | --- | --- |")
         for name, info in adapter_status["probe"].items():
-            w(f"| {name} | {info.get('state', '?')} | {info.get('status') or '—'} | "
-              f"{info.get('latency_ms') or '—'} ms |")
-        w("")
+            if info.get("state") not in ("available", "ok", "up"):
+                unavailable.append(f"{name} ({info.get('state', '?')})")
+    failure_names = set()
+    for r in rows:
+        for failure in r.get("adapter_failures") or []:
+            if isinstance(failure, dict):
+                name = failure.get("adapter") or failure.get("provider") or failure.get("name")
+                if name:
+                    failure_names.add(name)
+            elif isinstance(failure, str):
+                failure_names.add(failure)
+    if unavailable:
+        w("Adapters not available for this batch: " + ", ".join(sorted(unavailable)) + ".\n")
+    elif failure_names:
+        w("Adapters not available for this batch: " + ", ".join(sorted(failure_names)) + ".\n")
     else:
-        w("No adapter probe was recorded for this batch. Adapter outages are visible only in "
-          "per-paper notes.\n")
-    unsearched_rows = [(r["paper_id"], [s for s in r.get("sources", [])
-                                        if s.get("search_status") == "not_searched"],
-                        r.get("adapter_failures", []))
-                       for r in rows]
-    unsearched_rows = [x for x in unsearched_rows if x[1] or x[2]]
-    if unsearched_rows:
-        w("| Paper | Works not searched | Adapter(s) | What it affects |")
-        w("| --- | --- | --- | --- |")
-        for pid, sources, failures in unsearched_rows:
-            services = ", ".join(sorted({f.get("service", "?") for f in failures})) or "—"
-            if sources:
-                impact = "Identity checks for those works are limitations, not findings."
-            else:
-                impact = "Adapters skipped at probe; no work was left unanswered."
-            w(f"| {pid} | {len(sources)} | {services} | {impact} |")
-        w("")
-    else:
-        w("Every cited work was searched; no work is left unsearched.\n")
+        w("No bibliographic adapter was available for this batch; works were resolved from "
+          "supplied copies and cited URLs only.\n")
 
     w("## Incomplete or limited reviews\n")
     w("No paper failed unless listed below. The limits here concern scope and access, "
