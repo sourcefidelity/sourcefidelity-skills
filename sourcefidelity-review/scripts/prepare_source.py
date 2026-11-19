@@ -4,10 +4,12 @@
     python3 -I prepare_source.py --pdf FILE --out DIR [--key KEY]
         [--seed-json OCR.json] [--dpi 220] [--max-ocr-pages N] [--force]
 
-Writes DIR/{text.txt,pages.csv,meta.json,README.md}. If meta.json records the
-same SHA-256, the existing extraction is reused. Native text is preferred;
-pages without usable text are OCR'd in one bounded call (or imported from a
-seed JSON produced by pdfocr). Nothing is written outside DIR.
+Writes DIR/{text.txt,pages.csv,meta.json,README.md}. One DIR holds one source:
+preparing a different --key into a DIR that already holds another key is refused
+rather than overwriting it. If meta.json records the same SHA-256, the existing
+extraction is reused. Native text is preferred; pages without usable text are
+OCR'd in one bounded call (or imported from a seed JSON produced by pdfocr).
+Nothing is written outside DIR.
 
 This is an extraction cache, not evidence: the caller still has to inspect the
 passage and record a locator.
@@ -183,6 +185,12 @@ def main():
     os.makedirs(out, exist_ok=True)
     digest = sha256_file(pdf)
     existing = load_meta(out)
+    if (args.key and existing.get("source_key")
+            and existing["source_key"] != args.key):
+        print(f"--out {out} already holds the extraction for "
+              f"{existing['source_key']!r}; give each source its own directory "
+              f"(got --key {args.key!r})", file=sys.stderr)
+        return 2
     if existing.get("sha256") == digest and not args.force:
         if args.refresh_structure:
             pages = detect_structure.read_extraction(out)
