@@ -3237,6 +3237,25 @@ class SourceCacheTests(unittest.TestCase):
         self.assertEqual(record["identity"], "confirmed")
         self.assertTrue(any("cache hit" in note for note in record["notes"]))
 
+    def test_a_linked_copy_shares_the_inode(self):
+        pdf = os.path.join(self.root, "copy.pdf")
+        with open(pdf, "wb") as handle:
+            handle.write(b"%PDF-1.4 linked")
+        owned = rd._cache_fetch_pdf(pdf)
+        self.assertTrue(os.path.samefile(pdf, owned))
+
+    def test_extracted_text_store_respects_its_cap(self):
+        base = os.path.join(self.root, "_extracted")
+        for index in range(3):
+            folder = os.path.join(base, "e%d" % index)
+            os.makedirs(folder)
+            with open(os.path.join(folder, "text.txt"), "wb") as handle:
+                handle.write(b"x" * 1000)
+            os.utime(folder, (index, index))
+        removed = rd.prune_extracted(max_bytes=1500)
+        self.assertGreaterEqual(removed, 1)
+        self.assertLessEqual(len(os.listdir(base)), 2)
+
     def test_a_lock_is_created_and_released(self):
         path = rd._acquire_lock("fetch:10.1000/x")
         self.assertTrue(os.path.exists(path))

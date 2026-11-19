@@ -435,8 +435,47 @@ def _cache_fetch_pdf(pdf_path):
     os.makedirs(directory, exist_ok=True)
     target = os.path.join(directory, digest.hexdigest()[:16] + ".pdf")
     if not os.path.exists(target):
-        shutil.copy2(pdf_path, target)
+        # One library file, linked from each paper that needs it: no duplicated
+        # bytes for a book cited by many papers. A copy is the fallback when the
+        # filesystem refuses a hard link.
+        try:
+            os.link(pdf_path, target)
+        except OSError:
+            shutil.copy2(pdf_path, target)
     return target
+
+
+def prune_extracted(max_bytes=None):
+    """Keep the extracted-text store under the text cap, oldest first."""
+    if max_bytes is None:
+        max_bytes = _max_bytes("cache_max_text_bytes", 200 * 1024 ** 2)
+    base = os.path.join(CACHE_ROOT, "_extracted")
+    if not CACHE_ROOT or not os.path.isdir(base):
+        return 0
+    entries = []
+    for name in os.listdir(base):
+        folder = os.path.join(base, name)
+        total = 0
+        for root_dir, _dirs, files in os.walk(folder):
+            for item in files:
+                try:
+                    total += os.path.getsize(os.path.join(root_dir, item))
+                except OSError:
+                    pass
+        try:
+            stamp = os.path.getmtime(folder)
+        except OSError:
+            stamp = 0
+        entries.append((stamp, folder, total))
+    size = sum(item[2] for item in entries)
+    removed = 0
+    for _stamp, folder, total in sorted(entries):
+        if size <= max_bytes:
+            break
+        shutil.rmtree(folder, ignore_errors=True)
+        size -= total
+        removed += 1
+    return removed
 
 
 def cache_prune(max_fetch_bytes=None):
@@ -448,6 +487,7 @@ def cache_prune(max_fetch_bytes=None):
         http_cache.prune_url_cache()
     except Exception:  # noqa: BLE001
         pass
+    prune_extracted()
     path = cache_path()
     if not path or not os.path.exists(path):
         return {"expired": 0, "files": 0}
