@@ -2841,6 +2841,60 @@ class ResolveDoisTests(unittest.TestCase):
 
 
 class HyperlinkAuditTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = self._tmp.name
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_hyperlink_fields_are_read_without_a_visible_url(self):
+        document = (
+            '<?xml version="1.0"?><w:document '
+            'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            "<w:body>"
+            '<w:p><w:hyperlink r:id="rId1"><w:r><w:t>link here</w:t></w:r></w:hyperlink></w:p>'
+            '<w:p><w:r><w:instrText> HYPERLINK "https://example.org/field" </w:instrText></w:r>'
+            "<w:r><w:t>field link</w:t></w:r></w:p>"
+            "</w:body></w:document>")
+        relationships = (
+            '<?xml version="1.0"?><Relationships '
+            'xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/'
+            '2006/relationships/hyperlink" Target="https://example.org/rel" '
+            'TargetMode="External"/></Relationships>')
+        path = os.path.join(self.tmp, "field.docx")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml", document)
+            archive.writestr("word/_rels/document.xml.rels", relationships)
+        records = ha.paragraph_records(path)
+        self.assertEqual(records[0]["links"], ["https://example.org/rel"])
+        self.assertEqual(records[1]["links"], ["https://example.org/field"])
+
+    def test_media_classification_excludes_traditional_av(self):
+        self.assertEqual(ha.media_type(
+            "Brown, C. (Director). (1936). Wife vs. Secretary [Film]."), "traditional")
+        self.assertEqual(ha.media_type(
+            "Interview with the director. https://www.youtube.com/watch?v=x"), "online")
+        self.assertEqual(ha.media_type("Dyer, R. (2004). Heavenly bodies."), "text")
+        self.assertEqual(ha.classify_media_link(
+            "Brown, C. (Director). (1936). Wife vs. Secretary [Film].", ""), "not-linkable")
+        # An online copy of a film is linkable and must resolve.
+        self.assertEqual(ha.classify_media_link(
+            "[Film]. https://www.youtube.com/watch?v=x",
+            "https://www.youtube.com/watch?v=x"), "permanent")
+
+    def test_scope_lines_exclude_non_linkable_media(self):
+        report = {"rows": [
+            {"id": "R1", "link_class": "not-linkable",
+             "fetch": {"state": "not required", "status": None, "detail": ""}},
+            {"id": "R2", "link_class": "non-permanent", "fetch": None},
+        ]}
+        lines = "\n".join(ha.scope_lines(report))
+        self.assertIn("Excluded as non-linkable (traditional audio-visual media): 1", lines)
+        self.assertIn("Hyperlink findings (HL): 1", lines)
+
     def test_link_classes_separate_absence_from_permanence(self):
         self.assertEqual(ha.classify_link("https://pan.baidu.com/s/1abc?pwd=1234"),
                          "non-permanent")

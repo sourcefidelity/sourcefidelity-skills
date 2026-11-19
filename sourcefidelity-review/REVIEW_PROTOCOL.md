@@ -307,6 +307,8 @@ Every reference-list work must supply a permanent, working link. There is no pri
 
 **Name the link state, not just the verdict.** Every cited work gets one of these states, and a review reports them separately: `absent` (no URL and no DOI in the entry); `non-permanent` (a cloud-share, personal-drive, shortener or session link that will not remain); `record-only` (a catalogue or record page, accepted for print works, whose contents cannot be inspected); `unreachable` (the host could not be reached: DNS, TLS, connection refused, timeout); `blocked` (HTTP 401, 403 or 429, or a login or consent wall); `dead` (HTTP 404 or 410); `wrong-work` (the link resolves to a different work or edition); `ok` (a permanent URL or DOI that resolved at review time). A fetch failure names its kind; "not accessible" on its own is not a state. A work with a supplied but unusable link is never described as having a missing link.
 
+**Audio-visual media are not link-bearing.** A film, a television or radio broadcast, or a sound recording issued on physical media is not expected to supply a hyperlink: record it as `not-linkable`, exclude it from the hyperlink count and from HL, and say so in the scope block. Online video and recorded music distributed online do carry links — a YouTube, Vimeo, Spotify, SoundCloud or Bandcamp page, or a publisher's streaming page — and must resolve like any other permanent link; a catalogue record for an online item is `record-only`, not a link to the work.
+
 - For online sources, require a DOI where one exists; otherwise require a stable URL to the full text.
 - For print works, a stable library catalogue or record page that uniquely identifies the work, such as a catalogue record or holdings page, is acceptable. A publisher preview or retailer page alone is not.
 - A DOI is required where one exists. If a DOI exists but the paper supplies only a working URL, record a Category A reference-format issue, not a missing hyperlink.
@@ -371,7 +373,7 @@ Word counts: total N; text N; references N.
 Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not Supported N; Not Judged N).
 References: N entries. Works discussed: N.
 Uncited substantive passages: N.
-Hyperlinks: N absent; N not permanent; N record-only; N fetch failures (unreachable N; blocked N; dead N); N verified. HL total: N.
+Hyperlinks: N absent; N excluded as non-linkable; N not permanent; N record-only; N fetch failures (unreachable N; blocked N; dead N); N verified. HL total: N.
 Review time: Nm Ns; tokens: N in / N out.
 
 ## Summary of academic-integrity findings

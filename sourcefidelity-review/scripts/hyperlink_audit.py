@@ -46,14 +46,58 @@ def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def paragraph_records(path):
+    """Every paragraph's text and its hyperlink targets, in document order.
+
+    Word stores a hyperlink in three ways: a `w:hyperlink` element pointing at a
+    relationship id, a `w:fldSimple` HYPERLINK field, or a run sequence of
+    `fldChar`/`instrText`. All three are read, so a link whose display text is
+    not the URL is still found.
+    """
+    if not path.lower().endswith(".docx"):
+        raise SystemExit("hyperlink_audit.py reads .docx files; convert the paper first")
+    with zipfile.ZipFile(path) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+        try:
+            rels = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+        except KeyError:
+            rels = None
+    targets = {}
+    if rels is not None:
+        for rel in rels:
+            if rel.get("TargetMode") == "External":
+                targets[rel.get("Id")] = rel.get("Target")
+    records = []
+    for para in document.findall(f".//{W}p"):
+        text = "".join(node.text or "" for node in para.iter(W + "t")).strip()
+        links = []
+        for element in para.iter():
+            tag = element.tag.split("}")[-1]
+            if tag == "hyperlink":
+                rid = element.get("{http://schemas.openxmlformats.org/officeDocument/2006/"
+                                  "relationships}id")
+                if rid in targets:
+                    links.append(targets[rid])
+            elif tag == "fldSimple":
+                instruction = element.get(W + "instr") or ""
+                links.extend(_field_targets(instruction))
+            elif tag == "instrText":
+                links.extend(_field_targets(element.text or ""))
+        records.append({"text": text, "links": links})
+    return records
+
+
+def _field_targets(instruction):
+    match = re.search(r'HYPERLINK\s+"([^"]+)"', instruction, re.I)
+    if not match:
+        match = re.search(r"HYPERLINK\s+(\S+)", instruction, re.I)
+    return [match.group(1)] if match else []
+
+
 def paragraphs(path):
     """Text of every paragraph, in document order."""
-    if path.lower().endswith(".docx"):
-        with zipfile.ZipFile(path) as archive:
-            document = ET.fromstring(archive.read("word/document.xml"))
-        return ["".join(node.text or "" for node in para.iter(W + "t")).strip()
-                for para in document.findall(f".//{W}p")]
-    raise SystemExit("hyperlink_audit.py reads .docx files; convert the paper first")
+    return [record["text"] for record in paragraph_records(path)]
+
 
 
 def looks_like_entry(text):
@@ -67,39 +111,55 @@ def looks_like_entry(text):
                 and re.search(r"\(\d{4}[a-z]?\)", text[:90]))
 
 
-def reference_entries(text_paragraphs):
-    """Reference entries with any URL-only continuation line attached."""
+def reference_entries(paragraphs):
+    """Reference entries with URL-only lines and hyperlink targets attached."""
+    records = []
+    for item in paragraphs:
+        if isinstance(item, dict):
+            records.append((item.get("text", ""), item.get("links") or []))
+        else:
+            records.append((item, []))
     start = None
-    for index, text in enumerate(text_paragraphs):
+    for index, (text, _links) in enumerate(records):
         if REFERENCE_HEADING.match(text):
             start = index + 1
     if start is None:
-        for index, text in enumerate(text_paragraphs):
+        for index, (text, _links) in enumerate(records):
             if looks_like_entry(text):
                 start = index
                 break
     if start is None:
         return []
     entries = []
-    for text in text_paragraphs[start:]:
-        if not text:
+    for text, links in records[start:]:
+        if not text and not links:
             continue
         if URL_RE.fullmatch(text.strip()):
             if entries:
                 entries[-1]["lines"].append(text.strip())
+                entries[-1]["links"].extend(links)
             continue
         if looks_like_entry(text):
-            entries.append({"lines": [text.strip()]})
+            entries.append({"lines": [text.strip()], "links": list(links)})
         elif entries:
             entries[-1]["lines"].append(text.strip())
+            entries[-1]["links"].extend(links)
     for entry in entries:
         entry["text"] = " ".join(entry.pop("lines"))
     return entries
 
 
 def entry_urls(entry_text):
-    """(urls, dois) found in a reference entry."""
+    """(urls, dois) found in a reference entry's text."""
     return URL_RE.findall(entry_text), DOI_RE.findall(entry_text)
+
+
+def entry_links(entry):
+    """Links from text plus hyperlink-field targets, text URLs first."""
+    urls, dois = entry_urls(entry["text"])
+    urls = list(urls) + [link for link in entry.get("links", []) if link not in urls]
+    return urls, dois
+
 
 
 def classify_link(url):
@@ -114,6 +174,33 @@ def classify_link(url):
     if any(item in host for item in CATALOGUE_HOSTS):
         return "record-only"
     return "permanent"
+
+
+TRADITIONAL_MEDIA = ("[Film]", "[Motion picture]", "[Television", "[TV",
+                     "[Radio", "[Sound recording", "[Album]", "[CD]", "[DVD]",
+                     "[Videorecording]", "[Audiobook]")
+ONLINE_MEDIA_HOSTS = ("youtube.com", "youtu.be", "vimeo.com", "spotify.com",
+                      "soundcloud.com", "bandcamp.com", "music.apple.com",
+                      "deezer.com", "tidal.com", "bilibili.com", "dailymotion.com")
+
+
+def media_type(entry_text):
+    """Traditional audio-visual media, online media, or a text work."""
+    lowered = entry_text.lower()
+    for marker in TRADITIONAL_MEDIA:
+        if marker.lower() in lowered:
+            return "traditional"
+    if any(host in lowered for host in ONLINE_MEDIA_HOSTS):
+        return "online"
+    return "text"
+
+
+def classify_media_link(entry_text, link):
+    """A traditional film or recording is not expected to carry a link."""
+    if media_type(entry_text) == "traditional" and not link:
+        return "not-linkable"
+    return classify_link(link)
+
 
 
 def fetch_state(url, timeout=10):
@@ -151,15 +238,18 @@ def fetch_state(url, timeout=10):
 
 
 def audit(path, fetch=True, timeout=10):
-    entries = reference_entries(paragraphs(path))
+    entries = reference_entries(paragraph_records(path))
     rows = []
     for number, entry in enumerate(entries, start=1):
-        urls, dois = entry_urls(entry["text"])
+        urls, dois = entry_links(entry)
         link = urls[0] if urls else (f"https://doi.org/{dois[0]}" if dois else "")
-        state = classify_link(link)
+        state = classify_media_link(entry["text"], link)
         row = {"id": f"R{number}", "entry": entry["text"][:110], "url": link,
-               "link_class": state, "fetch": None}
-        if fetch and link and state != "non-permanent":
+               "media": media_type(entry["text"]), "link_class": state, "fetch": None}
+        if state == "not-linkable":
+            row["fetch"] = {"state": "not required", "status": None,
+                            "detail": "traditional audio-visual media: no link expected"}
+        elif fetch and link and state != "non-permanent":
             row["fetch"] = fetch_state(link, timeout=timeout)
         elif fetch and state == "non-permanent":
             row["fetch"] = {"state": "not attempted",
@@ -186,8 +276,10 @@ def scope_lines(report):
     absent = classes.get("absent", 0)
     non_permanent = classes.get("non-permanent", 0)
     record = classes.get("record-only", 0)
+    excluded = classes.get("not-linkable", 0)
     permanent = classes.get("permanent", 0) + classes.get("doi", 0)
-    lines = [f"Hyperlinks absent: {absent}.", 
+    lines = [f"Hyperlinks absent: {absent}.",
+             f"Excluded as non-linkable (traditional audio-visual media): {excluded}.",
              f"Links present but not permanent: {non_permanent}.",
              f"Links that are only a catalogue or record page: {record}.",
              f"Links that should resolve to the work: {permanent}."]
