@@ -36,7 +36,7 @@ Papers, supplied sources, review outputs, ledgers, logs and agent metadata live 
 
 ### Issue tracker
 
-Issues and specs live as GitHub issues in `mhigh858/sourcefidelity-skills-dev`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues and specs live as GitHub issues in `sourcefidelity/sourcefidelity-skills`, driven by the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

@@ -15,7 +15,7 @@ Last updated: 2026-11-19. State of `main`: CI green on ubuntu, macOS and Windows
 
 ## To resume on another computer
 
-1. Clone `mhigh858/sourcefidelity-skills-dev`.
+1. Clone `sourcefidelity/sourcefidelity-skills`.
 2. Run `install.ps1` (Windows) or `install.sh` (macOS/Linux). It builds the shared venv with pypdf, pymupdf and zstandard.
 3. Run `python -I sourcefidelity-review/scripts/user_settings.py --prompt` once to store an email and any free API keys in `~/.dsh/sourcefidelity.json` (never in the venv or the repo).
 4. Local artifacts do **not** travel with the repo: `review-output/`, `review-run/`, `batch-run/`, `skill-test/`, and extracted sources. Copy them separately if needed. Do not commit student papers or review artifacts.

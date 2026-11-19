@@ -19,14 +19,23 @@ without a new decision entry here.
   three existing skill folders unchanged in name (`sourcefidelity-review`,
   `sourcefidelity-batch`, `sourcefidelity-reappraise`), plus `install.sh`,
   `install.ps1`, `VERSION`, `CHANGELOG.md` and the README at the root.
-- Development continues in `sourcefidelity-skills-dev`; releases are cut from
-  it. The public repository is a release artifact, not the working history.
+- Development continues in `sourcefidelity/sourcefidelity-skills`; releases are
+  cut from it. There is one public repository, not a separate release artifact.
+  (Amended 2026-11-20; see the decision note below.)
 - **Settled:** the installer is a pair of thin scripts with no runtime
   dependency of their own: `install.sh` for macOS/Linux and `install.ps1` for
   Windows. Both do the same checks and never install software silently.
 - The installer detects the host skills directory rather than assuming one
   (Claude Code, Codex/ZCode-style `~/.agents/skills`, Cursor, and a manual
   "copy here" fallback), and confirms the destination with the user.
+
+**Decision changed (2026-11-20).** §1.1 originally settled on a separate, clean
+public release repository while development continued in the private
+`sourcefidelity-skills-dev`. That is superseded: the private repository was
+transferred to the `sourcefidelity` organization, renamed
+`sourcefidelity-skills`, and made public. A single public repository now holds
+both development history and releases; no release-only mirror is created. The
+settled text above is kept as the record of the superseded decision.
 
 ### 1.2 Dependencies
 

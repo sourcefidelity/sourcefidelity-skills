@@ -1,6 +1,6 @@
 # SourceFidelity skills implementation plan
 
-**Implement in** `sourcefidelity-skills-dev`  
+**Implement in** `sourcefidelity/sourcefidelity-skills`  
 **Skills baseline** `eac1a1cc965f1f184312f8aecd75c33b9abe4a1c`  
 **Application reference** `sourcefidelity/sourcefidelity-api` at `3baa52514d09a07464cecfed4fefcfdc5012fbae`. The reuse review also inspected local changes in the application checkout. Verify each proposed helper against the revision selected for the port.  
 **Issue details and evidence** [Code review handoff](CODE_REVIEW_HANDOFF.md)
