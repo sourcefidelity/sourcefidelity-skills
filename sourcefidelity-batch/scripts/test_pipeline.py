@@ -78,50 +78,50 @@ def marks_for(pages):
 class ParseSourceTests(unittest.TestCase):
     def test_edited_collection_chapter(self):
         parsed = sr.parse_source({"source": (
-            "Flew, T. (2011). Media as creative industries. In D. Winseck & "
-            "D. Y. Jin (Eds.), The political economies of media (pp. 84-100). "
-            "Bloomsbury Academic.")})
+            "Dray, T. (2011). Media as creative industries. In D. Wexler & "
+            "D. Y. Ren (Eds.), The political economy of screen media (pp. 84-100). "
+            "Halcyon Academic.")})
         self.assertEqual(parsed["work_kind"], "chapter_edited_collection")
         self.assertEqual(parsed["pages"], [84, 100])
-        self.assertEqual(parsed["editors"], "D. Winseck & D. Y. Jin")
+        self.assertEqual(parsed["editors"], "D. Wexler & D. Y. Ren")
 
     def test_authored_book_chapter(self):
         parsed = sr.parse_source({"source": (
-            "Croteau, D., & Hoynes, W. (2006). The new media giants. In The "
-            "business of media (pp. 75-116). Pine Forge Press.")})
+            "Ashby, D., & Merrick, W. (2006). The new media conglomerates. In The "
+            "business of media industries (pp. 75-116). Kestrel Press.")})
         self.assertEqual(parsed["work_kind"], "chapter_authored_book")
         self.assertEqual(parsed["pages"], [75, 116])
 
     def test_press_release_is_web_not_monograph(self):
         parsed = sr.parse_source({"source": (
-            "Atlus. (2024, February 2). Reimagined genre-defining RPG Persona 3 "
-            "Reload is available now [Press release].")})
+            "Kestrel Games. (2024, February 2). Reimagined genre-defining RPG Starfall "
+            "is available now [Press release].")})
         self.assertEqual(parsed["work_kind"], "web")
 
     def test_authored_book_chapter_without_in(self):
         parsed = sr.parse_source({"source": (
-            "Jenkins, H. (2006). Buying into American Idol. Convergence culture: "
-            "Where old and new media collide (pp. 59-92). New York University Press.")})
+            "Hollis, H. (2006). Buying into the talent show. Convergent media: "
+            "Where old and new platforms collide (pp. 59-92). Meridian University Press.")})
         self.assertEqual(parsed["work_kind"], "chapter_authored_book")
         self.assertEqual(parsed["container_title"],
-                         "Convergence culture: Where old and new media collide")
+                         "Convergent media: Where old and new platforms collide")
         self.assertEqual(parsed["pages"], [59, 92])
 
     def test_journal_with_standalone_volume(self):
         parsed = sr.parse_source({"source": (
-            "Denison, R. (2011). Anime fandom and the unlicensed text. "
-            "Mechademia, 6, 447-464.")})
+            "Denby, R. (2011). Fan subtitling and the unlicensed text. "
+            "Screen Culture Quarterly, 6, 447-464.")})
         self.assertEqual(parsed["work_kind"], "article")
 
     def test_organizational_author_is_not_a_publisher(self):
         parsed = sr.parse_source({"source": (
-            "British Film Institute. (n.d.). British certification and tax "
+            "National Film Office. (n.d.). Certification and tax "
             "relief FAQ.")})
         self.assertNotEqual(parsed["work_kind"], "monograph")
 
     def test_publisher_imprint_without_press(self):
         parsed = sr.parse_source({"source": (
-            "Hardy, J. (2010). Cross-media promotion. Peter Lang.")})
+            "Harlow, J. (2010). Cross-media promotion. Halcyon Publisher.")})
         self.assertEqual(parsed["work_kind"], "monograph")
 
     def test_article_with_pp_is_not_a_chapter(self):
@@ -132,21 +132,21 @@ class ParseSourceTests(unittest.TestCase):
 
     def test_article(self):
         parsed = sr.parse_source({"source": (
-            "Enderwick, P. (2011). Understanding the rise of global "
-            "protectionism. Thunderbird International Business Review, 53(3), "
+            "Eldridge, P. (2011). Explaining the rise of trade "
+            "protectionism. Journal of Global Trade Studies, 53(3), "
             "325-336.")})
         self.assertEqual(parsed["work_kind"], "article")
         self.assertEqual(parsed["year"], "2011")
 
     def test_web_url_is_extracted_from_entry(self):
         parsed = sr.parse_source({"source": (
-            "Armitage, H. (2019, February 7). How Iron Man's first film almost "
-            "destroyed Marvel. Digital Spy. "
-            "https://www.digitalspy.com/movies/a26232993/iron-man-marvel-loan-bankruptcy/ ")})
+            "Mercer, H. (2019, February 7). How a superhero film almost "
+            "destroyed a studio. Screen Trade Daily. "
+            "https://www.example.com/movies/a26232993/superhero-film-studio/ ")})
         self.assertEqual(parsed["work_kind"], "web")
         self.assertEqual(parsed["url"],
-                         "https://www.digitalspy.com/movies/a26232993/"
-                         "iron-man-marvel-loan-bankruptcy/")
+                         "https://www.example.com/movies/a26232993/"
+                         "superhero-film-studio/")
 
     def test_web_url_drops_sentence_punctuation(self):
         parsed = sr.parse_source({"source": (
@@ -157,40 +157,40 @@ class ParseSourceTests(unittest.TestCase):
 class CandidateTests(unittest.TestCase):
     def test_nd_citation_is_found(self):
         text = ("Founded in 1986 ... distribution rights "
-                "(Pixar Animation Studios, n.d.-b).")
+                "(Northlight Animation Studios, n.d.-b).")
         found = [m.group(0) for m in ec.ND_RE.finditer(text)]
-        self.assertEqual(found, ["(Pixar Animation Studios, n.d.-b)"])
+        self.assertEqual(found, ["(Northlight Animation Studios, n.d.-b)"])
 
 
 class SourceObjectTests(unittest.TestCase):
     def test_short_container_substring_does_not_link_another_book(self):
         registry = {
-            "bryant": {"work_kind": "chapter_edited_collection",
-                       "container_title": "The Ashgate research companion to fan cultures",
+            "corbin": {"work_kind": "chapter_edited_collection",
+                       "container_title": "A companion to fan cultures",
                        "form_issue": "chapter cited instead of the authored book",
-                       "identity": {"author": "Bryant, E", "year": "2014",
+                       "identity": {"author": "Corbin, E", "year": "2014",
                                     "title": "Toy collecting and adult lives"}},
-            "hills": {"work_kind": "monograph",
-                      "identity": {"author": "Hills, M", "year": "2002",
-                                   "title": "Fan Cultures"}},
+            "hale": {"work_kind": "monograph",
+                      "identity": {"author": "Hale, M", "year": "2002",
+                                   "title": "Fan Worlds"}},
         }
         sr.resolve_chapters(registry)
-        self.assertNotEqual(registry["bryant"].get("source_object_key"), "hills")
-        self.assertEqual(registry["bryant"].get("form_issue"), "")
+        self.assertNotEqual(registry["corbin"].get("source_object_key"), "hale")
+        self.assertEqual(registry["corbin"].get("form_issue"), "")
 
     def test_full_container_title_still_links(self):
         registry = {
-            "flew": {"work_kind": "chapter_edited_collection",
-                     "container_title": "The political economies of media",
-                     "identity": {"author": "Flew, T", "year": "2011",
+            "dray": {"work_kind": "chapter_edited_collection",
+                     "container_title": "The political economy of screen media",
+                     "identity": {"author": "Dray, T", "year": "2011",
                                   "title": "Media as creative industries"}},
             "book": {"work_kind": "monograph",
-                     "identity": {"author": "Winseck, D", "year": "2011",
-                                  "title": "The political economies of media: "
+                     "identity": {"author": "Wexler, D", "year": "2011",
+                                  "title": "The political economy of screen media: "
                                            "The transformation of the global media industries"}},
         }
         sr.resolve_chapters(registry)
-        self.assertEqual(registry["flew"].get("source_object_key"), "book")
+        self.assertEqual(registry["dray"].get("source_object_key"), "book")
 
 
 class ScopeTests(unittest.TestCase):
@@ -218,10 +218,10 @@ class ScopeTests(unittest.TestCase):
 
 
 class StructureTests(unittest.TestCase):
-    def test_flew_style_front_matter(self):
+    def test_edited_collection_front_matter(self):
         pages = [page(i, "", "Prelims") for i in range(1, 5)]
         pages.append(page(5, "", "Copyright in the collection and in any "
-                               "introductory materials (c) Winseck and Jin 2011. "
+                               "introductory materials (c) Wexler and Ren 2011. "
                                "Copyright in the individual chapters (c) the Contributors."))
         result = ds.front_matter(pages)
         self.assertTrue(result["edited_collection"])
@@ -230,14 +230,14 @@ class StructureTests(unittest.TestCase):
     def test_acknowledgments_edited_by_is_not_a_collection(self):
         pages = [page(i, "", "The author thanks the series editors.") for i in range(1, 8)]
         pages.append(page(8, "", '"Will the Real Wolverine Please Stand Up?" '
-                                'from Film and Comics, edited by Janet Smith.'))
+                                'from Film and Comics, edited by Jordan Marlow.'))
         self.assertFalse(ds.front_matter(pages)["edited_collection"])
 
     def test_repeated_same_editor_line_is_one_collection(self):
-        pages = [page(1, "", "The Blackwell Companion to Globalization"),
-                 page(2, "", "Edited by George Ritzer"),
-                 page(3, "", "The Blackwell Companion to Globalization\n"
-                             "Edited by George Ritzer\n© 2007 by Blackwell Publishing")]
+        pages = [page(1, "", "The Companion to Globalization"),
+                 page(2, "", "Edited by Peter Voss"),
+                 page(3, "", "The Companion to Globalization\n"
+                             "Edited by Peter Voss\n© 2007 by Halcyon Publishing")]
         for i in range(4, 7):
             pages.append(page(i, "", "Contents and preface"))
         self.assertTrue(ds.front_matter(pages)["edited_collection"])
@@ -245,11 +245,11 @@ class StructureTests(unittest.TestCase):
     def test_series_page_with_many_editor_lines_is_not_a_collection(self):
         pages = [page(i, "", "Critical Media Studies") for i in range(1, 4)]
         pages.append(page(4, "", "\n".join([
-            "Edited by John Durham Peters and Peter Simonson",
-            "Edited by Mike Gasher and Greg Elmer",
-            "Edited by Anandam P. Kavoori and Todd Fraley"])))
+            "Edited by John Rowe and Peter Sand",
+            "Edited by Miles Garner and Greg Ellery",
+            "Edited by Arun P. Kavon and Todd Frayne"])))
         for i in range(5, 7):
-            pages.append(page(i, "", "The Film Studio\nBen Goldsmith and Tom O'Regan"))
+            pages.append(page(i, "", "The Film Studio\nBen Gable and Tom O'Rourke"))
         self.assertFalse(ds.front_matter(pages)["edited_collection"])
 
     def test_chapter_bounds_from_outline(self):
@@ -297,30 +297,30 @@ class PageMapTests(unittest.TestCase):
 
     def test_chapter_opening_folio_before_copyright_symbol(self):
         lines = ["37© The Author(s), under exclusive license … 2021",
-                 "V. Cicchelli, S. Octobre, The Sociology of Hallyu Pop Culture,",
+                 "V. Calder, S. Osei, The Sociology of Transnational Pop Culture,",
                  "https://doi.org/10.1007/978-3-030-84296-3_2", "2",
                  "Is Entertainment Capitalism the Ultimate Stage…"]
         self.assertEqual(page_map.folio_from_lines(lines), ("37", "arabic", 37))
 
     def test_chapter_opening_folio_below_copyright_line(self):
         lines = ["1© The Author(s), under exclusive license … 2021",
-                 "V. Cicchelli, S. Octobre, The Sociology of Hallyu Pop Culture,",
+                 "V. Calder, S. Osei, The Sociology of Transnational Pop Culture,",
                  "https://doi.org/10.1007/978-3-030-84296-3_1", "1",
                  "Introduction: Hallyu as an Alternative Aestheticized…"]
         self.assertEqual(page_map.folio_from_lines(lines), ("1", "arabic", 1))
 
     def test_even_page_head_leading_folio(self):
         self.assertEqual(page_map.folio_from_lines(
-            ["24 V. Cicchelli and S. Octobre"]),
+            ["24 V. Calder and S. Osei"]),
             ("24", "arabic", 24))
 
 
 class MatchRefsTests(unittest.TestCase):
     def test_close_surname_still_links_reference(self):
         refs = [{"id": "R1", "verbatim": (
-            "Croteau, D., & Hoynes, W. (2006). The business of media. "
-            "Pine Forge Press.")}]
-        citation = {"marker": "(Croteau and Hoyns, 2006)",
+            "Ashby, D., & Merrick, W. (2006). The business of media industries. "
+            "Kestrel Press.")}]
+        citation = {"marker": "(Ashby and Merric, 2006)",
                     "sentence": "The market model treats audiences as consumers.",
                     "year": "2006"}
         self.assertIn("R1", mt.match_refs(citation, refs))
@@ -388,8 +388,8 @@ class MatchPlausibilityTests(unittest.TestCase):
         self.assertIn("type", " ".join(why["reasons"]))
 
     def test_rejects_later_edition(self):
-        result = self.result(type="book-chapter", title="Convergence Culture",
-                             year="2017", authors=["Jenkins"])
+        result = self.result(type="book-chapter", title="Convergent Media",
+                             year="2017", authors=["Hollis"])
         ok, why = ru.plausible(self.record("monograph", "2008"), result)
         self.assertFalse(ok)
 
@@ -405,54 +405,54 @@ class DataCiteTests(unittest.TestCase):
         fields = ru.datacite_fields({
             "doi": "10.6092/example",
             "titles": [{"title": "Franchising Jurassic Park: Introduction"}],
-            "creators": [{"familyName": "Melia"}],
+            "creators": [{"familyName": "Marlowe"}],
             "publicationYear": 2023,
-            "publisher": "Cinergie",
+            "publisher": "Screen Culture Review",
             "types": {"resourceTypeGeneral": "Text", "citeproc": "article-journal"},
-            "container": {"title": "Cinergie"},
+            "container": {"title": "Screen Culture Review"},
             "page": None,
         })
         self.assertEqual(fields["type"], "journal-article")
         self.assertEqual(fields["year"], "2023")
-        self.assertEqual(fields["authors"], ["Melia"])
+        self.assertEqual(fields["authors"], ["Marlowe"])
 
 
 class FileMatchTests(unittest.TestCase):
     def test_doi_in_file_confirms(self):
-        record = {"identity": {"doi": "10.1002/tie.20410", "isbn": ""}}
+        record = {"identity": {"doi": "10.5555/jib.2011.042", "isbn": ""}}
         parsed = sr.parse_source({"source": (
-            "Enderwick, P. (2011). Understanding the rise of global "
-            "protectionism. Thunderbird International Business Review, 53(3), 325-336.")})
+            "Eldridge, P. (2011). Explaining the rise of trade "
+            "protectionism. Journal of Global Trade Studies, 53(3), 325-336.")})
         score, detail = sr.score_file(
-            "Understanding the rise of global protectionism\n"
-            "doi:10.1002/tie.20410\n(c) 2011 Wiley", record, parsed)
+            "Explaining the rise of trade protectionism\n"
+            "doi:10.5555/jib.2011.042\n(c) 2011 Meridian", record, parsed)
         self.assertGreaterEqual(score, 0.9)
         self.assertTrue(detail["doi"])
 
     def test_later_edition_is_rejected(self):
         record = {"identity": {"doi": "", "isbn": ""}}
         parsed = sr.parse_source({"source": (
-            "Steger, M. (2003). Globalization: A very short introduction. "
-            "Oxford University Press.")})
+            "Sutter, M. (2003). Globalization: A short introduction. "
+            "Meridian Press.")})
         score, detail = sr.score_file(
-            "Globalization: A very short introduction\n"
-            "© Manfred B. Steger 2013\nFirst Edition published in 2003", record, parsed)
+            "Globalization: A short introduction\n"
+            "© Marta B. Sutter 2013\nFirst Edition published in 2003", record, parsed)
         self.assertEqual(score, 0.0)
         self.assertTrue(detail["later_edition"])
 
 
     def test_chapter_author_matches_container_front_matter(self):
         parsed = sr.parse_source({"source": (
-            "Goldsmith, B., & O'Regan, T. (2005). The policy environment of the "
-            "contemporary film studio. In G. Elmer & M. Gasher (Eds.), "
-            "Contracting out Hollywood (pp. 41-65). Rowman & Littlefield.")})
+            "Gable, B., & O'Rourke, T. (2005). The policy environment of the "
+            "contemporary film studio. In G. Ellery & M. Garner (Eds.), "
+            "Contracting out the studio system (pp. 41-65). Rowan & Field.")})
         match = dict(parsed)
         match["title"] = parsed["container_title"]
         match["author"] = parsed["editors"]
         record = {"work_kind": "chapter_edited_collection",
                   "identity": {"doi": "", "isbn": "", "author": parsed["author"]}}
         score, detail = sr.score_file(
-            "Contracting out Hollywood (2005)\nGoldsmith and O'Regan\n"
+            "Contracting out the studio system (2005)\nGable and O'Rourke\n"
             "The policy environment of the contemporary film studio",
             record, match)
         self.assertGreaterEqual(score, 0.9)
@@ -460,8 +460,8 @@ class FileMatchTests(unittest.TestCase):
 
     def test_other_chapter_offprint_is_rejected(self):
         parsed = sr.parse_source({"source": (
-            "Thussu, D. K. (2007). Mapping global media flow. In D. K. Thussu "
-            "(Ed.), Media on the move (pp. 11-20). Routledge.")})
+            "Tarrant, D. K. (2007). Mapping global media flow. In D. K. Tarrant "
+            "(Ed.), Media in motion (pp. 11-20). Alder House.")})
         match = dict(parsed)
         match["title"] = parsed["container_title"]
         match["author"] = parsed["editors"]
@@ -469,7 +469,7 @@ class FileMatchTests(unittest.TestCase):
         record = {"work_kind": "chapter_edited_collection",
                   "identity": {"doi": "", "isbn": "", "author": parsed["author"]}}
         score, detail = sr.score_file(
-            "Media on the Move\nKim, Y. The rising East Asian wave\n"
+            "Media in Motion\nRyu, Y. The rising East Asian wave\n"
             "Korean media go global", record, match)
         self.assertEqual(score, 0.0)
         self.assertLess(detail["chapter_coverage"], 0.5)
@@ -477,21 +477,21 @@ class FileMatchTests(unittest.TestCase):
     def test_short_surname_does_not_match_inside_a_word(self):
         record = {"identity": {"doi": "", "isbn": ""}}
         parsed = sr.parse_source({"source": (
-            "Ng, J. (2018). Disneytoon Studios shutdown. Animation Magazine.")})
+            "Ng, J. (2018). Northlight Animation shutdown. Screen Trade Weekly.")})
         score, detail = sr.score_file(
-            "Disneytoon Studios shutdown", record, parsed,
-            path="/tmp/Mihara - understanding animation.pdf")
+            "Northlight Animation shutdown", record, parsed,
+            path="/tmp/Sample - understanding animation.pdf")
         self.assertFalse(detail["filename_author"])
 
     def test_filename_author_and_year_corroborate_title(self):
         record = {"identity": {"doi": "", "isbn": ""}}
         parsed = sr.parse_source({"source": (
-            "Steger, M. B. (2003). Globalization: A very short introduction. "
-            "Oxford University Press.")})
+            "Sutter, M. B. (2003). Globalization: A short introduction. "
+            "Meridian Press.")})
         score, detail = sr.score_file(
-            "Globalization: A very short introduction\nVERY SHORT INTRODUCTIONS",
+            "Globalization: A short introduction\nSHORT INTRODUCTIONS",
             record, parsed,
-            path="/tmp/Globalization -- Manfred B Steger, 1961- -- 2003.pdf")
+            path="/tmp/Globalization -- Marta B Sutter, 1961- -- 2003.pdf")
         self.assertGreaterEqual(score, 0.9)
         self.assertTrue(detail["filename_author"])
         self.assertTrue(detail["filename_year"])
@@ -499,12 +499,12 @@ class FileMatchTests(unittest.TestCase):
     def test_later_edition_in_filename_is_rejected(self):
         record = {"identity": {"doi": "", "isbn": ""}}
         parsed = sr.parse_source({"source": (
-            "Croteau, D., & Hoynes, W. (2001). The business of media. "
-            "Pine Forge Press.")})
+            "Ashby, D., & Merrick, W. (2001). The business of media industries. "
+            "Kestrel Press.")})
         score, detail = sr.score_file(
-            "The business of media: Corporate media and the public interest\n"
-            "Croteau, David\nHoynes, William", record, parsed,
-            path="/tmp/The business of media -- 2nd ed_ -- 2006.pdf")
+            "The business of media industries: Corporate media and the public interest\n"
+            "Ashby, David\nMerrick, William", record, parsed,
+            path="/tmp/The business of media industries -- 2nd ed_ -- 2006.pdf")
         self.assertEqual(score, 0.0)
         self.assertTrue(detail["later_edition"])
         self.assertGreaterEqual(detail["base_score"], 0.65)
@@ -916,16 +916,16 @@ class CanonicalFieldTests(unittest.TestCase):
 
 class TaskMatchingTests(unittest.TestCase):
     REFS = [
-        {"id": "R2", "verbatim": "Hardy, J. (2010). Dynamics and varieties of cross-media promotion. In Cross-media promotion (pp. 3-32). Peter Lang."},
-        {"id": "R4", "verbatim": "York, A.E. (2010). From chick flicks to millennial blockbusters. The Journal of Popular Culture, 43(1), 3-25."},
+        {"id": "R2", "verbatim": "Harlow, J. (2010). Dynamics and varieties of cross-media promotion. In Cross-media promotion (pp. 3-32). Halcyon Publisher."},
+        {"id": "R4", "verbatim": "Vale, A.E. (2010). From chick flicks to millennial blockbusters. The Journal of Screen Culture, 43(1), 3-25."},
     ]
 
     def test_a_shared_year_does_not_bind_another_work(self):
-        citation = {"marker": "Hardy’s (2010)", "sentence": "Drawing on Hardy’s (2010) idea.", "year": "2010"}
+        citation = {"marker": "Harlow’s (2010)", "sentence": "Drawing on Harlow’s (2010) idea.", "year": "2010"}
         self.assertEqual(mt.match_refs(citation, self.REFS), ["R2"])
 
     def test_a_surname_still_binds(self):
-        citation = {"marker": "(York, 2010)", "sentence": "Franchising (York, 2010).", "year": "2010"}
+        citation = {"marker": "(Vale, 2010)", "sentence": "Franchising (Vale, 2010).", "year": "2010"}
         self.assertEqual(mt.match_refs(citation, self.REFS), ["R4"])
 
 
@@ -980,6 +980,17 @@ class InterpreterResolutionTests(unittest.TestCase):
     def test_windows_candidate_is_scripts_python_exe(self):
         candidate = wp.venv_candidates("C:/skills/sourcefidelity-review", "nt")[0]
         self.assertTrue(candidate.replace("\\", "/").endswith(".venv/Scripts/python.exe"))
+
+    @unittest.skipIf(os.name == "nt", "the fixture needs POSIX symlink support")
+    def test_the_review_venv_serves_a_sibling_skill(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._skill(tmp)
+            batch = os.path.join(tmp, "sourcefidelity-batch")
+            os.makedirs(os.path.join(batch, "scripts"))
+            result = wp.resolve(batch)
+        self.assertEqual(result["source"], "venv")
+        self.assertTrue(result["python"].replace("\\", "/").endswith(
+            "sourcefidelity-review/.venv/bin/python"))
 
 
 class OcrBackendTests(unittest.TestCase):
@@ -1040,7 +1051,7 @@ class RedactionTests(unittest.TestCase):
             '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/'
             'relationships/officeDocument" Target="word/document.xml"/></Relationships>')
 
-    def _docx(self, tmp, paragraphs, creator="Michael High",
+    def _docx(self, tmp, paragraphs, creator="Jordan Ellis",
               modified_by="Administrator", header=None):
         path = os.path.join(tmp, "paper.docx")
         body = "".join(
@@ -1077,45 +1088,45 @@ class RedactionTests(unittest.TestCase):
 
     def test_tier_one_strips_metadata_and_leaves_text(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = self._docx(tmp, [["Name: Michael High"], ["Body sentence stays."]])
+            source = self._docx(tmp, [["Name: Jordan Ellis"], ["Body sentence stays."]])
             out = os.path.join(tmp, "copy.docx")
             report = ri.redact_file(source, out, tier=1)
             core = self._read(out, "docProps/core.xml")
             document = self._read(out, "word/document.xml")
             original = self._read(source, "docProps/core.xml")
-        self.assertNotIn("Michael High", core)
+        self.assertNotIn("Jordan Ellis", core)
         self.assertNotIn("Administrator", core)
         self.assertIn("Body sentence stays.", document)
-        self.assertIn("Michael High", original)
+        self.assertIn("Jordan Ellis", original)
         self.assertEqual(report["tier"], 1)
 
     def test_tier_two_masks_a_labelled_identity_line(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = self._docx(tmp, [["Name: Michael High"], ["Body stays."]])
+            source = self._docx(tmp, [["Name: Jordan Ellis"], ["Body stays."]])
             out = os.path.join(tmp, "copy.docx")
             ri.redact_file(source, out, tier=2)
             document = self._read(out, "word/document.xml")
-        self.assertNotIn("Michael", document)
-        self.assertIn("Name: " + "*" * len("Michael High"), document)
+        self.assertNotIn("Jordan", document)
+        self.assertIn("Name: " + "*" * len("Jordan Ellis"), document)
         self.assertIn("Body stays.", document)
 
     def test_tier_two_masks_a_name_split_across_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = self._docx(tmp, [["Name: Michael ", "High"]])
+            source = self._docx(tmp, [["Name: Jordan ", "Ellis"]])
             out = os.path.join(tmp, "copy.docx")
             ri.redact_file(source, out, tier=2)
             document = self._read(out, "word/document.xml")
-        self.assertNotIn("Michael", document)
-        self.assertNotIn(">High<", document)
+        self.assertNotIn("Jordan", document)
+        self.assertNotIn(">Ellis<", document)
 
     def test_tier_two_masks_email_and_long_number(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = self._docx(tmp, [["Email: mh@example.com"],
+            source = self._docx(tmp, [["Email: je@example.com"],
                                       ["Student 2023123456 in the cohort."]])
             out = os.path.join(tmp, "copy.docx")
             ri.redact_file(source, out, tier=2)
             document = self._read(out, "word/document.xml")
-        self.assertNotIn("mh@example.com", document)
+        self.assertNotIn("je@example.com", document)
         self.assertNotIn("2023123456", document)
         self.assertIn("in the cohort.", document)
 
@@ -1159,7 +1170,7 @@ class RedactionTests(unittest.TestCase):
             source = os.path.join(tmp, "paper.pdf")
             doc = pymupdf.open()
             page = doc.new_page()
-            page.insert_text((72, 72), "Name: Michael High")
+            page.insert_text((72, 72), "Name: Jordan Ellis")
             page.insert_text((72, 100), "The argument is clear.")
             doc.save(source)
             doc.close()
@@ -1169,7 +1180,7 @@ class RedactionTests(unittest.TestCase):
             text = "\n".join(page.get_text() for page in masked)
             pages = masked.page_count
             masked.close()
-        self.assertNotIn("Michael", text)
+        self.assertNotIn("Jordan", text)
         self.assertIn("argument", text)
         self.assertEqual(pages, 1)
         self.assertFalse(any("unavailable" in item for item in report["limitations"]))
@@ -1567,30 +1578,30 @@ class ReappraiseIdentityTests(unittest.TestCase):
             "occurrences": {"total": 2, "supports": 1, "qualified": 0,
                             "contradicts": 0, "not_supported": 0, "not_judged": 1},
             "sources": [
-                {"source_key": "jenkins-2006", "retrieval": "unverifiable",
+                {"source_key": "hollis-2006", "retrieval": "unverifiable",
                  "identity_outcome": "unverifiable", "search_status": "searched"},
                 {"source_key": "other-work", "retrieval": "identity_only",
                  "identity_outcome": "search_incomplete", "search_status": "searched"},
             ],
             "nonexistent_sources": [
-                {"source": "Jenkins 2006", "source_key": "jenkins-2006", "r_id": "R1"},
-                {"source": "Jenkins 2006 again", "source_key": "jenkins-2006", "r_id": "R2"}],
-            "unverifiable_sources": [{"source": "Jenkins 2006", "source_key": "jenkins-2006",
+                {"source": "Hollis 2006", "source_key": "hollis-2006", "r_id": "R1"},
+                {"source": "Hollis 2006 again", "source_key": "hollis-2006", "r_id": "R2"}],
+            "unverifiable_sources": [{"source": "Hollis 2006", "source_key": "hollis-2006",
                                       "r_id": "R1"}],
             "misrepresented_sources": [],
             "flags": {"fabrication_risk": True},
         }
 
     def _task(self, status="supplied_confirmed"):
-        return {"sources": {"jenkins-2006": {
-                    "supplied_file": "/tmp/jenkins.pdf",
-                    "identity": {"title": "Convergence Culture", "year": 2006},
+        return {"sources": {"hollis-2006": {
+                    "supplied_file": "/tmp/hollis.pdf",
+                    "identity": {"title": "Convergent Media", "year": 2006},
                     "identity_status": status}},
                 "entries": [{"id": "C1", "prior": "Not Judged"}]}
 
     def _judgments(self, **extra):
         change = {"id": "C1", "prior": "Not Judged", "new": "Supports",
-                  "source_key": "jenkins-2006", "evidence": "quote"}
+                  "source_key": "hollis-2006", "evidence": "quote"}
         change.update(extra)
         return {"changes": [change]}
 
@@ -1599,11 +1610,11 @@ class ReappraiseIdentityTests(unittest.TestCase):
         self.assertEqual(data["nonexistent_sources"], [])
         self.assertEqual(data["unverifiable_sources"], [])
         self.assertFalse(data["flags"]["fabrication_risk"])
-        source = next(s for s in data["sources"] if s["source_key"] == "jenkins-2006")
+        source = next(s for s in data["sources"] if s["source_key"] == "hollis-2006")
         self.assertEqual(source["retrieval"], "retrieved")
         self.assertEqual(source["identity_outcome"], "confirmed")
         audit = data["reappraisal"]["identity_resolved"]
-        self.assertEqual(audit[0]["source_key"], "jenkins-2006")
+        self.assertEqual(audit[0]["source_key"], "hollis-2006")
         self.assertEqual(audit[0]["prior_outcome"], "unverifiable")
         self.assertEqual(audit[0]["removed_from"], ["nonexistent_sources",
                                                    "unverifiable_sources"])
@@ -1615,7 +1626,7 @@ class ReappraiseIdentityTests(unittest.TestCase):
         self.assertEqual(len(data["unverifiable_sources"]), 1)
         self.assertTrue(data["flags"]["fabrication_risk"])
         self.assertEqual(data["reappraisal"]["identity_unresolved"][0]["source_key"],
-                         "jenkins-2006")
+                         "hollis-2006")
 
     def test_a_change_can_declare_the_identity_still_unresolved(self):
         data = ra.render_summary_data(self._data(), self._task(),
@@ -2373,7 +2384,7 @@ class ReferenceHeadingTests(unittest.TestCase):
     def test_heading_is_inferred_from_unsegmented_entries(self):
         paras = [{"text": "Body paragraph about the case study and its argument."} for _ in range(6)]
         paras += [
-            {"text": "Smith, J. (2020). A book about stars. Routledge."},
+            {"text": "Smith, J. (2020). A book about stars. Alder House."},
             {"text": "Jones, A., & Lee, B. (2019). An article. Journal of Film, 4(2), 1-20."},
             {"text": "Brown, C. (2018). Another source. https://example.org/x"},
         ]
@@ -2381,7 +2392,7 @@ class ReferenceHeadingTests(unittest.TestCase):
 
     def test_annotated_reference_lists_heading_is_recognised(self):
         paras = [{"text": "Reference lists:"}] + [
-            {"text": "Smith, J. (2020). A book about stars. Routledge."},
+            {"text": "Smith, J. (2020). A book about stars. Alder House."},
             {"text": "Jones, A. (2019). An article. Journal of Film, 4(2), 1-20."},
         ]
         self.assertEqual(ec.reference_heading_index(paras), 0)

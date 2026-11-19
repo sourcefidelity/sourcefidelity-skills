@@ -4,7 +4,7 @@
 #   ./install.sh [--target DIR] [--dry-run] [--no-venv]
 #
 # The installer does three things: copy the three skill folders, check for
-# Python 3.12, and (unless --no-venv) build each skill's .venv. It never
+# Python 3.12, and (unless --no-venv) build the shared .venv. It never
 # installs Python, pip packages beyond pypdf/pymupdf, or OCR tools silently.
 set -euo pipefail
 
@@ -78,17 +78,24 @@ if [ -z "$PYTHON" ]; then
 else
   echo "Python found: $PYTHON"
   if [ "$WITH_VENV" = "1" ]; then
-    for skill in "${SKILLS[@]}"; do
-      if [ "$DRY_RUN" = "1" ]; then
-        echo "would create: $TARGET/$skill/.venv (pypdf, pymupdf)"
+    # One venv serves all three skills: it is built beside sourcefidelity-review
+    # and every script resolves it (an existing per-skill venv still wins).
+    SHARED="$TARGET/sourcefidelity-review/.venv"
+    if [ "$DRY_RUN" = "1" ]; then
+      echo "would create: $SHARED (pypdf, pymupdf, shared by all three skills)"
+    elif "$SHARED/bin/python" -c "import pypdf, pymupdf" >/dev/null 2>&1; then
+      echo "venv ready (already complete): sourcefidelity-review"
+    else
+      echo "building the shared venv in sourcefidelity-review (pip downloads pypdf and pymupdf)"
+      "$PYTHON" -m venv "$SHARED"
+      "$SHARED/bin/python" -m pip install --quiet --upgrade pip || true
+      if "$SHARED/bin/python" -m pip install --quiet pypdf pymupdf; then
+        echo "venv ready: sourcefidelity-review"
       else
-        "$PYTHON" -m venv "$TARGET/$skill/.venv"
-        "$TARGET/$skill/.venv/bin/python" -m pip install --quiet --upgrade pip || true
-        "$TARGET/$skill/.venv/bin/python" -m pip install --quiet pypdf pymupdf \
-          && echo "venv ready: $skill" \
-          || echo "venv incomplete for $skill; re-run pip install pypdf pymupdf" >&2
+        echo "the shared venv is incomplete; re-run this installer" >&2
+        exit 1
       fi
-    done
+    fi
   fi
   echo
   echo "Next: relaunch your harness and ask for a source-use review."

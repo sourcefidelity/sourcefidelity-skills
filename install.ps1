@@ -2,8 +2,8 @@
 #
 #   .\install.ps1 [-Target DIR] [-DryRun] [-NoVenv]
 #
-# Copies the three skill folders, checks for Python 3.12, and builds each
-# skill's .venv unless -NoVenv is given. It never installs Python or OCR tools
+# Copies the three skill folders, checks for Python 3.12, and builds the .venv
+# they share unless -NoVenv is given. It never installs Python or OCR tools
 # silently.
 param(
     [string]$Target = "",
@@ -98,33 +98,31 @@ if (-not $Python) {
 }
 
 Write-Host "Python found: $((@($Python) + $PythonArgs) -join ' ')"
-$Incomplete = @()
+$Incomplete = $false
 if (-not $NoVenv) {
-    foreach ($skill in $Skills) {
-        $venv = Join-Path $Target (Join-Path $skill ".venv")
-        $venvPython = Join-Path $venv "Scripts\python.exe"
-        if ($DryRun) {
-            Write-Host "would create: $venv (pypdf, pymupdf)"
-            continue
-        }
-        if (Test-SkillVenv $venvPython) {
-            Write-Host "venv ready (already complete): $skill"
-            continue
-        }
-        Write-Host "building venv for $skill - pip downloads pypdf and pymupdf, so a first run takes a few minutes"
+    # One venv serves all three skills: it is built beside sourcefidelity-review
+    # and every script resolves it (an existing per-skill venv still wins).
+    $venv = Join-Path $Target (Join-Path "sourcefidelity-review" ".venv")
+    $venvPython = Join-Path $venv "Scripts\python.exe"
+    if ($DryRun) {
+        Write-Host "would create: $venv (pypdf, pymupdf, shared by all three skills)"
+    } elseif (Test-SkillVenv $venvPython) {
+        Write-Host "venv ready (already complete): sourcefidelity-review"
+    } else {
+        Write-Host "building the shared venv in sourcefidelity-review - pip downloads pypdf and pymupdf, so a first run takes a few minutes"
         Install-SkillVenv $Python $PythonArgs $venv
         if (Test-SkillVenv $venvPython) {
-            Write-Host "venv ready: $skill"
+            Write-Host "venv ready: sourcefidelity-review"
         } else {
-            Write-Host "venv INCOMPLETE: $skill"
-            $Incomplete += $skill
+            Write-Host "venv INCOMPLETE: sourcefidelity-review"
+            $Incomplete = $true
         }
     }
 }
 Write-Host ""
-if ($Incomplete.Count -gt 0) {
-    Write-Host "Incomplete venvs: $($Incomplete -join ', ')"
-    Write-Host "Re-run this installer to finish them: .\install.ps1 -Target `"$Target`""
+if ($Incomplete) {
+    Write-Host "The shared venv is incomplete."
+    Write-Host "Re-run this installer to finish it: .\install.ps1 -Target `"$Target`""
     exit 1
 }
 Write-Host "Next: relaunch your harness and ask for a source-use review."

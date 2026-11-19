@@ -4,10 +4,11 @@
     python3 scripts/which_python.py [--json] [--skill DIR]
 
 Order: the skill's own .venv (``bin/python`` on POSIX, ``Scripts\\python.exe``
-on Windows), then ``python3.12`` or ``python3`` on PATH, and on Windows also
-``python`` and the interpreter behind the ``py`` launcher. A candidate qualifies
-when it is 3.12 or newer. If none qualifies, the skill runs in prompt-only mode
-and this script prints the limitation instead of a path.
+on Windows), then the venv beside ``sourcefidelity-review`` that one install
+builds for all three skills, then ``python3.12`` or ``python3`` on PATH, and on
+Windows also ``python`` and the interpreter behind the ``py`` launcher. A
+candidate qualifies when it is 3.12 or newer. If none qualifies, the skill runs
+in prompt-only mode and this script prints the limitation instead of a path.
 
 This file itself runs on older interpreters and uses only the standard library,
 so it is safe to call before the venv exists.
@@ -41,11 +42,19 @@ LIMITATION = ("Python 3.12 is unavailable. Run in prompt-only mode: word counts,
 
 
 def venv_candidates(skill_dir, os_name=None):
-    """Interpreter paths to try inside one skill directory."""
+    """Interpreter paths to try: this skill's own .venv, then the shared one.
+
+    All three skills accept one venv, built beside sourcefidelity-review; a
+    skill that has its own keeps using it first.
+    """
     os_name = os_name or os.name
-    if os_name == "nt":
-        return [os.path.join(skill_dir, ".venv", "Scripts", "python.exe")]
-    return [os.path.join(skill_dir, ".venv", "bin", "python")]
+    parts = ((".venv", "Scripts", "python.exe") if os_name == "nt"
+             else (".venv", "bin", "python"))
+    own = os.path.join(skill_dir, *parts)
+    shared = os.path.join(os.path.dirname(skill_dir), "sourcefidelity-review", *parts)
+    if os.path.abspath(own) == os.path.abspath(shared):
+        return [own]
+    return [own, shared]
 
 
 def version_ok(path):
