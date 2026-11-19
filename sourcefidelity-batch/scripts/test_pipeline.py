@@ -2976,5 +2976,37 @@ class HyperlinkAuditTests(unittest.TestCase):
         self.assertEqual(state["state"], "login-page")
 
 
+class MetricsTests(unittest.TestCase):
+    def test_pricing_is_chosen_for_the_run_date(self):
+        rates, label, effective = rm.rates_for("deepseek-v4-flash",
+                                               "2026-11-19T11:12:45Z")
+        self.assertEqual(rates, (0.003, 0.15, 0.60))
+        self.assertEqual(label, "DeepSeek V4 Flash")
+        self.assertEqual(effective, "2026-11-17")
+        self.assertIsNone(rm.rates_for("no-such-model")[0])
+
+    def test_usage_whose_cache_exceeds_the_uncached_prompt_is_priced(self):
+        cost = rm.estimate_cost(
+            {"input_tokens": 39488, "output_tokens": 40409,
+             "cache_read_tokens": 12895744},
+            "deepseek-v4-flash", "2026-11-19T11:12:45Z")
+        self.assertEqual(cost["cost_status"], "estimated")
+        self.assertEqual(cost["cache_miss_tokens"], 39488)
+        self.assertGreater(cost["estimated_cost_usd"], 0)
+
+    def test_tokens_line_shows_cached_and_uncached(self):
+        block = "\n".join(rm.render_block({"runs": [{
+            "phase": "review", "status": "completed",
+            "started_at": "2026-11-19T11:12:45Z",
+            "duration_ms": 384000,
+            "usage": {"input_tokens": 39488, "output_tokens": 40409,
+                      "cache_read_tokens": 12895744, "total_tokens": 12975641},
+            "cost_status": "estimated", "estimated_cost_usd": 0.0689,
+            "model": "deepseek-v4-flash", "window": "off_peak",
+        }]}))
+        self.assertIn("cached +", block)
+        self.assertIn("uncached", block)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

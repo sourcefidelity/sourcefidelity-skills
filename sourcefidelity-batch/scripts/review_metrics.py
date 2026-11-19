@@ -22,16 +22,51 @@ MARKER_START = "<!-- review-metrics:start -->"
 MARKER_END = "<!-- review-metrics:end -->"
 
 # USD per 1M tokens, off-peak: (cache hit, cache miss/input, output)
-RATES = {
-    "deepseek-v4-flash": (0.003, 0.15, 0.60),
-    "deepseek-flash": (0.003, 0.15, 0.60),
-    "deepseek-v4-pro": (0.022, 0.66, 1.98),
+PRICING = {
+    "deepseek-v4-flash": [
+        {"effective_from": "2026-11-17", "rates": (0.003, 0.15, 0.60),
+         "label": "DeepSeek V4 Flash"},
+    ],
+    "deepseek-flash": [
+        {"effective_from": "2026-11-17", "rates": (0.003, 0.15, 0.60),
+         "label": "DeepSeek Flash"},
+    ],
+    "deepseek-v4-pro": [
+        {"effective_from": "2026-11-17", "rates": (0.022, 0.66, 1.98),
+         "label": "DeepSeek V4 Pro"},
+    ],
 }
-MODEL_LABELS = {
-    "deepseek-v4-flash": "DeepSeek V4 Flash",
-    "deepseek-flash": "DeepSeek Flash",
-    "deepseek-v4-pro": "DeepSeek V4 Pro",
-}
+RATES = {model: windows[-1]["rates"] for model, windows in PRICING.items()}
+MODEL_LABELS = {model: windows[-1]["label"]
+                for model, windows in PRICING.items()}
+
+
+def _aware(value):
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def rates_for(model, at=None):
+    """(rates, label, effective_from) in force for a model at a run start.
+
+    Pricing tables are dated: a run is priced with the table that was current
+    when it started, so a later price revision never rewrites an old cost.
+    """
+    windows = PRICING.get((model or "").strip())
+    if not windows:
+        return None, None, None
+    when = _aware(parse_time(at))
+    chosen = None
+    for window in windows:
+        start = _aware(parse_time(window["effective_from"]))
+        if start is None:
+            continue
+        if when is None or start <= when:
+            chosen = window
+    if chosen is None:
+        chosen = windows[0] if when is not None else windows[-1]
+    return chosen["rates"], chosen.get("label", model), chosen["effective_from"]
 PEAK_HOURS = ((1, 4), (6, 10))  # [start, end) UTC
 
 
@@ -73,14 +108,15 @@ def _int(usage, *names):
 def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
     """Return a priced usage record, or a not_recorded record with a reason."""
     model = (model or "deepseek-v4-flash").strip()
-    base = RATES.get(model)
+    base, label, effective = rates_for(model, started_at)
     if base is None:
         return {"cost_status": "not_recorded", "reason": "unknown_model",
                 "model": model, "pricing_as_of": PRICING_AS_OF}
     input_tokens = _int(usage, "input_tokens", "inputTokens", "prompt_tokens")
     output_tokens = _int(usage, "output_tokens", "outputTokens", "completion_tokens")
-    cache_read = _int(usage, "cache_read_tokens", "cacheReadTokens",
-                      "prompt_cache_hit_tokens")
+    cache_read = _int(usage, "cache_hit_tokens", "cache_read_tokens",
+                      "cacheReadTokens", "prompt_cache_hit_tokens")
+    explicit_miss = _int(usage, "cache_miss_tokens", "cacheMissTokens")
     if cache_read is None:
         cache_read = 0
     if input_tokens is None or output_tokens is None:
@@ -93,7 +129,8 @@ def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
     # the uncached remainder, so the cache can exceed it. Older providers fold
     # the cached tokens into input, in which case cache_read <= input.
     separate_cache = cache_read > input_tokens
-    cache_miss = input_tokens if separate_cache else input_tokens - cache_read
+    cache_miss = explicit_miss if explicit_miss is not None else (
+        input_tokens if separate_cache else input_tokens - cache_read)
     peak = is_peak(started_at)
     multiplier = 2.0 if peak else 1.0
     hit_rate, input_rate, output_rate = (rate * multiplier for rate in base)
@@ -103,9 +140,9 @@ def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
     return {
         "cost_status": "estimated",
         "model": model,
-        "model_label": MODEL_LABELS.get(model, model),
+        "model_label": label or MODEL_LABELS.get(model, model),
         "window": "peak" if peak else ("off_peak" if started_at else "unknown"),
-        "pricing_as_of": PRICING_AS_OF,
+        "pricing_as_of": effective or PRICING_AS_OF,
         "rates_usd_per_million": {
             "cache_hit": round(hit_rate, 6),
             "cache_miss": round(input_rate, 6),
@@ -115,6 +152,7 @@ def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
         "cache_hit_tokens": cache_read,
         "cache_miss_tokens": cache_miss,
         "output_tokens": output_tokens,
+        "prompt_tokens": input_tokens + (cache_read if separate_cache else 0),
         "total_tokens": input_tokens + output_tokens + (cache_read if separate_cache else 0),
         "estimated_cost_usd": round(cost, 9),
     }
@@ -250,10 +288,11 @@ def _phase_lines(label, summary):
     if summary["total_tokens"] is None:
         tokens_line += "not recorded"
     else:
+        prompt = summary["cache_hit_tokens"] + summary["cache_miss_tokens"]
         tokens_line += (
             f"{format_tokens(summary['total_tokens'])} total — "
-            f"{format_tokens(summary['input_tokens'])} input "
-            f"({format_tokens(summary['cache_hit_tokens'])} cache hits; "
+            f"{format_tokens(prompt)} prompt "
+            f"({format_tokens(summary['cache_hit_tokens'])} cached + "
             f"{format_tokens(summary['cache_miss_tokens'])} uncached), "
             f"{format_tokens(summary['output_tokens'])} output")
     cost_line = f"**Estimated {label.lower()} cost:** "
