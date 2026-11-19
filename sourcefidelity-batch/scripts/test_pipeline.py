@@ -3132,5 +3132,37 @@ class LinkStatesTests(unittest.TestCase):
         self.assertEqual(len(changed), 2)
 
 
+class ProviderTests(unittest.TestCase):
+    def test_core_provider_needs_a_key(self):
+        with mock.patch.object(rd, "core_api_key", return_value=""):
+            self.assertEqual(rd._core_oa("10.1000/x"), [])
+        with mock.patch.object(rd, "core_api_key", return_value="k"), \
+                mock.patch.object(rd, "_json",
+                                  return_value={"results": [{"downloadUrl": "https://x/y.pdf"}]}):
+            self.assertEqual(rd._core_oa("10.1000/x"), ["https://x/y.pdf"])
+
+    def test_hathitrust_keeps_only_full_view_items(self):
+        parsed = {"isbn": "978-0-415-00000-0", "title": "Heavenly bodies"}
+        data = {"items": [
+            {"rightsCode": "pd", "itemURL": "https://babel.example/pd"},
+            {"rightsCode": "ic", "itemURL": "https://babel.example/ic"}]}
+        with mock.patch.object(rd, "_json", return_value=data):
+            urls = rd._hathitrust_urls(parsed)
+        self.assertEqual(urls, ["https://babel.example/pd"])
+
+    def test_semantic_scholar_sends_bearer_token(self):
+        seen = {}
+
+        def fake_json(url, timeout=25, headers=None):
+            seen["headers"] = headers
+            return {"openAccessPdf": {"url": "https://x/y.pdf"}}
+
+        with mock.patch.object(rd, "_key", return_value="secret"), \
+                mock.patch.object(rd, "_json", side_effect=fake_json):
+            self.assertEqual(rd._semantic_scholar_oa("10.1000/x"),
+                             ["https://x/y.pdf"])
+        self.assertEqual(seen["headers"], {"Authorization": "Bearer secret"})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

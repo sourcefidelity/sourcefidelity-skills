@@ -139,3 +139,6 @@ if (-not (Get-Command tesseract -ErrorAction SilentlyContinue)) {
     Write-Host "    `"$hintPython`" -I scripts/pdf_quality.py languages --install chi_sim"
 }
 Write-Host "Next: relaunch your harness and ask for a source-use review."
+
+Write-Host "Optional: store a contact email and free API keys with"
+Write-Host "  $VenvPython -I scripts/user_settings.py --prompt"

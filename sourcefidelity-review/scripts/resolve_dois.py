@@ -80,6 +80,14 @@ def _key(name):
             if False else ""
 
 
+def core_api_key():
+    try:
+        import user_settings
+        return user_settings.get("core_api_key")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def google_books_key():
     try:
         import user_settings
@@ -738,6 +746,7 @@ STRONG_BOOK_ROUTES = (
 SUPPORTING_BOOK_ROUTES = (
     ("Open Library", "_probe_openlibrary"),
     ("Google Books", "_probe_googlebooks"),
+    ("HathiTrust", "_probe_hathitrust"),
 )
 
 
@@ -811,6 +820,47 @@ def book_affirmative(parsed):
 UNPAYWALL = "https://api.unpaywall.org/v2/"
 
 
+def _core_oa(doi):
+    """Result download URL from CORE, when a key is configured."""
+    key = core_api_key()
+    if not key:
+        return []
+    data = _json("https://api.core.ac.uk/v3/search/works?q="
+                 + urllib.parse.quote('doi:"' + doi + '"') + "&limit=1",
+                 headers={"Authorization": "Bearer " + key}, timeout=20)
+    urls = []
+    for result in data.get("results") or []:
+        value = result.get("downloadUrl") or result.get("fullTextLink")
+        if value and value not in urls:
+            urls.append(value)
+    return urls
+
+
+def _hathitrust_urls(parsed):
+    """Full-view URLs for an ISBN, from the HathiTrust Bib API."""
+    isbn = (parsed.get("isbn") or "").replace("-", "")
+    if not isbn:
+        return []
+    data = _json("https://catalog.hathitrust.org/api/volumes/brief/isbn/"
+                 + urllib.parse.quote(isbn) + ".json", timeout=15)
+    urls = []
+    for item in (data.get("items") or []):
+        rights = (item.get("rightsCode") or "").lower()
+        if rights in ("pd", "pdus", "world"):
+            value = item.get("itemURL") or item.get("recordURL")
+            if value and value not in urls:
+                urls.append(value)
+    return urls
+
+
+def _probe_hathitrust(parsed):
+    """HathiTrust as a supporting book catalogue: presence and full view."""
+    urls = _hathitrust_urls(parsed)
+    if urls:
+        return {"count": len(urls), "title": parsed.get("title", ""), "score": 1.0}, ""
+    return {"count": 0, "title": "", "score": 0.0}, ""
+
+
 def _openalex_oa(doi):
     """Open-access URL from an OpenAlex work record."""
     mailto = urllib.parse.quote(email_for_requests())
@@ -861,7 +911,8 @@ def oa_pdf_urls(doi, mailto=""):
     """PDF URLs from Unpaywall's OA locations, best first."""
     query = "?email=" + urllib.parse.quote(mailto or "review@example.org")
     data = _json(UNPAYWALL + urllib.parse.quote(doi) + query)
-    for provider in (_openalex_oa, _semantic_scholar_oa, _europepmc_oa):
+    for provider in (_openalex_oa, _semantic_scholar_oa, _europepmc_oa,
+                     _core_oa):
         try:
             for value in provider(doi):
                 if value and value not in urls:

@@ -81,6 +81,12 @@ Every skill works with prompts alone. Without Python you lose word counts, page 
 
 `python -I scripts/resolve_dois.py --paper PAPER --out DIR` reads the paper's reference list, resolves each entry to a DOI or a book record, verifies author and year against that record, and then attempts the DOI resolver. A PDF the publisher serves publicly is kept in DIR; everything else is recorded as an identity outcome or an access limitation. `--refs FILE` and repeated `--entry TEXT` accept references directly, `--no-attempt` resolves identity without retrieval, and `--check-contents` adds the affirmative test for articles: it lists the cited volume's records and reports which article occupies the cited pages, treating a cited range outside the issue's own pagination as evidence the cited article is not there. Two files are written: `accession.json` for the full record and `accession.md` for the summary table.
 
+## Retrieval settings and pathways
+
+Run `python -I scripts/user_settings.py --prompt` once to store a contact address and optional free API keys in `~/.dsh/sourcefidelity.json` (mode 0600, never in the venv or the repo). The address routes Crossref to its polite pool and is required by Unpaywall; OpenAlex and Semantic Scholar use free keys for a higher rate; Google Books and CORE keys are optional.
+
+Retrieval tries, in order: the supplied copy; a DOI PDF at the publisher (including `citation_pdf_url`); open copies from Unpaywall, OpenAlex, Semantic Scholar, Europe PMC and CORE; a Wayback snapshot for a dead or blocked link; the keyless book catalogues (K10plus, BnF, DNB, Internet Archive, CiNii, Open Library, Google Books, HathiTrust). A failed provider is recorded as a limitation, not as absence. Gallica is used by the batch acquisition stage for digitised periodicals; the single-paper resolver has no non-DOI periodical identifier to query it with.
+
 ## Data and privacy
 
 The skills process student papers and may process copyrighted sources. Keep these outside the repository:

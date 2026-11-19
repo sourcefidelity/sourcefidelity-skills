@@ -22,7 +22,8 @@ CONFIG_PATH = os.path.join(os.path.expanduser("~"), ".dsh", "sourcefidelity.json
 ENV_NAMES = {"email": "SOURCEFIDELITY_EMAIL",
              "google_books_key": "GOOGLE_BOOKS_API_KEY",
              "openalex_api_key": "OPENALEX_API_KEY",
-             "semantic_scholar_api_key": "SEMANTIC_SCHOLAR_API_KEY"}
+             "semantic_scholar_api_key": "SEMANTIC_SCHOLAR_API_KEY",
+             "core_api_key": "CORE_API_KEY"}
 SIGNUP = {
     "email": "your own address (no signup needed)",
     "google_books_key": "https://console.cloud.google.com/apis/library/books.googleapis.com",
@@ -30,6 +31,7 @@ SIGNUP = {
                         "and the per-second limit)",
     "semantic_scholar_api_key": "https://www.semanticscholar.org/product/api#api-key-form "
                                 "(free key; 1 request/second)",
+    "core_api_key": "https://core.ac.uk/services/api (free key; aggregate repository search)",
 }
 
 
@@ -91,7 +93,8 @@ def prompt(path=None):
     if value:
         save({"google_books_key": value}, path)
     for name, label in (("openalex_api_key", "OpenAlex"),
-                        ("semantic_scholar_api_key", "Semantic Scholar")):
+                        ("semantic_scholar_api_key", "Semantic Scholar"),
+                        ("core_api_key", "CORE")):
         print(f"{label} API key (optional but recommended; free).")
         print(f"  create one at {SIGNUP[name]}")
         print(f"  current: {'set' if data.get(name) else '(unset)'}")
