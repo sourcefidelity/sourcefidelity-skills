@@ -3367,6 +3367,76 @@ class CacheMaintenanceTests(unittest.TestCase):
     def test_the_fetch_lock_waits_two_minutes(self):
         self.assertEqual(rd._acquire_lock.__defaults__[0], 120.0)
 
+class RetrievalEfficiencyTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = self._tmp.name
+        self.old_root = rd.CACHE_ROOT
+        rd.CACHE_ROOT = self.root
+
+    def tearDown(self):
+        rd.CACHE_ROOT = self.old_root
+        self._tmp.cleanup()
+
+    def _book(self, title="Heavenly bodies: Film stars and society"):
+        return rd.parse_reference(f"Dyer, R. (2004). {title}. Routledge.")
+
+    def test_a_held_catalogue_answer_is_not_probed_twice(self):
+        parsed = self._book()
+        held = {"count": 10, "title": "Heavenly Bodies: Film Stars and Society",
+                "score": 0.9}
+        calls = []
+        with mock.patch.object(rd, "_probe_k10plus",
+                               side_effect=lambda p: (calls.append(1), (held, ""))[1]):
+            first = rd.book_affirmative(parsed)
+            second = rd.book_affirmative(parsed)
+        self.assertEqual(first["status"], "present")
+        self.assertEqual(second["status"], "present")
+        self.assertIn("cached", second["note"])
+        self.assertEqual(len(calls), 1)
+
+    def test_a_dead_host_is_not_retried_for_every_reference(self):
+        zero = ({"count": 0, "title": "", "score": 0.0}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=(None, "TimeoutError")), \
+                mock.patch.object(rd, "_probe_bnf", return_value=zero), \
+                mock.patch.object(rd, "_probe_dnb", return_value=zero):
+            first = rd.book_affirmative(self._book())
+        self.assertTrue(any("K10plus" == route["catalogue"] for route in first["routes"]))
+        with mock.patch.object(rd, "_probe_k10plus",
+                               side_effect=AssertionError("dead host retried")), \
+                mock.patch.object(rd, "_probe_bnf", return_value=zero), \
+                mock.patch.object(rd, "_probe_dnb", return_value=zero):
+            second = rd.book_affirmative(self._book("An entirely different monograph"))
+        k10 = [route for route in second["routes"] if route["catalogue"] == "K10plus"]
+        self.assertTrue(k10 and "host unavailable" in k10[0]["detail"])
+
+    def test_a_confirmed_identity_stops_the_catalogue_chain(self):
+        entry = ("Dyer, R. (2004). Heavenly bodies: Film stars and society. "
+                 "Routledge. https://doi.org/10.4324/x")
+        meta = {"title": "Heavenly bodies", "year": "2004"}
+        with mock.patch.object(rd, "crossref_by_doi_cached", return_value=meta), \
+                mock.patch.object(rd, "match_record", return_value=("confirmed", {})), \
+                mock.patch.object(rd, "book_affirmative",
+                                  side_effect=AssertionError("catalogue chain used")):
+            record = rd.process(entry, self.root, False, "", check_contents=True)
+        self.assertEqual(record["identity"], "confirmed")
+
+    def test_a_confirmed_doi_stops_title_search_routes(self):
+        entry = ("Wallace, W. T. (1993). The role of actors in films. "
+                 "Journal of cultural economics, 17(1), 1-27. "
+                 "https://doi.org/10.1007/BF00820765")
+        with mock.patch.object(rd, "crossref_by_doi_cached",
+                               return_value={"title": "The role of actors",
+                                             "year": "1993"}), \
+                mock.patch.object(rd, "match_record", return_value=("confirmed", {})), \
+                mock.patch.object(rd, "landing_metadata", return_value={}), \
+                mock.patch.object(rd, "openalex_search",
+                                  side_effect=AssertionError("title search used")), \
+                mock.patch.object(rd, "crossref_search",
+                                  side_effect=AssertionError("title search used")):
+            record = rd.process(entry, self.root, False, "", check_contents=False)
+        self.assertEqual(record["identity"], "confirmed")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

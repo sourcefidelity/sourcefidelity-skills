@@ -314,6 +314,9 @@ def match_record(parsed, candidate, kind):
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
+DECISIVE_IDENTITIES = frozenset({"confirmed", "same_work_other_edition",
+                                 "bibliographic_conflict",
+                                 "title_conflict_at_coordinates"})
 
 
 class RateLimited(Exception):
@@ -379,11 +382,11 @@ def cache_load():
         return {}
 
 
-def cache_get(kind, key):
+def cache_get(kind, key, ttl=CACHE_TTL_SECONDS):
     entry = (cache_load().get(kind) or {}).get(key)
     if not isinstance(entry, dict):
         return None
-    if time.time() - float(entry.get("stored_at") or 0) > CACHE_TTL_SECONDS:
+    if time.time() - float(entry.get("stored_at") or 0) > ttl:
         return None
     return entry.get("value")
 
@@ -1018,63 +1021,98 @@ def _probe_googlebooks(parsed):
             "score": title_score(parsed.get("title"), title)}, ""
 
 
-STRONG_BOOK_ROUTES = (
+# Narrowed by kind: the three union catalogues answer existence first; the
+# remaining routes only run when those are inconclusive. Google Books and
+# HathiTrust are dropped from the book chain: one rate-limits, the other exposes
+# only a limited view, and neither is needed to establish absence.
+BOOK_PRIMARY_ROUTES = (
     ("K10plus", "_probe_k10plus"),
     ("BnF", "_probe_bnf"),
     ("DNB", "_probe_dnb"),
+)
+BOOK_SECONDARY_ROUTES = (
     ("Internet Archive", "_probe_internet_archive"),
     ("CiNii", "_probe_cinii"),
 )
-SUPPORTING_BOOK_ROUTES = (
+BOOK_FALLBACK_ROUTES = (
     ("Open Library", "_probe_openlibrary"),
-    ("Google Books", "_probe_googlebooks"),
-    ("HathiTrust", "_probe_hathitrust"),
 )
+HOST_FAILURE_TTL_SECONDS = 900
+HOST_FAILURE_REASONS = frozenset({
+    "URLError", "HTTPError", "TimeoutError", "RateLimited", "ConnectionError",
+    "ConnectionResetError", "RemoteDisconnected", "socket.timeout", "timeout",
+})
+
+
+def _host_unavailable(name):
+    """A host that failed this recently is skipped instead of retried."""
+    entry = cache_get("host", name, ttl=HOST_FAILURE_TTL_SECONDS)
+    return entry.get("reason") if isinstance(entry, dict) else None
+
+
+def _catalogue_record(name, probe_name, parsed, key):
+    """One catalogue answer, from cache where possible; None when unavailable."""
+    reason = _host_unavailable(name)
+    if reason:
+        return None, f"host unavailable ({reason})"
+    cached = cache_get("catalogue", f"{key}|{name}") if key else None
+    if isinstance(cached, dict):
+        return cached, "cache"
+    record, detail = globals()[probe_name](parsed)
+    if record is None:
+        if detail in HOST_FAILURE_REASONS:
+            cache_put("host", name, {"reason": detail})
+        return None, detail
+    if key:
+        cache_put("catalogue", f"{key}|{name}", record)
+    return record, ""
 
 
 def book_affirmative(parsed):
     """Ask book catalogues whether the work exists, and say who answered.
 
-    Every keyless catalogue is attempted with a short timeout, because which
-    hosts are reachable is a property of the machine, not of the work: a route
-    that fails here may answer elsewhere, and a failure is never counted as a
-    zero. Strong routes are tried until a hold or two zeros settle the question;
-    supporting routes only run when they have not.
+    The three primary catalogues are tried until a hold or two answered zeros;
+    secondary and fallback routes run only when the primary set stayed silent.
+    Per-catalogue answers are cached for 30 days and host failures for 15
+    minutes, so a dead or rate-limited host is paid for once, not per reference.
     """
     routes = []
     result = {"status": "search_incomplete", "routes": routes, "note": "",
               "first_title": "", "score": 0.0}
-    zeros, held, mismatch = 0, None, []
-    for name, probe_name in STRONG_BOOK_ROUTES:
-        record, reason = globals()[probe_name](parsed)
-        if record is None:
-            routes.append({"catalogue": name, "count": None, "strong": True,
-                           "detail": reason})
-            continue
-        entry = {"catalogue": name, "count": record["count"], "strong": True,
-                 "detail": record.get("title", ""), "score": record.get("score", 0.0)}
-        routes.append(entry)
-        if record["count"] == 0:
-            zeros += 1
-            if zeros >= 2:
-                break
-        elif record.get("score", 0.0) >= 0.4 or name in ("DNB", "Internet Archive"):
-            held = entry
-            break
-        else:
-            mismatch.append(entry)
-    if held is None and zeros < 2:
-        for name, probe_name in SUPPORTING_BOOK_ROUTES:
-            record, reason = globals()[probe_name](parsed)
+    key = identity_key(parsed)
+    if key:
+        cached = cache_get("catalogue", f"{key}|verdict")
+        if isinstance(cached, dict) and cached.get("status"):
+            cached = dict(cached)
+            cached["note"] = (cached.get("note") or "") + " (cached)"
+            return cached
+
+    zeros, held, mismatch, answered = 0, None, 0, 0
+    tiers = ((True, BOOK_PRIMARY_ROUTES), (False, BOOK_SECONDARY_ROUTES),
+             (False, BOOK_FALLBACK_ROUTES))
+    for strong, routes_in_tier in tiers:
+        for name, probe_name in routes_in_tier:
+            record, detail = _catalogue_record(name, probe_name, parsed, key)
             if record is None:
-                routes.append({"catalogue": name, "count": None, "strong": False,
-                               "detail": reason})
+                routes.append({"catalogue": name, "count": None, "strong": strong,
+                               "detail": detail})
                 continue
-            routes.append({"catalogue": name, "count": record["count"], "strong": False,
-                           "detail": record.get("title", ""),
-                           "score": record.get("score", 0.0)})
-            if record["count"]:
-                mismatch.append(routes[-1])
+            answered += 1
+            entry = {"catalogue": name, "count": record["count"], "strong": strong,
+                     "detail": record.get("title", ""),
+                     "score": record.get("score", 0.0)}
+            routes.append(entry)
+            if record["count"] == 0:
+                zeros += 1
+                if zeros >= 2:
+                    break
+            elif record.get("score", 0.0) >= 0.4 or name in ("DNB", "Internet Archive"):
+                held = entry
+                break
+            else:
+                mismatch += 1
+        if held is not None or zeros >= 2:
+            break
 
     if held is not None:
         result.update({"status": "present",
@@ -1091,11 +1129,14 @@ def book_affirmative(parsed):
                        "note": (f"no record in {zero_name}; fewer than two strong "
                                  f"catalogues answered, so absence is not established")})
     elif mismatch:
+        first = [route for route in routes if route["count"]][0]
         result.update({"status": "present_title_mismatch",
-                       "first_title": mismatch[0].get("detail", ""),
-                       "note": (f"{mismatch[0]['catalogue']} returns "
-                                 f"{mismatch[0]['count']} record(s) but none matches this "
-                                 f"title; nearest: {(mismatch[0].get('detail') or '')[:90]}")})
+                       "first_title": first.get("detail", ""),
+                       "note": (f"{first['catalogue']} returns {first['count']} "
+                                f"record(s) but none matches this title; nearest: "
+                                f"{(first.get('detail') or '')[:90]}")})
+    if key:
+        cache_put("catalogue", f"{key}|verdict", result)
     return result
 
 
@@ -1497,6 +1538,8 @@ KIND_ROUTES = {
 def process(entry, out_dir, attempt, mailto, check_contents=False):
     parsed = parse_reference(entry)
     kind = entry_kind(parsed["entry"], parsed)
+    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
+              "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
     if kind == "article" and parsed["doi"]:
         record["publisher"] = landing_metadata(parsed["doi"], mailto)
         if record["publisher"].get("toc_url"):
@@ -1505,8 +1548,6 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
                 and record["publisher"].get("last_page")):
             record["notes"].append("publisher pages: " + record["publisher"]["first_page"]
                                    + "-" + record["publisher"]["last_page"])
-    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
-              "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
     if kind == "film":
         record["identity"] = "web_only"
         record["notes"].append("film entry: bibliographic adapters do not apply")
@@ -1526,6 +1567,10 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["notes"].append("identity: cache hit")
     routes = KIND_ROUTES[kind]
     ran, failed, seen = [], [], []
+
+    def stop_early():
+        return any(verdict in DECISIVE_IDENTITIES for _, verdict, _ in seen)
+
     if not record["identity"]:
         routes = KIND_ROUTES[kind]
         ran, failed, seen = [], [], []
@@ -1548,21 +1593,21 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             except Exception as exc:  # noqa: BLE001
                 failed.append(f"crossref(doi) {type(exc).__name__}")
         else:
-            if "crossref" in routes:
+            if "crossref" in routes and not stop_early():
                 try:
                     for candidate in crossref_search(parsed, mailto)[:3]:
                         consider(candidate)
                     ran.append("crossref")
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"crossref {type(exc).__name__}")
-            if "openalex" in routes:
+            if "openalex" in routes and not stop_early():
                 try:
                     for candidate in openalex_search(parsed)[:3]:
                         consider(candidate)
                     ran.append("openalex")
                 except Exception as exc:  # noqa: BLE001
                     failed.append(f"openalex {type(exc).__name__}")
-            if "openlibrary" in routes:
+            if "openlibrary" in routes and not stop_early():
                 try:
                     for candidate in openlibrary_search(parsed)[:2]:
                         consider(candidate)
@@ -1613,7 +1658,8 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             "identity": record["identity"], "doi": record["doi"],
             "record_title": record.get("record_title", "")})
 
-    if check_contents and kind == "article":
+    if (check_contents and kind == "article" and not stop_early()
+            and record["identity"] not in DECISIVE_IDENTITIES):
         contents = contents_check_cached(parsed)
         record["contents"] = contents
         if contents["status"] == "occupied":
@@ -1640,7 +1686,8 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["notes"].append("contents check: "
                                    + (contents.get("note") or contents["status"]))
 
-    if check_contents and kind == "book":
+    if (check_contents and kind == "book"
+            and record["identity"] not in DECISIVE_IDENTITIES):
         check = book_affirmative(parsed)
         record["contents"] = check
         if check["status"] == "present" and record["identity"] not in (
