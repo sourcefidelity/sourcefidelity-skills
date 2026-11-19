@@ -462,7 +462,7 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
     unverifiable = as_records(findings.get("unverifiable", []), "unverifiable")
     folder = os.path.join(root, paper["paper_id"])
     result = {
-        "schema_version": "4",
+        "schema_version": "5",
         "paper_id": paper["paper_id"],
         "word_counts": findings.get("word_counts") or paper["word_counts"],
         "occurrences": occ_counts,
@@ -595,6 +595,17 @@ def main():
     if not paper:
         raise SystemExit("paper.json missing; run prepare_batch.py")
     findings = load(args.findings)
+    # The coordinator may have run link_states.py; use its block when the
+    # findings do not carry one, so the scope line shows the link states.
+    _cached_links = None
+    try:
+        with open(os.path.join(root, "_work", paper["paper_id"], "hyperlinks.json"),
+                  encoding="utf-8") as _handle:
+            _cached_links = json.load(_handle).get("hyperlinks")
+    except (OSError, ValueError):
+        _cached_links = None
+    if _cached_links and not ((findings.get("summary") or {}).get("hyperlinks")):
+        findings.setdefault("summary", {})["hyperlinks"] = _cached_links
     if (isinstance(findings.get("findings"), dict)
             and "occurrences" not in findings):
         findings = findings["findings"]

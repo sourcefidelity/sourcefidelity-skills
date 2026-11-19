@@ -48,6 +48,7 @@ import record_metrics as rec  # noqa: E402
 import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
+import link_states as ls  # noqa: E402
 import refresh_pricing as pricing_refresh  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
@@ -3069,6 +3070,44 @@ class MetricsTests(unittest.TestCase):
         }]}))
         self.assertIn("cached +", block)
         self.assertIn("uncached", block)
+
+
+class LinkStatesTests(unittest.TestCase):
+    def test_block_counts_each_class(self):
+        report = {"rows": [
+            {"link_class": "not-linkable", "fetch": None},
+            {"link_class": "absent", "fetch": None},
+            {"link_class": "non-permanent", "fetch": None},
+            {"link_class": "full-text",
+             "fetch": {"state": "unreachable"}},
+            {"link_class": "full-text", "fetch": {"state": "ok"}},
+        ]}
+        block = ls.block_from_report(report)
+        self.assertEqual(block["non_linkable"], 1)
+        self.assertEqual(block["absent"], 1)
+        self.assertEqual(block["non_permanent"], 1)
+        self.assertEqual(block["unreachable"], 1)
+        self.assertEqual(block["verified"], 1)
+        self.assertEqual(block["hl_total"], 2)
+
+    def test_refresh_updates_summary_and_scope_line(self):
+        tmp = tempfile.TemporaryDirectory()
+        folder = tmp.name
+        with open(os.path.join(folder, "summary.json"), "w", encoding="utf-8") as handle:
+            json.dump({"paper_id": "P1"}, handle)
+        with open(os.path.join(folder, "review.md"), "w", encoding="utf-8") as handle:
+            handle.write("## Review scope and counts\n\nHyperlinks missing: 3.\n")
+        block = {"absent": 0, "non_linkable": 4, "non_permanent": 10,
+                 "record_only": 0, "full_text": 11, "unreachable": 11,
+                 "blocked": 0, "dead": 0, "verified": 0, "hl_total": 10}
+        changed = ls.refresh(folder, block)
+        summary = json.load(open(os.path.join(folder, "summary.json"), encoding="utf-8"))
+        review = open(os.path.join(folder, "review.md"), encoding="utf-8").read()
+        tmp.cleanup()
+        self.assertEqual(summary["hyperlinks"]["hl_total"], 10)
+        self.assertIn("HL total: 10", review)
+        self.assertNotIn("Hyperlinks missing:", review)
+        self.assertEqual(len(changed), 2)
 
 
 if __name__ == "__main__":

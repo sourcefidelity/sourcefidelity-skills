@@ -510,6 +510,16 @@ def main():
                           "flags": data.get("flags", {})}, indent=1))
         return 0
     result = apply_all(folder, task, judgments, args.date)
+    # New sources change link states: re-run the audit from the cached report
+    # and refresh the summary block and the review's scope line.
+    try:
+        import link_states
+        _root = os.path.dirname(os.path.abspath(folder))
+        _block = link_states.reaudit_from_cache(_root, task.get("paper_id", ""))
+        if _block:
+            link_states.refresh(folder, _block)
+    except Exception:  # noqa: BLE001 - a refresh must not fail the reappraisal
+        pass
     rows = result["changes"]
     ledger_updated = result["ledger_rows_updated"]
     data = result["summary"]

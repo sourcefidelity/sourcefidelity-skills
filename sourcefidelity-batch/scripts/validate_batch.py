@@ -56,6 +56,32 @@ def check_summary(path):
     for key in REQUIRED:
         if key not in d:
             errs.append(f"missing {key}")
+    links = d.get("hyperlinks")
+    if links is not None:
+        if not isinstance(links, dict):
+            errs.append("hyperlinks: must be an object")
+        else:
+            counts = {}
+            for name in ("absent", "non_linkable", "non_permanent", "record_only",
+                         "full_text", "unreachable", "blocked", "dead", "verified"):
+                value = links.get(name)
+                if value is None:
+                    continue
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    errs.append(f"hyperlinks.{name}: must be a non-negative integer")
+                else:
+                    counts[name] = value
+            total = links.get("hl_total")
+            if total is not None and (
+                    isinstance(total, bool) or not isinstance(total, int) or total < 0):
+                errs.append("hyperlinks.hl_total: must be a non-negative integer")
+            elif total is not None and counts:
+                expected = counts.get("absent", 0) + counts.get("non_permanent", 0)
+                if total < expected:
+                    warns.append(f"hyperlinks.hl_total {total} is below "
+                                 f"absent+non_permanent {expected}")
+    if d.get("schema_version") not in ("2", "3", "4", "5"):
+        warns.append(f"schema_version {d.get('schema_version')!r} is not known")
     wc = d.get("word_counts") or {}
     if all(isinstance(wc.get(k), int) for k in ("total", "text", "references")):
         if wc["total"] != wc["text"] + wc["references"]:
