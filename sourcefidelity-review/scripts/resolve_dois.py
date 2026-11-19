@@ -1074,7 +1074,48 @@ def oa_pdf_urls(doi, mailto=""):
     return urls
 
 
+def _acquire_lock(key, timeout=60.0):
+    """A per-source lock, so two workers do not fetch the same DOI twice."""
+    if not CACHE_ROOT or not key:
+        return ""
+    directory = os.path.join(CACHE_ROOT, "locks")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+                        + ".lock")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(handle)
+            return path
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(path) > 600:
+                    os.remove(path)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.5)
+    return ""
+
+
+def _release_lock(path):
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def resolve_copy(doi, out_dir, mailto=""):
+    lock = _acquire_lock("fetch:" + (doi or "").lower()) if doi else ""
+    try:
+        return _resolve_copy(doi, out_dir, mailto)
+    finally:
+        _release_lock(lock)
+
+
+def _resolve_copy(doi, out_dir, mailto=""):
     """Call the DOI resolver and keep a PDF only when the publisher serves one."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}

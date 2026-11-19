@@ -23,6 +23,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+try:
+    import http_cache
+except ImportError:  # pragma: no cover
+    http_cache = None
 from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
@@ -253,6 +261,25 @@ def wayback_url(url, timeout=10):
     return closest.get("url") if closest.get("available") else ""
 
 
+def _request(url, accept="text/html", timeout=20):
+    request = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": accept})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.status, response.geturl(), response.headers, response.read()
+
+
+def _cached_state(url):
+    if http_cache is None:
+        return None
+    hit = http_cache.cache_get(url)
+    if not hit:
+        return None
+    body = hit["body"]
+    saved = _save_body(body, hit["content_type"], hit["final"])
+    return {"state": hit["state"], "status": hit["status"],
+            "detail": f"{hit['content_type'] or 'unknown'} {len(body)} B (cache)",
+            "saved": saved, "environment": False}
+
+
 def fetch_state(url, timeout=10):
     """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
 
@@ -260,6 +287,9 @@ def fetch_state(url, timeout=10):
     of the link, and carry `environment: True` so no report turns them into a
     link finding.
     """
+    cached = _cached_state(url)
+    if cached:
+        return cached
     request = urllib.request.Request(url, headers={"User-Agent": UA,
                                                    "Accept": "text/html,application/pdf"})
     try:
@@ -296,6 +326,8 @@ def fetch_state(url, timeout=10):
     if "sign in" in text or "log in" in text or "captcha" in text:
         return {"state": "login-page", "status": status, "detail": final[:160],
                 "environment": False}
+    if http_cache is not None:
+        http_cache.cache_put(url, "ok", status, final, content_type, body)
     return {"state": "ok", "status": status,
             "detail": f"{content_type or 'unknown'} {len(body)} B",
             "saved": _save_body(body, content_type, final),

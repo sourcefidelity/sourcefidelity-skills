@@ -3236,6 +3236,22 @@ class SourceCacheTests(unittest.TestCase):
         self.assertEqual(record["identity"], "confirmed")
         self.assertTrue(any("cache hit" in note for note in record["notes"]))
 
+    def test_a_lock_is_created_and_released(self):
+        path = rd._acquire_lock("fetch:10.1000/x")
+        self.assertTrue(os.path.exists(path))
+        rd._release_lock(path)
+        self.assertFalse(os.path.exists(path))
+
+    def test_a_cached_http_response_skips_the_request(self):
+        cached = {"state": "ok", "status": 200, "detail": "text/html 20 B (cache)",
+                  "saved": "", "environment": False}
+        with mock.patch.object(ha, "_cached_state", return_value=cached), \
+                mock.patch.object(ha, "_request",
+                                  side_effect=AssertionError("network used")):
+            state = ha.fetch_state("https://x/page")
+        self.assertEqual(state["state"], "ok")
+        self.assertIn("cache", state["detail"])
+
     def test_default_cache_root_is_the_batch_work_directory(self):
         batch = os.path.join(self.root, "batch")
         out = os.path.join(batch, "_work", "P1", "sources")
