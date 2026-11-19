@@ -15,6 +15,32 @@ $ErrorActionPreference = "Stop"
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Skills = @("sourcefidelity-review", "sourcefidelity-batch", "sourcefidelity-reappraise")
 
+# Native commands write to stderr and raise NativeCommandError under the Stop
+# preference this script sets, so every probe and pip call runs under Continue
+# and reports through the exit code instead.
+function Test-SkillVenv([string]$VenvPython) {
+    if (-not (Test-Path $VenvPython)) { return $false }
+    $Previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $VenvPython -c "import pypdf, pymupdf" 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $Previous
+    }
+}
+
+function Install-SkillVenv([string]$Interpreter, [string[]]$InterpreterArgs, [string]$Venv) {
+    $Previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Interpreter @($InterpreterArgs + @("-m", "venv", $Venv))
+        & (Join-Path $Venv "Scripts\python.exe") -m pip install --no-input pypdf pymupdf
+    } finally {
+        $ErrorActionPreference = $Previous
+    }
+}
+
 if (-not $Target) {
     foreach ($candidate in @("$HOME\.claude\skills", "$HOME\.agents\skills",
                              "$HOME\.codex\skills", "$HOME\.cursor\skills")) {
@@ -72,17 +98,33 @@ if (-not $Python) {
 }
 
 Write-Host "Python found: $((@($Python) + $PythonArgs) -join ' ')"
+$Incomplete = @()
 if (-not $NoVenv) {
     foreach ($skill in $Skills) {
         $venv = Join-Path $Target (Join-Path $skill ".venv")
+        $venvPython = Join-Path $venv "Scripts\python.exe"
         if ($DryRun) {
             Write-Host "would create: $venv (pypdf, pymupdf)"
             continue
         }
-        & $Python @($PythonArgs + @("-m", "venv", $venv))
-        & (Join-Path $venv "Scripts\python.exe") -m pip install --quiet pypdf pymupdf
-        Write-Host "venv ready: $skill"
+        if (Test-SkillVenv $venvPython) {
+            Write-Host "venv ready (already complete): $skill"
+            continue
+        }
+        Write-Host "building venv for $skill - pip downloads pypdf and pymupdf, so a first run takes a few minutes"
+        Install-SkillVenv $Python $PythonArgs $venv
+        if (Test-SkillVenv $venvPython) {
+            Write-Host "venv ready: $skill"
+        } else {
+            Write-Host "venv INCOMPLETE: $skill"
+            $Incomplete += $skill
+        }
     }
 }
 Write-Host ""
+if ($Incomplete.Count -gt 0) {
+    Write-Host "Incomplete venvs: $($Incomplete -join ', ')"
+    Write-Host "Re-run this installer to finish them: .\install.ps1 -Target `"$Target`""
+    exit 1
+}
 Write-Host "Next: relaunch your harness and ask for a source-use review."
