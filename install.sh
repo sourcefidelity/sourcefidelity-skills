@@ -30,7 +30,8 @@ done
 
 if [ -z "$TARGET" ]; then
   for candidate in "$HOME/.claude/skills" "$HOME/.agents/skills" \
-                   "$HOME/.codex/skills" "$HOME/.cursor/skills"; do
+                   "$HOME/.codex/skills" "$HOME/.cursor/skills" \
+                   "$HOME/.dsh/skills"; do
     if [ -d "$candidate" ]; then TARGET="$candidate"; break; fi
   done
 fi

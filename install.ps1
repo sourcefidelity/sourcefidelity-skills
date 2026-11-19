@@ -43,7 +43,8 @@ function Install-SkillVenv([string]$Interpreter, [string[]]$InterpreterArgs, [st
 
 if (-not $Target) {
     foreach ($candidate in @("$HOME\.claude\skills", "$HOME\.agents\skills",
-                             "$HOME\.codex\skills", "$HOME\.cursor\skills")) {
+                             "$HOME\.codex\skills", "$HOME\.cursor\skills",
+                             "$HOME\.dsh\skills")) {
         if (Test-Path $candidate) { $Target = $candidate; break }
     }
 }
