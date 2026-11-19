@@ -57,6 +57,7 @@ from retrieval import pacing  # noqa: E402
 from retrieval import providers  # noqa: E402
 import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
+import resolve_dois as rd  # noqa: E402
 
 
 def page(pdf, printed, text):
@@ -2626,6 +2627,53 @@ class RetrievalPortTests(unittest.TestCase):
                 pacing.wait("openalex", clock=lambda: now[0], sleep=slept.append)
         self.assertEqual(len(slept), 1)
         self.assertAlmostEqual(slept[0], 1.5, places=1)
+
+
+class ResolveDoisTests(unittest.TestCase):
+    def test_parse_reference_splits_author_year_and_title(self):
+        parsed = rd.parse_reference(
+            "Addison, H. (2005). Transcending time: Jean Harlow and Hollywood's "
+            "narrative of decline. Journal of Film and Video, 57(4), 32-46.")
+        self.assertEqual(parsed["surname"], "Addison")
+        self.assertEqual(parsed["year"], "2005")
+        self.assertTrue(parsed["title"].startswith("Transcending time"))
+        self.assertNotIn("Journal of Film", parsed["title"])
+
+    def test_parse_reference_keeps_a_supplied_doi(self):
+        parsed = rd.parse_reference(
+            "Wallace, W. T. (1993). The role of actors and actresses in the success "
+            "of films: How much is a movie star worth?. Journal of cultural "
+            "economics, 1-27. https://doi.org/10.1007/BF00820765")
+        self.assertEqual(parsed["doi"], "10.1007/BF00820765")
+        self.assertTrue(parsed["title"].endswith("worth?"))
+
+    def test_entry_kind_routes_films_articles_and_books(self):
+        self.assertEqual(
+            rd.entry_kind("Brown, C. (Director). (1936). Wife vs. Secretary [Film]. Loew's Inc."),
+            "film")
+        self.assertEqual(
+            rd.entry_kind("Addison, H. (2005). Transcending time. Journal of Film and Video, "
+                          "57(4), 32-46."), "article")
+        parsed = rd.parse_reference("Bret, D. (2014). Jean Harlow: tarnished angel. Aurum.")
+        self.assertEqual(rd.entry_kind(parsed["entry"], parsed), "book")
+
+    def test_author_match_folds_record_hyphens(self):
+        self.assertTrue(rd.author_match({"surname": "Bailey-Goldschmidt"},
+                                        ["Bailey\u2010Goldschmidt, Janice"]))
+        self.assertFalse(rd.author_match({"surname": "Bailey-Goldschmidt"},
+                                         ["Smith, John"]))
+        self.assertIsNone(rd.author_match({"surname": "Bret"}, []))
+
+    def test_year_ok_tolerates_one_year(self):
+        self.assertTrue(rd.year_ok({"year": "2005"}, 2005))
+        self.assertTrue(rd.year_ok({"year": "2005"}, 2006))
+        self.assertFalse(rd.year_ok({"year": "2005"}, 2019))
+        self.assertTrue(rd.year_ok({"year": ""}, 2019))
+
+    def test_title_score_ignores_articles_and_stopwords(self):
+        self.assertGreater(rd.title_score("The role of actors in films",
+                                          "Role of actors in films"), 0.9)
+        self.assertLess(rd.title_score("Love done her wrong", "A book review"), 0.2)
 
 
 if __name__ == "__main__":
