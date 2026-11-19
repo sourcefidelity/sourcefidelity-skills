@@ -180,7 +180,7 @@ Rules for the fields:
 - `nonexistent_sources`: only works affirmatively shown not to exist (publisher/index confirmation, impossible bibliographic details). Missing access is not nonexistence.
 - `unverifiable_sources`: works that could not be located after a documented search but might exist. Record the search and the limitation. **This is not a Category B finding and does not count toward the fabrication flag.** It is retained for the acquisition list and the S1 signal.
 - `flags`: the subagent's provisional flags. The main agent recomputes all flags from the thresholds below; the subagent's flags are advisory.
-- `status`: `complete` when the protocol's completion criteria are met; `partial` when a genuine limit prevents completion; `failed` when the review could not be produced.
+- `status`: `complete` when the paper itself was fully inventoried (every paragraph, citation and reference entry accounted for); `partial` only when part of the paper could not be inventoried (unreadable or image-only paper, missing pages, an extraction that drops content); `failed` when no review could be produced. Sources that could not be inspected do **not** make a review partial: record them in `limitations` and the per-occurrence `Not Judged` entries, and keep `status: complete` so the cohort compares like with like.
 
 ## Cohort text overlap
 

@@ -25,7 +25,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW_SKILL = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REVIEW_SKILL, "scripts"))
 
-REF_HEAD_RE = re.compile(r"^\s*(references?|reference list|works cited|bibliography)\s*:?\s*$", re.I)
+REF_HEAD_RE = re.compile(
+    r"^\s*(references?|references?\s+lists?|reference\s+lists?|list\s+of\s+references|"
+    r"references?\s+cited|works\s+cited|works\s+referenced|bibliography)\s*:?\s*$", re.I)
 YEAR = r"(?:19|20)\d{2}[a-z]?"
 YEAR_RE = re.compile(YEAR)
 PAREN_RE = re.compile(r"\(([^()]{0,300}?" + YEAR + r"[^()]{0,160})\)")
@@ -73,7 +75,10 @@ def ambiguity_for(paragraphs, references, citations):
     flags = []
     heading_positions = [i for i, p in enumerate(paragraphs) if REF_HEAD_RE.match(p["text"])]
     if not heading_positions:
-        flags.append("no_reference_heading")
+        if reference_heading_index(paragraphs) is None:
+            flags.append("no_reference_heading")
+        else:
+            flags.append("reference_heading_inferred")
     elif len(heading_positions) > 1:
         flags.append("multiple_reference_headings")
     if not citations:
@@ -125,6 +130,26 @@ def reference_keys(references):
     return keys
 
 
+def entry_like(text):
+    """A paragraph that reads like one reference-list entry."""
+    return (bool(YEAR_RE.search(text)) and len(text.split()) >= 4
+            and bool(re.match(r"[A-Z]", text.strip())))
+
+
+def reference_heading_index(paragraphs):
+    """Explicit heading, else infer one from consecutive entry-like paragraphs."""
+    explicit = [i for i, p in enumerate(paragraphs) if REF_HEAD_RE.match(p["text"])]
+    if explicit:
+        return explicit[0]
+    n = len(paragraphs)
+    for i in range(int(n * 0.5), n - 2):
+        if all(entry_like(paragraphs[j]["text"]) for j in (i, i + 1, i + 2)):
+            if i > 0 and len(paragraphs[i - 1]["text"].split()) <= 4:
+                return i - 1
+            return i
+    return None
+
+
 def build(path, paper_id):
     raw, kind = blocks_for(path)
     paragraphs = []
@@ -140,8 +165,7 @@ def build(path, paper_id):
                                  or text.count("“") != text.count("”")),
         })
 
-    heading_index = next((i for i, p in enumerate(paragraphs)
-                          if REF_HEAD_RE.match(p["text"])), None)
+    heading_index = reference_heading_index(paragraphs)
     references = []
     if heading_index is not None:
         for p in paragraphs[heading_index + 1:]:

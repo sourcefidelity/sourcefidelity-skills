@@ -107,4 +107,6 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
 }
 ```
 
+**Status.** Set findings `status: complete` when every paragraph, citation and reference entry of the paper is accounted for. Source access is not a reason for `partial`: when a source cannot be inspected, record the limitation, mark that occurrence `Not Judged`, and keep the paper `complete`. Use `partial` only when part of the paper itself could not be inventoried (unreadable or image-only file, missing pages, extraction drops content) and name the missing part. Use `failed` only when no review was produced.
+
 Write `inventory.json` and `findings.json` separately. `render_review.py --inventory` reconciles the findings' C/R/W/U IDs against the validated inventory and rejects a missing or invented ID, so every confirmed candidate must appear among the occurrences. If the paper genuinely has no citations, set `inventory_empty: true` and an explicit `status` in the findings, otherwise the renderer treats empty findings as an error. Do not write `review.md`, `ledger.md` or `summary.json` yourself.

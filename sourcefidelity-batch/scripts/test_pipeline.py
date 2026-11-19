@@ -2320,5 +2320,29 @@ class MetricsTests(unittest.TestCase):
         self.assertIn("No review metrics recorded", "\n".join(empty))
 
 
+class ReferenceHeadingTests(unittest.TestCase):
+    def test_reference_heading_variants(self):
+        for text in ("References", "Reference list:", "Reference lists:", "Works Cited",
+                     "Works cited", "Bibliography", "List of References",
+                     "References Cited"):
+            self.assertIsNotNone(ec.REF_HEAD_RE.match(text), text)
+
+    def test_heading_is_inferred_from_unsegmented_entries(self):
+        paras = [{"text": "Body paragraph about the case study and its argument."} for _ in range(6)]
+        paras += [
+            {"text": "Smith, J. (2020). A book about stars. Routledge."},
+            {"text": "Jones, A., & Lee, B. (2019). An article. Journal of Film, 4(2), 1-20."},
+            {"text": "Brown, C. (2018). Another source. https://example.org/x"},
+        ]
+        self.assertEqual(ec.reference_heading_index(paras), 6)
+
+    def test_annotated_reference_lists_heading_is_recognised(self):
+        paras = [{"text": "Reference lists:"}] + [
+            {"text": "Smith, J. (2020). A book about stars. Routledge."},
+            {"text": "Jones, A. (2019). An article. Journal of Film, 4(2), 1-20."},
+        ]
+        self.assertEqual(ec.reference_heading_index(paras), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
