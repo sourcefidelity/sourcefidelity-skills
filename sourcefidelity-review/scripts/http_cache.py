@@ -22,6 +22,27 @@ TTL_SECONDS = 7 * 24 * 3600
 # seconds; cache it briefly so a run does not retry it per citation.
 FAILURE_TTL_SECONDS = 3600
 TEXT_CACHE_MAX_BYTES = 200 * 1024 * 1024
+
+
+def _setting_bytes(name, default):
+    """Read a cap from the user settings, falling back to the constant."""
+    try:
+        import sys
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import user_settings
+        return user_settings.get_int(name, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def max_text_bytes():
+    return _setting_bytes("cache_max_text_bytes", TEXT_CACHE_MAX_BYTES)
+
+
+def max_web_bytes():
+    return _setting_bytes("cache_max_web_bytes", TEXT_CACHE_MAX_BYTES)
 CACHE_DIR = (os.environ.get("SOURCEFIDELITY_WEB_CACHE")
              or os.path.join(os.path.expanduser("~"), ".dsh", "cache", "web"))
 
@@ -134,8 +155,10 @@ def text_for(root, url):
         return "", {}
 
 
-def prune_text_cache(root, max_bytes=TEXT_CACHE_MAX_BYTES):
+def prune_text_cache(root, max_bytes=None):
     """Remove expired text entries, then the oldest until the store fits the cap."""
+    if max_bytes is None:
+        max_bytes = max_text_bytes()
     base = os.path.join(root, "_work", "_web")
     if not os.path.isdir(base):
         return {"expired": 0, "files": 0}
@@ -172,8 +195,10 @@ def prune_text_cache(root, max_bytes=TEXT_CACHE_MAX_BYTES):
     return {"expired": expired, "files": removed}
 
 
-def prune_url_cache(max_bytes=TEXT_CACHE_MAX_BYTES):
+def prune_url_cache(max_bytes=None):
     """Trim the URL response cache to a size cap after removing expired files."""
+    if max_bytes is None:
+        max_bytes = max_web_bytes()
     if not os.path.isdir(CACHE_DIR):
         return 0
     files = []

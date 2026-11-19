@@ -3333,6 +3333,18 @@ class CacheMaintenanceTests(unittest.TestCase):
             self.assertGreaterEqual(result["expired"], 1)
             self.assertFalse(os.path.isdir(folder))
 
+    def test_cache_caps_are_settings(self):
+        import user_settings
+        self.assertEqual(user_settings.get_int("cache_max_pdf_bytes"), 3 * 1024 ** 3)
+        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_MAX_PDF_BYTES": "123"}):
+            self.assertEqual(user_settings.get_int("cache_max_pdf_bytes"), 123)
+            self.assertEqual(rd._max_bytes("cache_max_pdf_bytes", 1), 123)
+
+    def test_http_cache_reads_its_cap_from_settings(self):
+        import http_cache
+        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_MAX_TEXT_BYTES": "456"}):
+            self.assertEqual(http_cache.max_text_bytes(), 456)
+
     def test_the_fetch_lock_waits_two_minutes(self):
         self.assertEqual(rd._acquire_lock.__defaults__[0], 120.0)
 

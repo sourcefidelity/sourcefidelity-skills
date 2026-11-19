@@ -23,7 +23,10 @@ ENV_NAMES = {"email": "SOURCEFIDELITY_EMAIL",
              "google_books_key": "GOOGLE_BOOKS_API_KEY",
              "openalex_api_key": "OPENALEX_API_KEY",
              "semantic_scholar_api_key": "SEMANTIC_SCHOLAR_API_KEY",
-             "core_api_key": "CORE_API_KEY"}
+             "core_api_key": "CORE_API_KEY",
+             "cache_max_pdf_bytes": "SOURCEFIDELITY_MAX_PDF_BYTES",
+             "cache_max_text_bytes": "SOURCEFIDELITY_MAX_TEXT_BYTES",
+             "cache_max_web_bytes": "SOURCEFIDELITY_MAX_WEB_BYTES"}
 SIGNUP = {
     "email": "your own address (no signup needed)",
     "google_books_key": "https://console.cloud.google.com/apis/library/books.googleapis.com",
@@ -54,6 +57,23 @@ def get(name, path=None):
 
 def email(path=None):
     return get("email", path)
+
+
+CACHE_DEFAULTS = {"cache_max_pdf_bytes": 3 * 1024 ** 3,
+                  "cache_max_text_bytes": 200 * 1024 ** 2,
+                  "cache_max_web_bytes": 200 * 1024 ** 2}
+
+
+def get_int(name, default=None):
+    """A numeric setting: environment, config file, then the built-in default."""
+    value = get(name)
+    try:
+        number = int(value) if value else None
+    except (TypeError, ValueError):
+        number = None
+    if number is None:
+        number = CACHE_DEFAULTS.get(name, default)
+    return int(number)
 
 
 def google_books_key(path=None):
@@ -115,7 +135,9 @@ def main(argv=None):
         return prompt(args.file or None)
     data = load(args.file or None)
     redacted = {key: ("set" if data.get(key) else "unset") for key in ENV_NAMES}
+    caps = {key: get_int(key) for key in CACHE_DEFAULTS}
     print(json.dumps({"path": args.file or CONFIG_PATH, "settings": redacted,
+                      "cache_caps_bytes": caps,
                       "email_now": email(args.file or None) or "(unset)"}, indent=1))
     return 0
 

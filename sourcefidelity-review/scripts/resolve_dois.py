@@ -89,6 +89,14 @@ def core_api_key():
         return ""
 
 
+def _max_bytes(name, default):
+    try:
+        import user_settings
+        return user_settings.get_int(name, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
 def google_books_key():
     try:
         import user_settings
@@ -431,8 +439,15 @@ def _cache_fetch_pdf(pdf_path):
     return target
 
 
-def cache_prune(max_fetch_bytes=500 * 1024 * 1024):
+def cache_prune(max_fetch_bytes=None):
     """Drop expired entries and keep the fetched-copy store under a size cap."""
+    if max_fetch_bytes is None:
+        max_fetch_bytes = _max_bytes("cache_max_pdf_bytes", 3 * 1024 ** 3)
+    try:
+        import http_cache
+        http_cache.prune_url_cache()
+    except Exception:  # noqa: BLE001
+        pass
     path = cache_path()
     if not path or not os.path.exists(path):
         return {"expired": 0, "files": 0}
