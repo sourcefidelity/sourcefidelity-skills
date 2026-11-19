@@ -2822,6 +2822,7 @@ class ResolveDoisTests(unittest.TestCase):
                 mock.patch.object(rd, "_probe_dnb", return_value=failed), \
                 mock.patch.object(rd, "_probe_internet_archive", return_value=zero), \
                 mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_googlebooks", return_value=failed), \
                 mock.patch.object(rd, "_probe_openlibrary", return_value=(None, "URLError")):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "search_incomplete")
@@ -2836,6 +2837,7 @@ class ResolveDoisTests(unittest.TestCase):
                 mock.patch.object(rd, "_probe_dnb", return_value=failed), \
                 mock.patch.object(rd, "_probe_internet_archive", return_value=failed), \
                 mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_googlebooks", return_value=failed), \
                 mock.patch.object(rd, "_probe_openlibrary", return_value=other):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present_title_mismatch")
@@ -3436,6 +3438,37 @@ class RetrievalEfficiencyTests(unittest.TestCase):
                                   side_effect=AssertionError("title search used")):
             record = rd.process(entry, self.root, False, "", check_contents=False)
         self.assertEqual(record["identity"], "confirmed")
+
+    def test_google_books_is_a_secondary_route_that_can_hold(self):
+        parsed = rd.parse_reference(
+            "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
+        failed = (None, "URLError")
+        held = ({"count": 2, "title": "Heavenly Bodies", "score": 0.8}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=failed), \
+                mock.patch.object(rd, "_probe_bnf", return_value=failed), \
+                mock.patch.object(rd, "_probe_dnb", return_value=failed), \
+                mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_googlebooks", return_value=held):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "present")
+        self.assertTrue(any(route["catalogue"] == "Google Books"
+                            for route in result["routes"]))
+
+    def test_a_google_books_zero_cannot_prove_absence(self):
+        parsed = rd.parse_reference(
+            "Doe, J. (2019). A fabricated monograph. Invented Press.")
+        failed = (None, "URLError")
+        zero = ({"count": 0, "title": "", "score": 0.0}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=failed), \
+                mock.patch.object(rd, "_probe_bnf", return_value=failed), \
+                mock.patch.object(rd, "_probe_dnb", return_value=failed), \
+                mock.patch.object(rd, "_probe_cinii", return_value=zero), \
+                mock.patch.object(rd, "_probe_googlebooks", return_value=zero), \
+                mock.patch.object(rd, "_probe_internet_archive", return_value=zero), \
+                mock.patch.object(rd, "_probe_openlibrary", return_value=zero):
+            result = rd.book_affirmative(parsed)
+        self.assertNotEqual(result["status"], "absent")
+        self.assertNotEqual(result["status"], "nonexistent_as_cited")
 
 
 if __name__ == "__main__":

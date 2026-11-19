@@ -1047,18 +1047,20 @@ def _probe_googlebooks(parsed):
             "score": title_score(parsed.get("title"), title)}, ""
 
 
-# Narrowed by kind: the three union catalogues answer existence first; the
-# remaining routes only run when those are inconclusive. Google Books and
-# HathiTrust are dropped from the book chain: one rate-limits, the other exposes
-# only a limited view, and neither is needed to establish absence.
+# Narrowed by kind: the three union catalogues answer existence first and are
+# the only routes whose zeros can establish absence. The secondary routes are
+# discovery and metadata sources (CiNii, Google Books, Internet Archive): a hold
+# there ends the search, a zero there never proves absence. A Google Books API
+# key, if the user configured one, raises its free quota.
 BOOK_PRIMARY_ROUTES = (
     ("K10plus", "_probe_k10plus"),
     ("BnF", "_probe_bnf"),
     ("DNB", "_probe_dnb"),
 )
 BOOK_SECONDARY_ROUTES = (
-    ("Internet Archive", "_probe_internet_archive"),
     ("CiNii", "_probe_cinii"),
+    ("Google Books", "_probe_googlebooks"),
+    ("Internet Archive", "_probe_internet_archive"),
 )
 BOOK_FALLBACK_ROUTES = (
     ("Open Library", "_probe_openlibrary"),
