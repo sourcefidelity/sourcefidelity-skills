@@ -113,19 +113,39 @@ def session_lines(path):
         try:
             raw = subprocess.run(["zstd", "-dc", path], capture_output=True,
                                  check=True).stdout
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise SystemExit(f"cannot decompress {path}: {exc}")
-        return raw.decode("utf-8", "replace")
+            return raw.decode("utf-8", "replace")
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        # No zstd binary on PATH (common on Windows): use the Python module.
+        try:
+            import zstandard
+        except ImportError as exc:
+            raise SystemExit(f"cannot decompress {path}: no zstd binary and no "
+                             f"zstandard module ({exc})")
+        with open(path, "rb") as handle:
+            return zstandard.ZstdDecompressor().stream_reader(handle).read().decode(
+                "utf-8", "replace")
     with open(path, encoding="utf-8", errors="replace") as handle:
         return handle.read()
 
 
-def from_dsh_session(path):
-    """Duration and usage for one worker session under the DSH harness."""
+def _ms(value):
+    """Epoch milliseconds from a datetime, for comparing session event times."""
+    return int(value.timestamp() * 1000) if value else None
+
+
+def from_dsh_session(path, since=None, until=None):
+    """Duration and usage for one worker session, optionally a time window.
+
+    A batch worker's session is its whole run, so no window is needed. An
+    interactive review shares a session with unrelated work, so `--since` and
+    `--until` restrict the count -- including usage -- to the review's window.
+    """
     started = last = None
     totals = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
               "total_tokens": 0}
     model = ""
+    windowed = since is not None or until is not None
     for line in session_lines(path).splitlines():
         line = line.strip()
         if not line:
@@ -135,12 +155,17 @@ def from_dsh_session(path):
         except ValueError:
             continue
         kind = event.get("type")
-        if kind == "session":
-            started = event.get("createdAt") or started
-        stamp = event.get("time")
-        if isinstance(stamp, (int, float)):
-            last = stamp
         data = event.get("data") or {}
+        stamp = event.get("time")
+        if windowed:
+            if not isinstance(stamp, (int, float)):
+                continue
+            if since is not None and stamp < since:
+                continue
+            if until is not None and stamp > until:
+                continue
+        if kind == "session" and not windowed:
+            started = event.get("createdAt") or started
         if kind == "subagent/descriptor" and data.get("agentModel"):
             model = data["agentModel"]
         if kind == "assistant/message":
@@ -153,8 +178,14 @@ def from_dsh_session(path):
                 value = usage.get(camel)
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     totals[key] += int(value)
+        if isinstance(stamp, (int, float)):
+            if started is None:
+                started = stamp
+            last = stamp
     if started is None:
-        raise SystemExit(f"no session header in {path}")
+        reason = "no session events in the requested window" if windowed else \
+            f"no session header in {path}"
+        raise SystemExit(reason)
     if last is None:
         last = started
     usage = {key: totals[key] for key in ("input_tokens", "output_tokens",
@@ -207,6 +238,8 @@ def main():
     ap.add_argument("--cache-read-tokens", type=int)
     ap.add_argument("--output-tokens", type=int)
     ap.add_argument("--started-at", default="")
+    ap.add_argument("--since", default="", help="window start (ISO) for a shared session")
+    ap.add_argument("--until", default="", help="window end (ISO) for a shared session")
     ap.add_argument("--status", default="completed")
     args = ap.parse_args()
 
@@ -214,7 +247,9 @@ def main():
     if not metadata_path and args.agent_id:
         metadata_path = find_metadata(args.agent_id)
     if args.session:
-        run = from_dsh_session(args.session)
+        since = _ms(metrics.parse_time(args.since)) if args.since else None
+        until = _ms(metrics.parse_time(args.until)) if args.until else None
+        run = from_dsh_session(args.session, since=since, until=until)
     elif metadata_path:
         run = from_metadata(metadata_path, args.model)
     else:
