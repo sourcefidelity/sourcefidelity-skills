@@ -31,6 +31,21 @@ WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’\-]{3,}")
 QUOTED = re.compile(r"[“\"]([^”\"]{20,600})[”\"]")
 
 
+def attach_open_sources(root, sources):
+    """Attach open-access text fetched by fetch_open_sources.py, by source key."""
+    data = load(os.path.join(root, "_work", "open_sources.json"), {})
+    for src in sources.values():
+        key = src.get("source_key") or ""
+        record = data.get(key) if key else None
+        if not record:
+            continue
+        path = record.get("text_path") or ""
+        if path and os.path.exists(path):
+            src["open_text"] = path
+            src["open_provider"] = record.get("provider", "open")
+            src["open_url"] = record.get("access_url", "")
+
+
 def load(path, default=None):
     try:
         return json.load(open(path, encoding="utf-8"))
@@ -319,6 +334,7 @@ def main():
             "supplied_file": obj.get("supplied_file") or rec.get("supplied_file", ""),
         }
 
+    attach_open_sources(root, sources)
     windows_by_c = {}
     window_status = {}
     cache = {}
@@ -338,9 +354,12 @@ def main():
         extraction_seen = False
         for rid in likely:
             src = sources.get(rid, {})
-            path = src.get("extraction")
+            extraction_path = src.get("extraction")
+            open_path = src.get("open_text")
+            path = extraction_path or open_path
             if not path or not os.path.exists(path):
                 continue
+            is_open = not extraction_path and bool(open_path)
             extraction_seen = True
             if path not in cache:
                 cache[path] = page_index(path)
@@ -350,8 +369,13 @@ def main():
                 ranges.append(page_range)
             phrases = phrases_for(cit)
             tried.extend(phrases[:4])
+            before = len(found)
             found.extend(windows(text, marks, pages, phrases, args.window,
                                  page_range, limit=args.max_hits))
+            if is_open:
+                for hit in found[before:]:
+                    hit.setdefault("locator", f"{src.get('open_provider', 'open')}: "
+                                              f"{src.get('open_url', '')}")
             if len(found) >= args.max_hits:
                 break
         fallbacks = set()

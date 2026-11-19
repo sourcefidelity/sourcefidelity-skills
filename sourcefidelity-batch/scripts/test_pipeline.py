@@ -51,6 +51,9 @@ import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
+import fetch_open_sources as fos  # noqa: E402
+from retrieval import pacing  # noqa: E402
+from retrieval import providers  # noqa: E402
 import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 
@@ -2364,6 +2367,105 @@ class ReferenceHeadingTests(unittest.TestCase):
             {"text": "Jones, A. (2019). An article. Journal of Film, 4(2), 1-20."},
         ]
         self.assertEqual(ec.reference_heading_index(paras), 0)
+
+class RetrievalPortTests(unittest.TestCase):
+    OA = {"results": [{"id": "W1", "title": "Heavenly Bodies",
+                       "publication_year": 2004, "doi": "https://doi.org/10.1/x",
+                       "best_oa_location": {"pdf_url": "https://example.org/oa.pdf"},
+                       "open_access": {"is_oa": True}}]}
+    SRU_XML = ('''<srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/">
+      <srw:records><srw:record><srw:recordData>
+        <oai_dc:dc xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/"
+                   xmlns:dc="http://purl.org/dc/elements/1.1/">
+          <dc:title>Le cinma francais</dc:title>
+          <dc:identifier>https://gallica.bnf.fr/ark:/12148/btv1b9</dc:identifier>
+          <dc:date>1925</dc:date>
+        </oai_dc:dc>
+      </srw:recordData></srw:record></srw:records>
+    </srw:searchRetrieveResponse>''')
+
+    def test_openalex_returns_identity_and_oa_location(self):
+        with mock.patch.object(providers, "get_json", return_value=(self.OA, {"text": ""})):
+            found = providers.openalex_search("Heavenly Bodies", "Dyer", "2004")
+        self.assertTrue(found["found"])
+        self.assertEqual(found["doi"], "10.1/x")
+        self.assertEqual(found["access_url"], "https://example.org/oa.pdf")
+        self.assertTrue(found["is_oa"])
+
+    def test_internet_archive_metadata_finds_text_and_lending(self):
+        meta = {"metadata": {"title": "Stars", "date": "2004"},
+                "files": [{"name": "stars_djvu.txt", "format": "DjVuTXT"}]}
+        with mock.patch.object(providers, "get_json", return_value=(meta, {})):
+            record = providers.ia_metadata("stars")
+        self.assertTrue(record["text_url"].endswith("stars_djvu.txt"))
+        self.assertEqual(record["classification"], "full_text")
+        lending = {"metadata": {"title": "Stars", "collection": ["inlibrary"]},
+                   "files": [{"name": "x_djvu.txt", "format": "DjVuTXT"}]}
+        with mock.patch.object(providers, "get_json", return_value=(lending, {})):
+            record = providers.ia_metadata("stars")
+        self.assertEqual(record["classification"], "lending_only")
+
+    def test_wayback_finds_the_closest_snapshot(self):
+        payload = {"archived_snapshots": {"closest": {"url": "https://web.archive.org/x"}}}
+        with mock.patch.object(providers, "get_json", return_value=(payload, {})):
+            found = providers.wayback_snapshot("https://example.org/dead")
+        self.assertEqual(found["access_url"], "https://web.archive.org/x")
+
+    def test_lantern_returns_catalogue_records(self):
+        payload = {"response": {"docs": [{"id": "abc", "title_info_primary_tsi": "Motion Picture News"}]}}
+        with mock.patch.object(providers, "get_json", return_value=(payload, {})):
+            found = providers.lantern_search("Motion Picture News")
+        self.assertTrue(found["found"])
+        self.assertEqual(found["records"][0]["access_url"],
+                         "https://lantern.mediahist.org/catalog/abc")
+
+    def test_gallica_parses_sru_records(self):
+        with mock.patch.object(providers, "fetch",
+                               return_value={"text": self.SRU_XML, "limitation": ""}):
+            found = providers.gallica_search("cinema francais")
+        self.assertTrue(found["found"])
+        self.assertEqual(found["records"][0]["ark"], "btv1b9")
+
+    def test_open_fetch_stage_stores_full_text_and_records_limits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "_work"))
+            json.dump({"works": {"k1": {"identity": {"title": "A Book"}}}},
+                      open(os.path.join(tmp, "source_registry.json"), "w"))
+            long_text = "Hollywood stars and their images. " * 120
+            with mock.patch.object(fos.providers, "openalex_search",
+                                   return_value={"access_url": "https://example.org/t"}):
+                with mock.patch.object(fos.transport, "get_text",
+                                       return_value=(long_text, {})):
+                    summary = fos.collect(tmp)
+            index = json.load(open(os.path.join(tmp, "_work", "open_sources.json")))
+            text = open(index["k1"]["text_path"], encoding="utf-8").read()
+        self.assertEqual(summary["open_text"], 1)
+        self.assertEqual(index["k1"]["classification"], "full_text")
+        self.assertIn("Hollywood stars", text)
+
+    def test_task_sources_attach_open_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = os.path.join(tmp, "_work")
+            os.makedirs(work)
+            text_path = os.path.join(work, "text.txt")
+            open(text_path, "w").write("open text")
+            json.dump({"k1": {"text_path": text_path, "provider": "openalex",
+                              "access_url": "https://example.org/t"}},
+                      open(os.path.join(work, "open_sources.json"), "w"))
+            sources = {"R1": {"source_key": "k1"}}
+            mt.attach_open_sources(tmp, sources)
+        self.assertEqual(sources["R1"]["open_text"], text_path)
+        self.assertEqual(sources["R1"]["open_provider"], "openalex")
+
+    def test_provider_pacing_enforces_the_interval(self):
+        slept, now = [], [1000.0]
+        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": tempfile.mkdtemp()}):
+            with mock.patch.dict(pacing.MIN_INTERVAL, {"openalex": 2.0}):
+                pacing.wait("openalex", clock=lambda: now[0], sleep=slept.append)
+                now[0] += 0.5
+                pacing.wait("openalex", clock=lambda: now[0], sleep=slept.append)
+        self.assertEqual(len(slept), 1)
+        self.assertAlmostEqual(slept[0], 1.5, places=1)
 
 
 if __name__ == "__main__":
