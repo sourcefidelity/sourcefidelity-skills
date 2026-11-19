@@ -701,6 +701,18 @@ class ReportModeTests(unittest.TestCase):
         text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
         self.assertIn("Hyperlinks missing: 3 (no link 1; broken 1; preview only 1).", text)
 
+    def test_scope_block_uses_classified_link_states(self):
+        findings = self._findings()
+        findings["summary"] = {"hyperlinks": {
+            "absent": 0, "non_linkable": 4, "non_permanent": 10, "record_only": 0,
+            "full_text": 11, "unreachable": 11, "blocked": 0, "dead": 0,
+            "verified": 0, "hl_total": 10}}
+        text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
+        self.assertIn("4 excluded as non-linkable", text)
+        self.assertIn("11 full-text", text)
+        self.assertIn("HL total: 10 (Category A)", text)
+        self.assertNotIn("Hyperlinks missing:", text)
+
     def test_measured_word_counts_override_the_paper_record(self):
         findings = self._findings()
         findings["word_counts"] = {"total": 10, "text": 8, "references": 2}

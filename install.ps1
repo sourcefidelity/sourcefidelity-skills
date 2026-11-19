@@ -23,7 +23,7 @@ function Test-SkillVenv([string]$VenvPython) {
     $Previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $VenvPython -c "import pypdf, pymupdf" 2>$null
+        & $VenvPython -c "import pypdf, pymupdf, zstandard" 2>$null
         return ($LASTEXITCODE -eq 0)
     } finally {
         $ErrorActionPreference = $Previous
@@ -35,7 +35,7 @@ function Install-SkillVenv([string]$Interpreter, [string[]]$InterpreterArgs, [st
     $ErrorActionPreference = "Continue"
     try {
         & $Interpreter @($InterpreterArgs + @("-m", "venv", $Venv))
-        & (Join-Path $Venv "Scripts\python.exe") -m pip install --no-input pypdf pymupdf
+        & (Join-Path $Venv "Scripts\python.exe") -m pip install --no-input pypdf pymupdf zstandard
     } finally {
         $ErrorActionPreference = $Previous
     }
@@ -106,7 +106,7 @@ if (-not $NoVenv) {
     $venv = Join-Path $Target (Join-Path "sourcefidelity-review" ".venv")
     $venvPython = Join-Path $venv "Scripts\python.exe"
     if ($DryRun) {
-        Write-Host "would create: $venv (pypdf, pymupdf, shared by all three skills)"
+        Write-Host "would create: $venv (pypdf, pymupdf, zstandard, shared by all three skills)"
     } elseif (Test-SkillVenv $venvPython) {
         Write-Host "venv ready (already complete): sourcefidelity-review"
     } else {

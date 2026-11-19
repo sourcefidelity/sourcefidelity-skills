@@ -190,6 +190,46 @@ def as_records(items, kind):
     return out
 
 
+LINK_STATES = ("absent", "non_linkable", "non_permanent", "record_only",
+               "full_text", "unreachable", "blocked", "dead", "verified")
+
+
+def hyperlink_scope_lines(summary):
+    """Scope lines from classified link states, when the findings carry them.
+
+    Falls back to the legacy single count when the block is absent, so old
+    findings render exactly as before.
+    """
+    links = (summary or {}).get("hyperlinks") or {}
+    counts = {key: int(links.get(key) or 0) for key in LINK_STATES}
+    if not any(counts.values()) and not links.get("hl_total"):
+        return []
+    hl = links.get("hl_total")
+    if hl is None:
+        hl = counts["absent"] + counts["non_permanent"]
+    unreachable = (counts["unreachable"] + counts["blocked"] + counts["dead"])
+    parts = [f"{counts['absent']} absent",
+             f"{counts['non_linkable']} excluded as non-linkable",
+             f"{counts['non_permanent']} not permanent",
+             f"{counts['record_only']} record-only",
+             f"{counts['full_text']} full-text",
+             f"{unreachable} unreachable or blocked (environment)",
+             f"{counts['verified']} verified"]
+    return ["Hyperlinks: " + "; ".join(parts) + f". HL total: {hl} (Category A)."]
+
+
+def render_summary(*args, **kwargs):
+    """The rendered summary plus the classified link block when findings carry it."""
+    data = _render_summary(*args, **kwargs)
+    findings = kwargs.get("findings")
+    if findings is None and len(args) > 1:
+        findings = args[1]
+    links = ((findings or {}).get("summary") or {}).get("hyperlinks")
+    if links:
+        data["hyperlinks"] = links
+    return data
+
+
 def render_md(paper, findings, occ_counts, registry, metrics=None):
     """The review document: scope block, summary, entries, bibliography, uncited."""
     lines = [f"# Source-use review — {paper['paper_id']}", ""]
@@ -216,9 +256,13 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     lines.append(f"References: {len(findings.get('references', []))} entries. "
                  f"Works discussed: {len(findings.get('works', []))}.")
     lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
-    missing, reasons = hyperlink_breakdown(findings)
-    detail = f" ({'; '.join(reasons)})" if reasons else ""
-    lines.append(f"Hyperlinks missing: {missing}{detail}.")
+    link_scope = hyperlink_scope_lines(summary)
+    if link_scope:
+        lines.extend(link_scope)
+    else:
+        missing, reasons = hyperlink_breakdown(findings)
+        detail = f" ({'; '.join(reasons)})" if reasons else ""
+        lines.append(f"Hyperlinks missing: {missing}{detail}.")
     seconds = 0
     tokens_in = tokens_out = 0
     have_time = have_tokens = False
@@ -370,7 +414,7 @@ def canonical_outcome(value):
     return value if value in IDENTITY_OUTCOMES else "search_incomplete"
 
 
-def render_summary(paper, findings, occ_counts, registry, profile, root, metrics=None):
+def _render_summary(paper, findings, occ_counts, registry, profile, root, metrics=None):
     refs = findings.get("references", [])
     by_key = {}
     cited_r = {rid for occ in findings.get("occurrences", [])
@@ -427,6 +471,7 @@ def render_summary(paper, findings, occ_counts, registry, profile, root, metrics
             "cited": len(cited_r & {r["id"] for r in refs}),
             "uncited": len({r["id"] for r in refs} - cited_r),
             "missing_links": len(findings.get("summary", {}).get("hyperlinks_missing", []) or []),
+        "link_states": (findings.get("summary") or {}).get("hyperlinks"),
         },
         "works_discussed": len(findings.get("works", [])),
         "uncited_passages": len(findings.get("uncited", [])),

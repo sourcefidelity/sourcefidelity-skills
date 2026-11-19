@@ -86,7 +86,10 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
   "findings": {
     "paper_id": "P240907", "status": "complete", "date": "2026-11-16",
     "summary": {"category_a": [], "category_b": [], "category_b_citation": [],
-                "hyperlinks_missing": [], "hyperlink_note": ""},
+                "hyperlinks_missing": [], "hyperlink_note": "",
+   "hyperlinks": {"absent": 0, "non_linkable": 0, "non_permanent": 0,
+                  "record_only": 0, "full_text": 0, "unreachable": 0,
+                  "blocked": 0, "dead": 0, "verified": 0, "hl_total": 0}},
     "occurrences": [{"id": "C1", "locator": "P2", "marker": "(Hollis, 2006)",
                      "statement": "...", "judgment": "Supports",
                      "sources": [{"source_key": "hollis-2006-convergent-media",
