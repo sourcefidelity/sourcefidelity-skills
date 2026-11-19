@@ -42,9 +42,9 @@ _utf8_streams()
 HEADER = (
     "| Paper | Total words | Text words | Ref words | C | Supports | Qualified | "
     "Contradicts | Not supported | Not judged | Misrep. sources | Nonexistent | "
-    "Unverifiable | Not searched | Missing links | Formatting notes | Signals | Flag |"
+    "Unverifiable | Not searched | Link findings | Links unverified | Formatting notes | Signals | Flag |"
 )
-SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
+SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 
 
 def load_rows(root):

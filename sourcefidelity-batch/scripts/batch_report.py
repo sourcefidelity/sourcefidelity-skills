@@ -160,9 +160,10 @@ def write_metrics_section(w, aggregate):
         w(f"| Review agent time (sum) | {review_metrics.format_duration(review['duration_ms'])} |")
         w(f"| Batch wall-clock span | {review_metrics.format_duration(aggregate['wall_span_ms'])} |")
         if review["total_tokens"] is not None:
+            prompt = (review["cache_hit_tokens"] + review["cache_miss_tokens"])
             w(f"| Review tokens | {review_metrics.format_tokens(review['total_tokens'])} total — "
-              f"{review_metrics.format_tokens(review['input_tokens'])} input "
-              f"({review_metrics.format_tokens(review['cache_hit_tokens'])} cache hits; "
+              f"{review_metrics.format_tokens(prompt)} prompt "
+              f"({review_metrics.format_tokens(review['cache_hit_tokens'])} cached + "
               f"{review_metrics.format_tokens(review['cache_miss_tokens'])} uncached), "
               f"{review_metrics.format_tokens(review['output_tokens'])} output |")
         else:
