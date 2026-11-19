@@ -86,13 +86,17 @@ def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
     if input_tokens is None or output_tokens is None:
         return {"cost_status": "not_recorded", "reason": "missing_usage",
                 "model": model, "pricing_as_of": PRICING_AS_OF}
-    if min(input_tokens, output_tokens, cache_read) < 0 or cache_read > input_tokens:
+    if min(input_tokens, output_tokens, cache_read) < 0:
         return {"cost_status": "not_recorded", "reason": "invalid_usage",
                 "model": model, "pricing_as_of": PRICING_AS_OF}
+    # DSH reports cached and uncached prompt tokens separately: input_tokens is
+    # the uncached remainder, so the cache can exceed it. Older providers fold
+    # the cached tokens into input, in which case cache_read <= input.
+    separate_cache = cache_read > input_tokens
+    cache_miss = input_tokens if separate_cache else input_tokens - cache_read
     peak = is_peak(started_at)
     multiplier = 2.0 if peak else 1.0
     hit_rate, input_rate, output_rate = (rate * multiplier for rate in base)
-    cache_miss = input_tokens - cache_read
     cost = (cache_read * hit_rate +
             cache_miss * input_rate +
             output_tokens * output_rate) / 1_000_000
@@ -111,7 +115,7 @@ def estimate_cost(usage, model="deepseek-v4-flash", started_at=None):
         "cache_hit_tokens": cache_read,
         "cache_miss_tokens": cache_miss,
         "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
+        "total_tokens": input_tokens + output_tokens + (cache_read if separate_cache else 0),
         "estimated_cost_usd": round(cost, 9),
     }
 
@@ -181,7 +185,13 @@ def summarize_runs(runs):
             summary["input_tokens"] += input_tokens or 0
             summary["cache_hit_tokens"] += cache_hit or 0
             summary["output_tokens"] += output_tokens or 0
-            summary["cache_miss_tokens"] += max(0, (input_tokens or 0) - (cache_hit or 0))
+            if (cache_hit or 0) > (input_tokens or 0):
+                # DSH reports the cached prompt separately, so the hit count can
+                # exceed input_tokens; input_tokens is then the uncached remainder.
+                summary["cache_miss_tokens"] += input_tokens or 0
+            else:
+                summary["cache_miss_tokens"] += max(
+                    0, (input_tokens or 0) - (cache_hit or 0))
         run_cost = run.get("estimated_cost_usd")
         if isinstance(run_cost, (int, float)) and run.get("cost_status") == "estimated":
             cost += run_cost
