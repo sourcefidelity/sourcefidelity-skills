@@ -305,6 +305,8 @@ Separate incorrect bibliographic information from formatting errors. Compare sub
 
 Every reference-list work must supply a permanent, working link. There is no print-only exclusion.
 
+**Name the link state, not just the verdict.** Every cited work gets one of these states, and a review reports them separately: `absent` (no URL and no DOI in the entry); `non-permanent` (a cloud-share, personal-drive, shortener or session link that will not remain); `record-only` (a catalogue or record page, accepted for print works, whose contents cannot be inspected); `unreachable` (the host could not be reached: DNS, TLS, connection refused, timeout); `blocked` (HTTP 401, 403 or 429, or a login or consent wall); `dead` (HTTP 404 or 410); `wrong-work` (the link resolves to a different work or edition); `ok` (a permanent URL or DOI that resolved at review time). A fetch failure names its kind; "not accessible" on its own is not a state. A work with a supplied but unusable link is never described as having a missing link.
+
 - For online sources, require a DOI where one exists; otherwise require a stable URL to the full text.
 - For print works, a stable library catalogue or record page that uniquely identifies the work, such as a catalogue record or holdings page, is acceptable. A publisher preview or retailer page alone is not.
 - A DOI is required where one exists. If a DOI exists but the paper supplies only a working URL, record a Category A reference-format issue, not a missing hyperlink.
@@ -369,7 +371,7 @@ Word counts: total N; text N; references N.
 Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not Supported N; Not Judged N).
 References: N entries. Works discussed: N.
 Uncited substantive passages: N.
-Hyperlinks missing: N.
+Hyperlinks: N absent; N not permanent; N record-only; N fetch failures (unreachable N; blocked N; dead N); N verified. HL total: N.
 Review time: Nm Ns; tokens: N in / N out.
 
 ## Summary of academic-integrity findings
@@ -404,7 +406,7 @@ Before delivery, reconcile the ledger with both the original paper and final rev
 - No empty finding list is described as a passed check when inspection was incomplete; reference formatting is not claimed checked where rendering was unavailable.
 - Every summary item maps to at least one C, R, W, or U ID with evidence; no summary item is unsupported or merely suspected.
 - Every confirmed A, B, or HL finding in the body appears in the summary; the summary contains no extra category claims.
-- The hyperlink count equals the number of distinct works or collections marked missing; multiple R IDs for one collection count once; W-only works are not counted; library-record links are treated as links, and preview-only or wrong-work links are not.
+- The hyperlink count equals the number of distinct works or collections marked missing; multiple R IDs for one collection count once; W-only works are not counted; library-record links are treated as links, and preview-only or wrong-work links are not.The hyperlink figures separate absent links from links that are present but not permanent, from record-only pages, from fetch failures; a supplied but unusable link is not called missing, and HL counts distinct works in the absent, non-permanent and wrong-work states only. Multiple R IDs for one collection count once, and W-only works are not counted.
 - Every substantive uncited passage has a U ID and appears under Category B; no common knowledge or student analysis is tagged B.
 - No Not Judged or access-limited item is presented as a confirmed finding.
 - No unverifiable source is presented as a Category B finding, and no work is called nonexistent without affirmative evidence.
