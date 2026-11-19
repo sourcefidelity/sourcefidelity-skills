@@ -27,11 +27,21 @@ if (-not $Target) {
 }
 
 $Python = $null
-foreach ($candidate in @("py", "python", "python3")) {
-    $arguments = if ($candidate -eq "py") { @("-3.12", "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)") } else { @("-c", "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)") }
+$PythonArgs = @()
+$Check = "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)"
+$Probes = @(
+    @("py", @("-3.12")),
+    @("py", @("-3")),
+    @("py", @()),
+    @("python", @()),
+    @("python3", @())
+)
+foreach ($probe in $Probes) {
+    $candidate = $probe[0]
+    $prefix = $probe[1]
     try {
-        & $candidate @arguments 2>$null
-        if ($LASTEXITCODE -eq 0) { $Python = $candidate; break }
+        & $candidate @($prefix + @("-c", $Check)) 2>$null
+        if ($LASTEXITCODE -eq 0) { $Python = $candidate; $PythonArgs = $prefix; break }
     } catch { }
 }
 
@@ -54,14 +64,14 @@ foreach ($skill in $Skills) {
 
 Write-Host ""
 if (-not $Python) {
-    Write-Host "Python 3.12 was not found. The skills still run in prompt-only mode:"
+    Write-Host "Python 3.12 or newer was not found. The skills still run in prompt-only mode:"
     Write-Host "  counts, page mapping and verbatim checks are unavailable."
     Write-Host "  Python: https://www.python.org/downloads/"
     Write-Host "  Then re-run: .\install.ps1 -Target `"$Target`""
     exit 0
 }
 
-Write-Host "Python found: $Python"
+Write-Host "Python found: $((@($Python) + $PythonArgs) -join ' ')"
 if (-not $NoVenv) {
     foreach ($skill in $Skills) {
         $venv = Join-Path $Target (Join-Path $skill ".venv")
@@ -69,7 +79,7 @@ if (-not $NoVenv) {
             Write-Host "would create: $venv (pypdf, pymupdf)"
             continue
         }
-        & $Python -m venv $venv
+        & $Python @($PythonArgs + @("-m", "venv", $venv))
         & (Join-Path $venv "Scripts\python.exe") -m pip install --quiet pypdf pymupdf
         Write-Host "venv ready: $skill"
     }
