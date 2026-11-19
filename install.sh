@@ -113,5 +113,7 @@ else
   echo "Next: relaunch your harness and ask for a source-use review."
 fi
 
-echo "Optional: store a contact email and free API keys with"
-echo "  $SHARED/bin/python -I scripts/user_settings.py --prompt"
+if [ -n "${SHARED:-}" ]; then
+  echo "Optional: store a contact email and free API keys with"
+  echo "  $SHARED/bin/python -I scripts/user_settings.py --prompt"
+fi
