@@ -279,8 +279,8 @@ def _request(url, accept="application/json", timeout=25, referer=""):
         return response.status, response.geturl(), response.headers, response.read()
 
 
-def _json(url):
-    status, final, headers, body = _request(url)
+def _json(url, timeout=25):
+    status, final, headers, body = _request(url, timeout=timeout)
     return json.loads(body.decode("utf-8", "replace"))
 
 
@@ -573,78 +573,160 @@ def sru_probe(base, query):
     return int(count.group(1)), clean
 
 
+def _probe_k10plus(parsed):
+    query = f"pica.all={_cql_terms(parsed.get('title'))}"
+    if parsed.get("surname"):
+        query += f" and pica.all={parsed['surname']}"
+    count, title = sru_probe(SRU_K10PLUS, query)
+    if count is None:
+        return None, title
+    return {"count": count, "title": title,
+            "score": title_score(parsed.get("title"), title)}, ""
+
+
+def _probe_dnb(parsed):
+    count, detail = sru_probe(SRU_DNB, f"WOE={_cql_terms(parsed.get('title'))} "
+                                       f"{parsed.get('surname', '')}".strip())
+    if count is None:
+        return None, detail
+    return {"count": count, "title": "", "score": 0.0}, ""
+
+
+def _probe_bnf(parsed):
+    record, reason = bnf_probe(parsed)
+    if record is None:
+        return None, reason
+    return record, ""
+
+
+def _probe_internet_archive(parsed):
+    query = f'title:("{_cql_terms(parsed.get("title"), 6)}")'
+    if parsed.get("surname"):
+        query += f' AND creator:("{parsed["surname"]}")'
+    url = ("https://archive.org/advancedsearch.php?output=json&rows=1"
+           "&fl%5B%5D=title&q=" + urllib.parse.quote(query))
+    try:
+        data = _json(url, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    found = data.get("response") or {}
+    docs = found.get("docs") or []
+    title = docs[0].get("title", "") if docs else ""
+    if isinstance(title, list):
+        title = title[0] if title else ""
+    return {"count": found.get("numFound", 0), "title": title,
+            "score": title_score(parsed.get("title"), title)}, ""
+
+
+def _probe_cinii(parsed):
+    query = f"{_cql_terms(parsed.get('title'), 5)} {parsed.get('surname', '')}".strip()
+    url = ("https://ci.nii.ac.jp/books/opensearch/search?format=json&count=1&q="
+           + urllib.parse.quote(query))
+    try:
+        data = _json(url, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    total = 0
+    try:
+        total = int((data.get("opensearch:totalResults") or {}).get("@") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    title = items[0].get("title", "") if items and isinstance(items[0], dict) else ""
+    return {"count": total, "title": title or "",
+            "score": title_score(parsed.get("title"), title or "")}, ""
+
+
+def _probe_openlibrary(parsed):
+    url = ("https://openlibrary.org/search.json?limit=1&fields=title,author_name"
+           "&title=" + urllib.parse.quote(parsed.get("title") or "")
+           + "&author=" + urllib.parse.quote(parsed.get("surname") or ""))
+    try:
+        data = _json(url, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    docs = data.get("docs") or []
+    title = docs[0].get("title", "") if docs else ""
+    return {"count": data.get("numFound", 0), "title": title,
+            "score": title_score(parsed.get("title"), title)}, ""
+
+
+STRONG_BOOK_ROUTES = (
+    ("K10plus", "_probe_k10plus"),
+    ("BnF", "_probe_bnf"),
+    ("DNB", "_probe_dnb"),
+    ("Internet Archive", "_probe_internet_archive"),
+    ("CiNii", "_probe_cinii"),
+)
+SUPPORTING_BOOK_ROUTES = (
+    ("Open Library", "_probe_openlibrary"),
+)
+
+
 def book_affirmative(parsed):
     """Ask book catalogues whether the work exists, and say who answered.
 
-    A publisher's own catalogue is the decisive source for a book but is rarely
-    machine-readable; the union and national catalogues are. K10plus (~200M
-    holdings) and DNB are the strong routes here, Google Books supporting.
-    Absence needs two strong answers before it can be called absence.
+    Every keyless catalogue is attempted with a short timeout, because which
+    hosts are reachable is a property of the machine, not of the work: a route
+    that fails here may answer elsewhere, and a failure is never counted as a
+    zero. Strong routes are tried until a hold or two zeros settle the question;
+    supporting routes only run when they have not.
     """
-    title = parsed.get("title") or ""
-    surname = parsed.get("surname") or ""
     routes = []
     result = {"status": "search_incomplete", "routes": routes, "note": "",
               "first_title": "", "score": 0.0}
-    k10_query = f"pica.all={_cql_terms(title)}" + (f" and pica.all={surname}" if surname else "")
-    k10_count, k10_title = sru_probe(SRU_K10PLUS, k10_query)
-    routes.append({"catalogue": "K10plus", "count": k10_count, "strong": True,
-                   "detail": k10_title if k10_count is not None else ""})
-    dnb_count, dnb_detail = sru_probe(SRU_DNB, f"WOE={title} {surname}".strip())
-    routes.append({"catalogue": "DNB", "count": dnb_count, "strong": True,
-                   "detail": "" if dnb_count is not None else dnb_detail})
-    bnf, bnf_detail = bnf_probe(parsed)
-    if bnf is None:
-        routes.append({"catalogue": "BnF", "count": None, "strong": True,
-                       "detail": bnf_detail})
-    else:
-        routes.append({"catalogue": "BnF", "count": bnf["count"], "strong": True,
-                       "detail": bnf.get("title", ""),
-                       "score": bnf.get("score", 0.0),
-                       "author_ok": bnf.get("author_ok", False)})
-    try:
-        data = _json("https://www.googleapis.com/books/v1/volumes?maxResults=1&q="
-                     + urllib.parse.quote(f"intitle:{title} inauthor:{surname}"))
-        routes.append({"catalogue": "Google Books", "count": data.get("totalItems"),
-                       "strong": False, "detail": ""})
-    except Exception as exc:  # noqa: BLE001
-        routes.append({"catalogue": "Google Books", "count": None, "strong": False,
-                       "detail": type(exc).__name__})
-
-    answered = [route for route in routes if route["strong"] and route["count"] is not None]
-    zero = [route for route in answered if route["count"] == 0]
-    held = [route for route in answered if route["count"]]
-    matched = []
-    for route in held:
-        if route["catalogue"] == "K10plus":
-            score = title_score(title, route.get("detail") or "")
-            if score >= 0.4:
-                matched.append((route, score))
-        elif route["catalogue"] == "BnF":
-            score = route.get("score", 0.0)
-            if score >= 0.5 or route.get("author_ok"):
-                matched.append((route, score))
+    zeros, held, mismatch = 0, None, []
+    for name, probe_name in STRONG_BOOK_ROUTES:
+        record, reason = globals()[probe_name](parsed)
+        if record is None:
+            routes.append({"catalogue": name, "count": None, "strong": True,
+                           "detail": reason})
+            continue
+        entry = {"catalogue": name, "count": record["count"], "strong": True,
+                 "detail": record.get("title", ""), "score": record.get("score", 0.0)}
+        routes.append(entry)
+        if record["count"] == 0:
+            zeros += 1
+            if zeros >= 2:
+                break
+        elif record.get("score", 0.0) >= 0.4 or name in ("DNB", "Internet Archive"):
+            held = entry
+            break
         else:
-            matched.append((route, 0.0))
-    if matched:
-        route, score = matched[0]
-        result["status"] = "present"
-        result["note"] = f"held by {route['catalogue']} ({route['count']} record(s))"
-        result["first_title"] = route.get("detail", "")
-        result["score"] = score
-    elif held:
-        route = held[0]
-        result["status"] = "present_title_mismatch"
-        result["first_title"] = route.get("detail", "")
-        result["note"] = (f"{route['catalogue']} returns {route['count']} record(s) but none "
-                          f"matches this title; nearest: {(route.get('detail') or '')[:90]}")
-    elif len(zero) >= 2:
-        result["status"] = "absent"
-        result["note"] = "no record in " + " and ".join(route["catalogue"] for route in zero)
-    elif len(zero) == 1:
-        result["status"] = "absent_single_catalogue"
-        result["note"] = (f"no record in {zero[0]['catalogue']}; fewer than two strong "
-                          f"catalogues answered, so absence is not established")
+            mismatch.append(entry)
+    if held is None and zeros < 2:
+        for name, probe_name in SUPPORTING_BOOK_ROUTES:
+            record, reason = globals()[probe_name](parsed)
+            if record is None:
+                routes.append({"catalogue": name, "count": None, "strong": False,
+                               "detail": reason})
+                continue
+            routes.append({"catalogue": name, "count": record["count"], "strong": False,
+                           "detail": record.get("title", ""),
+                           "score": record.get("score", 0.0)})
+            if record["count"]:
+                mismatch.append(routes[-1])
+
+    if held is not None:
+        result.update({"status": "present",
+                       "note": f"held by {held['catalogue']} ({held['count']} record(s))",
+                       "first_title": held.get("detail", ""),
+                       "score": held.get("score", 0.0)})
+    elif zeros >= 2:
+        zero_names = [route["catalogue"] for route in routes if route["count"] == 0]
+        result.update({"status": "absent",
+                       "note": "no record in " + " and ".join(zero_names)})
+    elif zeros == 1:
+        zero_name = [route["catalogue"] for route in routes if route["count"] == 0][0]
+        result.update({"status": "absent_single_catalogue",
+                       "note": (f"no record in {zero_name}; fewer than two strong "
+                                 f"catalogues answered, so absence is not established")})
+    elif mismatch:
+        result.update({"status": "present_title_mismatch",
+                       "first_title": mismatch[0].get("detail", ""),
+                       "note": (f"{mismatch[0]['catalogue']} returns "
+                                 f"{mismatch[0]['count']} record(s) but none matches this "
+                                 f"title; nearest: {(mismatch[0].get('detail') or '')[:90]}")})
     return result
 
 

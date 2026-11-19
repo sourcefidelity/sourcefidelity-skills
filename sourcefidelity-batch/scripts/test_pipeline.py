@@ -2771,48 +2771,56 @@ class ResolveDoisTests(unittest.TestCase):
         self.assertEqual(result["status"], "occupied")
         self.assertEqual(result["occupants"][0]["doi"], "10.1/x")
 
-    def test_book_catalogue_presence_confirms_a_book(self):
+    def test_book_catalogue_confirms_a_held_book(self):
         parsed = rd.parse_reference(
             "Dyer, R. (2004). Heavenly bodies: Film stars and society. Routledge.")
-        with mock.patch.object(rd, "sru_probe",
-                               side_effect=[(10, "Heavenly Bodies: Film Stars and Society"),
-                                            (None, "HTTPError")]), \
-                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
-                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+        record = {"count": 10, "title": "Heavenly Bodies: Film Stars and Society",
+                  "score": 0.9}
+        with mock.patch.object(rd, "_probe_k10plus", return_value=(record, "")):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present")
-        self.assertGreater(result["score"], 0.6)
+        self.assertEqual(result["routes"][0]["catalogue"], "K10plus")
 
-    def test_book_catalogue_absence_needs_two_strong_answers(self):
+    def test_book_absence_needs_two_strong_catalogues(self):
         parsed = rd.parse_reference(
             "Doe, J. (2019). A fabricated monograph. Invented Press.")
-        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (0, "")]), \
-                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
-                mock.patch.object(rd, "_json", return_value={"totalItems": 0}):
+        zero = ({"count": 0, "title": "", "score": 0.0}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=zero), \
+                mock.patch.object(rd, "_probe_bnf", return_value=zero), \
+                mock.patch.object(rd, "_probe_dnb", return_value=zero), \
+                mock.patch.object(rd, "_probe_openlibrary", return_value=(None, "URLError")), \
+                mock.patch.object(rd, "_json", side_effect=Exception("429")):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "absent")
-        # K10plus and BnF answering zero is two strong answers.
-        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (None, "HTTPError")]), \
-                mock.patch.object(rd, "bnf_probe",
-                                  return_value=({"count": 0, "score": 0.0,
-                                                 "author_ok": False, "title": ""}, "")), \
-                mock.patch.object(rd, "_json", side_effect=Exception("429")):
-            two = rd.book_affirmative(parsed)
-        self.assertEqual(two["status"], "absent")
-        # One catalogue answering zero is not absence.
-        with mock.patch.object(rd, "sru_probe", side_effect=[(0, ""), (None, "HTTPError")]), \
-                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
-                mock.patch.object(rd, "_json", side_effect=Exception("429")):
-            single = rd.book_affirmative(parsed)
-        self.assertEqual(single["status"], "absent_single_catalogue")
+
+    def test_unreachable_route_is_not_counted_as_absence(self):
+        # A host that fails here may answer on another machine: failures are
+        # recorded as failures, never as zeros.
+        parsed = rd.parse_reference(
+            "Doe, J. (2019). A fabricated monograph. Invented Press.")
+        failed = (None, "URLError")
+        zero = ({"count": 0, "title": "", "score": 0.0}, "")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=failed), \
+                mock.patch.object(rd, "_probe_bnf", return_value=failed), \
+                mock.patch.object(rd, "_probe_dnb", return_value=failed), \
+                mock.patch.object(rd, "_probe_internet_archive", return_value=zero), \
+                mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_openlibrary", return_value=(None, "URLError")):
+            result = rd.book_affirmative(parsed)
+        self.assertEqual(result["status"], "absent_single_catalogue")
+        self.assertIn("Internet Archive", result["note"])
 
     def test_book_catalogue_flags_a_different_title(self):
         parsed = rd.parse_reference(
             "Doe, J. (2019). A fabricated monograph. Routledge.")
-        with mock.patch.object(rd, "sru_probe",
-                               side_effect=[(3, "Something Else Entirely"), (None, "HTTPError")]), \
-                mock.patch.object(rd, "bnf_probe", return_value=(None, "HTTPError")), \
-                mock.patch.object(rd, "_json", side_effect=Exception("429")):
+        other = ({"count": 3, "title": "Something Else Entirely", "score": 0.1}, "")
+        failed = (None, "URLError")
+        with mock.patch.object(rd, "_probe_k10plus", return_value=other), \
+                mock.patch.object(rd, "_probe_bnf", return_value=failed), \
+                mock.patch.object(rd, "_probe_dnb", return_value=failed), \
+                mock.patch.object(rd, "_probe_internet_archive", return_value=failed), \
+                mock.patch.object(rd, "_probe_cinii", return_value=failed), \
+                mock.patch.object(rd, "_probe_openlibrary", return_value=other):
             result = rd.book_affirmative(parsed)
         self.assertEqual(result["status"], "present_title_mismatch")
 
