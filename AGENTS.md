@@ -45,3 +45,18 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 ### Domain docs
 
 Single-context: root `GLOSSARY.md` plus `docs/adr/`. See `docs/agents/domain.md`.
+
+## Scope discipline
+
+Change only what the user asked for in this session.
+
+- Do not add, remove, rename or restructure files, sections, flags, fields,
+  schemas, dependencies, documentation, tests or configuration the user has not
+  explicitly requested or approved.
+- Do not "improve" adjacent material while doing a task: no unrequested
+  cleanups, refactors, wording changes, new helpers or new documents.
+- If a change seems necessary, stop and ask first, describing what it would
+  touch and why. Wait for a yes.
+- Fixes and tests required by an explicitly requested change are in scope;
+  anything beyond them is not.
+- When in doubt, do less and ask.
