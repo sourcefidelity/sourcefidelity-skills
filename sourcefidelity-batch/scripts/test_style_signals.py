@@ -130,3 +130,24 @@ check("short paper is below the word gate", not short["signature"], short)
 
 print("\nFAILURES:", FAILS if FAILS else "none")
 sys.exit(1 if FAILS else 0)
+
+
+class FormulationClusterTests(unittest.TestCase):
+    def _grams(self, sentence, n=8):
+        tokens = sentence.split()
+        return {" ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)}
+
+    def test_one_shared_sentence_is_one_formulation(self):
+        grams = self._grams(
+            "stars are made for profit and function as part of the way films are sold today")
+        self.assertEqual(len(au.shared_formulations(grams)), 1)
+
+    def test_three_distinct_phrases_are_three_formulations(self):
+        grams = set()
+        grams |= self._grams(
+            "the classical hollywood studio era constructed stars as commercial products for sale")
+        grams |= self._grams(
+            "pressbooks and fan magazines extended the star image beyond the films themselves")
+        grams |= self._grams(
+            "studio contracts controlled the private lives of performers in the period")
+        self.assertEqual(len(au.shared_formulations(grams)), 3)

@@ -92,6 +92,10 @@ S1_MIN_REFS = 5
 S2_PAPERS = 2
 S3_JACCARD = 0.60
 S3_NGRAM = 8
+# A pair fires on shared phrasing only when at least this many DISTINCT
+# formulations overlap. Overlapping 8-grams from one quoted sentence collapse
+# to one formulation, so a single shared quotation cannot trigger the signal.
+S3_MIN_FORMULATIONS = 3
 MIN_SENTENCE_WORDS = 12
 
 # S5 style families. Thresholds are provisional and unvalidated; the calibrate
@@ -514,6 +518,27 @@ def ngrams(tokens, n):
     return {tuple(tokens[i:i + n]) for i in range(len(tokens) - n + 1)}
 
 
+def shared_formulations(grams):
+    """Maximal phrases behind a set of shared n-grams.
+
+    Two 8-grams belong to one formulation when they share at least six of their
+    eight tokens, which is how sliding windows of a single sentence behave.
+    Distinct formulations in different places of the text stay separate.
+    """
+    clusters = []
+    for gram in sorted(grams):
+        tokens = gram.split()
+        for cluster in clusters:
+            if len(set(tokens) & set(cluster)) >= len(tokens) - 2:
+                for token in tokens:
+                    if token not in cluster:
+                        cluster.append(token)
+                break
+        else:
+            clusters.append(list(tokens))
+    return clusters
+
+
 def paper_profile(path):
     paras, meta, kind = body_for(path)
     body, refs = split_body(paras)
@@ -786,7 +811,9 @@ def cohort(root, papers_dir):
             shared_sents = sorted(prepared[a]["sentences"] & prepared[b]["sentences"])
             ga, gb = prepared[a]["ngrams"], prepared[b]["ngrams"]
             shared_grams = sorted(ga & gb)
-            fires = jac >= S3_JACCARD or len(shared_sents) >= 1 or len(shared_grams) >= 3
+            formulations = shared_formulations(shared_grams)
+            fires = (jac >= S3_JACCARD or len(shared_sents) >= 1
+                     or len(formulations) >= S3_MIN_FORMULATIONS)
             if fires:
                 overlap_pairs.append({
                     "papers": [a, b],
@@ -794,6 +821,8 @@ def cohort(root, papers_dir):
                     "shared_headings": sorted(ha & hb)[:10],
                     "shared_sentences": shared_sents[:5],
                     "shared_ngram_count": len(shared_grams),
+                    "shared_formulation_count": len(formulations),
+                    "shared_formulations": [" ".join(c[:12]) for c in formulations[:5]],
                     "shared_ngram_examples": shared_grams[:5],
                     "basis": ("heading template" if jac >= S3_JACCARD else
                               "shared sentence" if shared_sents else "shared phrasing"),
@@ -807,7 +836,8 @@ def cohort(root, papers_dir):
     # millisecond. Same creator string is weaker and only supports a signature.
     out = {
         "generated": "script:authorship_signals.py",
-        "thresholds": {"S3_jaccard": S3_JACCARD, "S3_ngram": S3_NGRAM},
+        "thresholds": {"S3_jaccard": S3_JACCARD, "S3_ngram": S3_NGRAM,
+                       "S3_min_formulations": S3_MIN_FORMULATIONS},
         "papers": {pid: {"S3": r["S3"]} for pid, r in result.items()},
         "overlap_pairs": overlap_pairs,
         "notes": notes,
@@ -817,7 +847,7 @@ def cohort(root, papers_dir):
 
 def markdown(data):
     lines = ["## Cohort text overlap", "",
-             "| Papers | Basis | Shared headings | Shared sentences | Shared n-grams |",
+             "| Papers | Basis | Shared headings | Shared sentences | Shared formulations |",
              "| --- | --- | --- | --- | --- |"]
     pairs = data.get("overlap_pairs") or []
     for pair in pairs:
@@ -828,7 +858,8 @@ def markdown(data):
                 basis=pair.get("basis", ""),
                 headings=", ".join(pair.get("shared_headings", [])[:5]) or "—",
                 sentence=(sentences[0][:120] if sentences else "—"),
-                grams=pair.get("shared_ngram_count", 0)))
+                grams=pair.get("shared_formulation_count",
+                               pair.get("shared_ngram_count", 0))))
     if not pairs:
         lines.append("| — | No shared distinctive wording found. | — | — | — |")
     lines.append("")
