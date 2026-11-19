@@ -63,21 +63,20 @@ PDF_HINTS = {
 
 
 def email_for_requests():
-    """Contact address for Crossref's polite pool and for Unpaywall.
-
-    Set SOURCEFIDELITY_EMAIL once, or put {"email": "you@example.org"} in
-    ~/.dsh/sourcefidelity.json. Crossref gives a higher rate to a request that
-    carries a contact address, and Unpaywall requires one.
-    """
-    value = (os.environ.get("SOURCEFIDELITY_EMAIL") or "").strip()
-    if value:
-        return value
+    """Contact address for Crossref's polite pool, OpenAlex and Unpaywall."""
     try:
-        with open(os.path.join(os.path.expanduser("~"), ".dsh", "sourcefidelity.json"),
-                  encoding="utf-8") as handle:
-            return str((json.load(handle) or {}).get("email") or "").strip()
-    except (OSError, ValueError):
-        return ""
+        import user_settings
+        return user_settings.email()
+    except Exception:  # noqa: BLE001
+        return (os.environ.get("SOURCEFIDELITY_EMAIL") or "").strip()
+
+
+def google_books_key():
+    try:
+        import user_settings
+        return user_settings.google_books_key()
+    except Exception:  # noqa: BLE001
+        return (os.environ.get("GOOGLE_BOOKS_API_KEY") or "").strip()
 
 
 def now():
@@ -696,6 +695,26 @@ def _probe_openlibrary(parsed):
             "score": title_score(parsed.get("title"), title)}, ""
 
 
+def _probe_googlebooks(parsed):
+    """Google Books as a supporting catalogue; a key is optional."""
+    query = f'intitle:"{_cql_terms(parsed.get("title"), 5)}"'
+    if parsed.get("surname"):
+        query += f' inauthor:"{parsed["surname"]}"'
+    url = ("https://www.googleapis.com/books/v1/volumes?maxResults=1&q="
+           + urllib.parse.quote(query))
+    key = google_books_key()
+    if key:
+        url += "&key=" + urllib.parse.quote(key)
+    try:
+        data = _json(url, timeout=10)
+    except Exception as exc:  # noqa: BLE001
+        return None, type(exc).__name__
+    items = data.get("items") or []
+    title = ((items[0].get("volumeInfo") or {}).get("title", "") if items else "")
+    return {"count": data.get("totalItems", 0), "title": title,
+            "score": title_score(parsed.get("title"), title)}, ""
+
+
 STRONG_BOOK_ROUTES = (
     ("K10plus", "_probe_k10plus"),
     ("BnF", "_probe_bnf"),
@@ -705,6 +724,7 @@ STRONG_BOOK_ROUTES = (
 )
 SUPPORTING_BOOK_ROUTES = (
     ("Open Library", "_probe_openlibrary"),
+    ("Google Books", "_probe_googlebooks"),
 )
 
 
@@ -778,10 +798,54 @@ def book_affirmative(parsed):
 UNPAYWALL = "https://api.unpaywall.org/v2/"
 
 
+def _openalex_oa(doi):
+    """Open-access URL from an OpenAlex work record."""
+    mailto = urllib.parse.quote(email_for_requests())
+    data = _json("https://api.openalex.org/works/https://doi.org/"
+                 + urllib.parse.quote(doi) + (f"?mailto={mailto}" if mailto else ""))
+    urls = []
+    value = ((data.get("open_access") or {}).get("oa_url") or "")
+    if value:
+        urls.append(value)
+    for location in data.get("locations") or []:
+        value = location.get("pdf_url") or location.get("landing_page_url")
+        if value and value not in urls:
+            urls.append(value)
+    return urls
+
+
+def _semantic_scholar_oa(doi):
+    """Open-access PDF from Semantic Scholar, when the record has one."""
+    data = _json("https://api.semanticscholar.org/graph/v1/paper/DOI:"
+                 + urllib.parse.quote(doi) + "?fields=openAccessPdf")
+    value = ((data.get("openAccessPdf") or {}).get("url") or "")
+    return [value] if value else []
+
+
+def _europepmc_oa(doi):
+    """Full-text URLs from Europe PMC (biomedical and life sciences)."""
+    data = _json("https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json"
+                 "&query=DOI:%22" + urllib.parse.quote(doi) + "%22")
+    urls = []
+    for result in ((data.get("resultList") or {}).get("result") or []):
+        for entry in ((result.get("fullTextUrlList") or {}).get("fullTextUrl") or []):
+            value = entry.get("url")
+            if value and value not in urls:
+                urls.append(value)
+    return urls
+
+
 def oa_pdf_urls(doi, mailto=""):
     """PDF URLs from Unpaywall's OA locations, best first."""
     query = "?email=" + urllib.parse.quote(mailto or "review@example.org")
     data = _json(UNPAYWALL + urllib.parse.quote(doi) + query)
+    for provider in (_openalex_oa, _semantic_scholar_oa, _europepmc_oa):
+        try:
+            for value in provider(doi):
+                if value and value not in urls:
+                    urls.append(value)
+        except Exception:  # noqa: BLE001
+            pass
     urls = []
     for location in data.get("oa_locations") or []:
         for key in ("url_for_pdf", "url"):
