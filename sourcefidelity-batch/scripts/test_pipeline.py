@@ -14,6 +14,7 @@ import pathlib
 import sys
 import subprocess
 import tempfile
+import time
 import unittest
 import urllib.error
 import zipfile
@@ -3302,6 +3303,38 @@ class SourceCacheTests(unittest.TestCase):
         with open(rd.cache_path(), "w", encoding="utf-8") as handle:
             json.dump(data, handle)
         self.assertIsNone(rd.cache_get("metadata", "10.1000/x"))
+
+
+class CacheMaintenanceTests(unittest.TestCase):
+    def test_failed_pages_expire_sooner_than_full_text(self):
+        import http_cache as hc
+        with tempfile.TemporaryDirectory() as root:
+            folder = hc.text_store(root, "https://x/blocked",
+                                   {"text": "", "status": 403})
+            meta_path = os.path.join(folder, "meta.json")
+            meta = json.load(open(meta_path, encoding="utf-8"))
+            meta["stored_at"] = time.time() - 7200
+            json.dump(meta, open(meta_path, "w", encoding="utf-8"))
+            text, _meta = hc.text_for(root, "https://x/blocked")
+            self.assertEqual(text, "")
+            full = hc.text_store(root, "https://x/full", {"text": "word " * 400})
+            self.assertNotEqual(hc.text_for(root, "https://x/full")[0], "")
+            del full
+
+    def test_prune_removes_expired_text_entries(self):
+        import http_cache as hc
+        with tempfile.TemporaryDirectory() as root:
+            folder = hc.text_store(root, "https://x/old", {"text": "", "status": 404})
+            meta_path = os.path.join(folder, "meta.json")
+            meta = json.load(open(meta_path, encoding="utf-8"))
+            meta["stored_at"] = 0
+            json.dump(meta, open(meta_path, "w", encoding="utf-8"))
+            result = hc.prune_text_cache(root)
+            self.assertGreaterEqual(result["expired"], 1)
+            self.assertFalse(os.path.isdir(folder))
+
+    def test_the_fetch_lock_waits_two_minutes(self):
+        self.assertEqual(rd._acquire_lock.__defaults__[0], 120.0)
 
 
 if __name__ == "__main__":

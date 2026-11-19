@@ -13,9 +13,15 @@ import base64
 import hashlib
 import json
 import os
+import re
+import shutil
 import time
 
 TTL_SECONDS = 7 * 24 * 3600
+# A blocked, paywalled or empty page is not likely to change in
+# seconds; cache it briefly so a run does not retry it per citation.
+FAILURE_TTL_SECONDS = 3600
+TEXT_CACHE_MAX_BYTES = 200 * 1024 * 1024
 CACHE_DIR = (os.environ.get("SOURCEFIDELITY_WEB_CACHE")
              or os.path.join(os.path.expanduser("~"), ".dsh", "cache", "web"))
 
@@ -36,7 +42,8 @@ def cache_get(url):
             data = json.load(handle)
     except (OSError, ValueError):
         return None
-    if time.time() - float(data.get("stored_at") or 0) > TTL_SECONDS:
+    ttl = TTL_SECONDS if data.get("state") == "ok" else FAILURE_TTL_SECONDS
+    if time.time() - float(data.get("stored_at") or 0) > ttl:
         return None
     body = base64.b64decode(data.get("body") or "")
     return {"state": data.get("state", "ok"), "status": data.get("status"),
@@ -55,3 +62,142 @@ def cache_put(url, state, status, final, content_type, body):
                    "final": final, "content_type": content_type,
                    "body": base64.b64encode(body or b"").decode("ascii")}, handle)
     os.replace(temporary, path)
+
+
+PAYWALL_RE = re.compile(r"\bsubscribe\b|\bsign in to (?:read|continue)\b|"
+                        r"purchase this article|institutional access", re.I)
+LENDING_RE = re.compile(r"\bborrow\b|lending library|controlled digital lending", re.I)
+BLOCK_RE = re.compile(r"just a moment|enable javascript|access denied|"
+                      r"unusual traffic|captcha", re.I)
+ABSTRACT_RE = re.compile(r"\babstract\b", re.I)
+
+
+def classify_text(text):
+    """What kind of page the fetched text is, so a block is not read as evidence."""
+    words = len(text.split()) if text else 0
+    if words < 20:
+        return "unreadable"
+    if words < 3000 and BLOCK_RE.search(text):
+        return "blocked"
+    if PAYWALL_RE.search(text):
+        return "paywalled"
+    if LENDING_RE.search(text):
+        return "lending_only"
+    if words < 1500 and ABSTRACT_RE.search(text):
+        return "abstract_only"
+    return "full_text"
+
+
+def cache_key(url):
+    return hashlib.sha256((url or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+def text_dir(root, url):
+    return os.path.join(root, "_work", "_web", cache_key(url))
+
+
+def text_store(root, url, result):
+    """Store fetched text as evidence; a blocked or empty page is stored too."""
+    folder = text_dir(root, url)
+    os.makedirs(folder, exist_ok=True)
+    body = result.get("text") or ""
+    with open(os.path.join(folder, "text.txt"), "w", encoding="utf-8") as handle:
+        handle.write(body)
+    meta = {key: result.get(key) for key in
+            ("requested_url", "final_url", "status", "content_type", "bytes",
+             "truncated", "limitation", "error")}
+    meta["requested_url"] = meta.get("requested_url") or url
+    meta["classification"] = result.get("classification") or classify_text(body)
+    meta["text_chars"] = len(body)
+    meta["stored_at"] = time.time()
+    with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as handle:
+        json.dump(meta, handle, ensure_ascii=False, indent=1)
+    prune_text_cache(root)
+    return folder
+
+
+def text_for(root, url):
+    """(text, meta) for a cached URL; ("", {}) when absent or expired."""
+    folder = text_dir(root, url)
+    try:
+        with open(os.path.join(folder, "meta.json"), encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError):
+        return "", {}
+    ttl = TTL_SECONDS if meta.get("classification") == "full_text" else FAILURE_TTL_SECONDS
+    if time.time() - float(meta.get("stored_at") or 0) > ttl:
+        return "", {}
+    try:
+        with open(os.path.join(folder, "text.txt"), encoding="utf-8") as handle:
+            return handle.read(), meta
+    except OSError:
+        return "", {}
+
+
+def prune_text_cache(root, max_bytes=TEXT_CACHE_MAX_BYTES):
+    """Remove expired text entries, then the oldest until the store fits the cap."""
+    base = os.path.join(root, "_work", "_web")
+    if not os.path.isdir(base):
+        return {"expired": 0, "files": 0}
+    now = time.time()
+    entries = []
+    expired = 0
+    for name in os.listdir(base):
+        folder = os.path.join(base, name)
+        meta_path = os.path.join(folder, "meta.json")
+        try:
+            with open(meta_path, encoding="utf-8") as handle:
+                meta = json.load(handle)
+            stored = float(meta.get("stored_at") or 0)
+            ttl = (TTL_SECONDS if meta.get("classification") == "full_text"
+                   else FAILURE_TTL_SECONDS)
+        except (OSError, ValueError):
+            stored, ttl = 0.0, FAILURE_TTL_SECONDS
+        if now - stored > ttl:
+            shutil.rmtree(folder, ignore_errors=True)
+            expired += 1
+            continue
+        total = sum(os.path.getsize(os.path.join(folder, item))
+                    for item in os.listdir(folder)
+                    if os.path.isfile(os.path.join(folder, item)))
+        entries.append((stored, folder, total))
+    size = sum(total for _stored, _folder, total in entries)
+    removed = 0
+    for _stored, folder, total in sorted(entries):
+        if size <= max_bytes:
+            break
+        shutil.rmtree(folder, ignore_errors=True)
+        size -= total
+        removed += 1
+    return {"expired": expired, "files": removed}
+
+
+def prune_url_cache(max_bytes=TEXT_CACHE_MAX_BYTES):
+    """Trim the URL response cache to a size cap after removing expired files."""
+    if not os.path.isdir(CACHE_DIR):
+        return 0
+    files = []
+    now = time.time()
+    for name in os.listdir(CACHE_DIR):
+        path = os.path.join(CACHE_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        try:
+            if now - os.path.getmtime(path) > TTL_SECONDS:
+                os.remove(path)
+                continue
+        except OSError:
+            continue
+        files.append((os.path.getmtime(path), path, os.path.getsize(path)))
+    size = sum(item[2] for item in files)
+    removed = 0
+    for _mtime, path, length in sorted(files):
+        if size <= max_bytes:
+            break
+        try:
+            os.remove(path)
+            size -= length
+            removed += 1
+        except OSError:
+            pass
+    return removed

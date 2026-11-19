@@ -1074,7 +1074,7 @@ def oa_pdf_urls(doi, mailto=""):
     return urls
 
 
-def _acquire_lock(key, timeout=60.0):
+def _acquire_lock(key, timeout=120.0):
     """A per-source lock, so two workers do not fetch the same DOI twice."""
     if not CACHE_ROOT or not key:
         return ""
