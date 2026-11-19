@@ -1,0 +1,114 @@
+﻿#!/usr/bin/env python3
+"""Read a DOCX into paragraph text, runs and formatting for review.
+
+The review skill must check things the candidate extractor does not expose:
+article-title versus journal italics, quotation marks, hanging indent, heading
+styles, table text and hyperlink targets. A DOCX has no printed pagination, so
+locators stay paragraph-based.
+
+    python -I docx_text.py --paper FILE --out DIR
+    writes DIR/paper-text.md and DIR/paper-text.json
+"""
+import argparse, json, os, re, sys, zipfile
+from xml.etree import ElementTree as ET
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def build(path):
+    with zipfile.ZipFile(path) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+        try:
+            rels = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
+        except KeyError:
+            rels = None
+    targets = {}
+    if rels is not None:
+        for rel in rels:
+            if rel.get("TargetMode") == "External":
+                targets[rel.get("Id")] = rel.get("Target")
+    tables = len(list(document.iter(W + "tbl")))
+    paragraphs = []
+    for para in document.iter(W + "p"):
+        text = "".join(node.text or "" for node in para.iter(W + "t"))
+        if not text.strip() and not para.findall(".//" + W + "hyperlink"):
+            continue
+        props = para.find(W + "pPr")
+        style = ""
+        indent = {}
+        align = ""
+        if props is not None:
+            style_node = props.find(W + "pStyle")
+            style = style_node.get(W + "val") if style_node is not None else ""
+            ind = props.find(W + "ind")
+            if ind is not None:
+                for key in ("left", "firstLine", "hanging"):
+                    value = ind.get(W + key)
+                    if value and value != "0":
+                        indent[key] = value
+            jc = props.find(W + "jc")
+            align = jc.get(W + "val") if jc is not None else ""
+        runs, links = [], []
+        for run in para.iter(W + "r"):
+            body = "".join(node.text or "" for node in run.iter(W + "t"))
+            fmt = run.find(W + "rPr")
+            italic = fmt is not None and fmt.find(W + "i") is not None and \
+                (fmt.find(W + "i").get(W + "val") or "true") not in ("0", "false")
+            bold = fmt is not None and fmt.find(W + "b") is not None and \
+                (fmt.find(W + "b").get(W + "val") or "true") not in ("0", "false")
+            if body:
+                runs.append({"text": body, "italic": italic, "bold": bold})
+        for element in para.iter():
+            if element.tag == W + "hyperlink":
+                rid = element.get(R + "id")
+                if rid in targets:
+                    links.append(targets[rid])
+        paragraphs.append({"id": f"P{len(paragraphs) + 1}", "style": style,
+                           "align": align, "indent": indent, "runs": runs,
+                           "links": links, "text": text,
+                           "words": len(re.findall(r"\S+", text))})
+    return {"source": os.path.abspath(path), "tables": tables,
+            "paragraphs": paragraphs}
+
+
+def markdown(data):
+    lines = [f"# Paper text — {os.path.basename(data['source'])}", "",
+             f"Paragraphs: {len(data['paragraphs'])}; tables: {data['tables']}.", ""]
+    for para in data["paragraphs"]:
+        marks = []
+        if para["style"]:
+            marks.append("style=" + para["style"])
+        if para["indent"]:
+            marks.append("indent=" + json.dumps(para["indent"]))
+        if para["align"]:
+            marks.append("align=" + para["align"])
+        prefix = f"{para['id']}"
+        if marks:
+            prefix += " [" + "; ".join(marks) + "]"
+        rendered = "".join(("_" + run["text"] + "_") if run["italic"] else run["text"]
+                           for run in para["runs"]) or para["text"]
+        lines.append(prefix + " " + rendered)
+    return "\n".join(lines) + "\n"
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--paper", required=True)
+    parser.add_argument("--out", required=True)
+    args = parser.parse_args(argv)
+    data = build(args.paper)
+    os.makedirs(args.out, exist_ok=True)
+    with open(os.path.join(args.out, "paper-text.json"), "w", encoding="utf-8",
+              newline="\n") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=1)
+    with open(os.path.join(args.out, "paper-text.md"), "w", encoding="utf-8",
+              newline="\n") as handle:
+        handle.write(markdown(data))
+    print(json.dumps({"paragraphs": len(data["paragraphs"]), "tables": data["tables"],
+                      "out": args.out}, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

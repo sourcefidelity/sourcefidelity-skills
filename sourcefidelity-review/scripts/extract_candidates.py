@@ -328,12 +328,19 @@ def build(path, paper_id):
             continue
         has_fact = bool(FACT_RE.search(p["text"]))
         has_quote = any(q["paragraph_id"] == p["id"] for q in quotes)
-        if (has_fact or has_quote) and p["words"] >= 12:
+        has_name = bool(re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", p["text"]))
+        has_claim = bool(re.search(r"\b(?:argues?|shows?|reveals?|demonstrates?"
+                               r"|suggests?|states?|claims?|explains?)\b",
+                               p["text"], re.I))
+        if (has_fact or has_quote or has_name or has_claim) and p["words"] >= 12:
+            signals = [name for name, ok in
+                       (("fact", has_fact), ("quote", has_quote),
+                        ("name", has_name), ("claim", has_claim)) if ok]
             uncited.append({
                 "id": f"U{len(uncited) + 1}",
                 "paragraph_id": p["id"],
                 "text": p["text"],
-                "signals": [s for s, ok in (("fact", has_fact), ("quote", has_quote)) if ok],
+                  "signals": signals,
             })
 
     ambiguity = ambiguity_for(paragraphs, references, citations)
