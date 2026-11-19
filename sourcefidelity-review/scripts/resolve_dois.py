@@ -539,6 +539,87 @@ def contents_check_cached(parsed):
     return result
 
 
+def _meta_from_crossref_item(item, doi):
+    return {"doi": doi, "title": (item.get("title") or [""])[0],
+            "container": (item.get("container-title") or [""])[0],
+            "publisher": item.get("publisher"), "type": item.get("type"),
+            "authors": [author.get("family") for author in (item.get("author") or [])],
+            "year": (item.get("issued", {}).get("date-parts") or [[None]])[0][0],
+            "volume": item.get("volume"), "issue": item.get("issue"),
+            "page": item.get("page"), "edition": item.get("edition-number")}
+
+
+def crossref_batch(dois, mailto=""):
+    found = {}
+    for start in range(0, len(dois), 12):
+        chunk = dois[start:start + 12]
+        query = "filter=" + ",".join("doi:" + urllib.parse.quote(doi.lower())
+                                     for doi in chunk)
+        query += f"&rows={len(chunk)}"
+        if mailto:
+            query += "&mailto=" + urllib.parse.quote(mailto)
+        try:
+            data = _json("https://api.crossref.org/works?" + query)
+        except Exception:  # noqa: BLE001
+            continue
+        for item in (data.get("message") or {}).get("items") or []:
+            doi = (item.get("DOI") or "").lower()
+            if doi:
+                found[doi] = _meta_from_crossref_item(item, doi)
+    return found
+
+
+def openalex_batch(dois):
+    found = {}
+    for start in range(0, len(dois), 25):
+        chunk = dois[start:start + 25]
+        query = "filter=" + "|".join(
+            "doi:https://doi.org/" + urllib.parse.quote(doi.lower()) for doi in chunk)
+        query += f"&per-page={len(chunk)}"
+        key = _key("openalex_api_key")
+        if key:
+            query += "&api_key=" + urllib.parse.quote(key)
+        try:
+            data = _json("https://api.openalex.org/works?" + query)
+        except Exception:  # noqa: BLE001
+            continue
+        for item in data.get("results") or []:
+            doi = ((item.get("doi") or "").replace("https://doi.org/", "")).lower()
+            if not doi:
+                continue
+            biblio = item.get("biblio") or {}
+            found[doi] = {
+                "doi": doi, "title": item.get("title") or "", "container": "",
+                "publisher": "", "type": item.get("type"),
+                "authors": [((authorship.get("author") or {}).get("display_name"))
+                            for authorship in (item.get("authorships") or [])],
+                "year": item.get("publication_year"),
+                "volume": biblio.get("volume"), "issue": biblio.get("issue"),
+                "page": (f"{biblio.get('first_page')}-{biblio.get('last_page')}"
+                         if biblio.get("first_page") else ""),
+                "edition": ""}
+    return found
+
+
+def batch_metadata(entries, mailto=""):
+    dois = []
+    for entry in entries:
+        for doi in DOI_RE.findall(entry):
+            if doi.lower() not in dois:
+                dois.append(doi.lower())
+    if not dois or not CACHE_ROOT:
+        return {"crossref": 0, "openalex": 0}
+    found = crossref_batch(dois, mailto)
+    for doi, meta in found.items():
+        cache_put("metadata", doi, meta)
+    missing = [doi for doi in dois if doi not in found]
+    extra = openalex_batch(missing) if missing else {}
+    for doi, meta in extra.items():
+        if not cache_get("metadata", doi):
+            cache_put("metadata", doi, meta)
+    return {"crossref": len(found), "openalex": len(extra)}
+
+
 def crossref_by_doi_cached(doi, mailto=""):
     """Crossref metadata once per batch, then from the cache."""
     key = (doi or "").lower()
@@ -1661,6 +1742,9 @@ def main(argv=None):
 
     out_dir = os.path.abspath(args.out or (os.path.dirname(args.refs) if args.refs else "."))
     os.makedirs(out_dir, exist_ok=True)
+    batch = batch_metadata(entries, args.mailto or email_for_requests())
+    if batch.get("crossref") or batch.get("openalex"):
+        print(json.dumps({"batch_metadata": batch}), flush=True)
     records = []
     jobs = max(1, int(args.jobs or 1))
     if jobs > 1 and len(entries) > 1:
