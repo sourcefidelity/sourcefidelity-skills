@@ -33,6 +33,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.0` notice from `1.0.0`; version, tag and checksum agree |
 | Release install | `install.sh --update` on the live install | Upgraded `1.0.0` → `1.1.0`; checksum verified; venv preserved; stamp is `v1.1.0` |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
+| CI | GitHub Actions run 44668057309 on `main` | success on Ubuntu, macOS and Windows, including the docs check |
 
 ## 3. Known limitations and risks
 
