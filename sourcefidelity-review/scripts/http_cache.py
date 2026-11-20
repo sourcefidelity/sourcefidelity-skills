@@ -54,15 +54,22 @@ CACHE_DIR = (os.environ.get("SOURCEFIDELITY_WEB_CACHE")
 _DISABLED = False
 _HOST_TTL_SECONDS = 24 * 3600
 _HOST_LOCK = threading.Lock()
+_CACHE_LOCK = threading.Lock()
 FALLBACK_CACHE_DIR = os.path.join(tempfile.gettempdir(), "sourcefidelity-web-cache")
 _RESOLVED_CACHE_DIR = None
 
 
 def _writable(directory):
-    """True when `directory` can be created and written to."""
+    """True when `directory` can be created and written to.
+
+    The probe file is unique per process and thread: a fixed name lets two
+    fetch threads delete each other's probe, which reads as "not writable" and
+    silently sends the cache to the fallback directory.
+    """
     try:
         os.makedirs(directory, exist_ok=True)
-        probe = os.path.join(directory, ".write-test")
+        probe = os.path.join(directory, ".write-test.%s.%s"
+                             % (os.getpid(), threading.get_ident()))
         with open(probe, "w", encoding="utf-8") as handle:
             handle.write("")
         os.remove(probe)
@@ -72,10 +79,20 @@ def _writable(directory):
 
 
 def set_cache_dir(path):
-    """Point every fetch at this cache directory (prints nothing)."""
+    """Point every fetch at this cache directory and pin the choice."""
     global CACHE_DIR, _RESOLVED_CACHE_DIR
-    CACHE_DIR = os.path.abspath(path) if path else CACHE_DIR
-    _RESOLVED_CACHE_DIR = None
+    with _CACHE_LOCK:
+        if not path:
+            _RESOLVED_CACHE_DIR = None
+            return
+        CACHE_DIR = os.path.abspath(path)
+        if _writable(CACHE_DIR):
+            _RESOLVED_CACHE_DIR = CACHE_DIR
+        elif _writable(FALLBACK_CACHE_DIR):
+            CACHE_DIR = FALLBACK_CACHE_DIR
+            _RESOLVED_CACHE_DIR = FALLBACK_CACHE_DIR
+        else:
+            _RESOLVED_CACHE_DIR = ""
 
 
 def set_disabled(flag=True):
@@ -91,18 +108,20 @@ def cache_disabled():
 def cache_dir():
     """The first writable cache directory, or "" when none is available.
 
-    The default under ~/.dsh is outside the workspace and a file sandbox can
-    deny it. Fall back to the platform temp directory so a fetch that succeeded
-    is still cached instead of failing in `cache_put`.
+    Resolution happens once under a lock: the audit fetches links in parallel,
+    and an unsynchronised lazy probe lets one thread's cleanup make another see
+    the directory as unwritable.
     """
     global _RESOLVED_CACHE_DIR
     if _RESOLVED_CACHE_DIR is None:
-        if _writable(CACHE_DIR):
-            _RESOLVED_CACHE_DIR = CACHE_DIR
-        elif _writable(FALLBACK_CACHE_DIR):
-            _RESOLVED_CACHE_DIR = FALLBACK_CACHE_DIR
-        else:
-            _RESOLVED_CACHE_DIR = ""
+        with _CACHE_LOCK:
+            if _RESOLVED_CACHE_DIR is None:
+                if _writable(CACHE_DIR):
+                    _RESOLVED_CACHE_DIR = CACHE_DIR
+                elif _writable(FALLBACK_CACHE_DIR):
+                    _RESOLVED_CACHE_DIR = FALLBACK_CACHE_DIR
+                else:
+                    _RESOLVED_CACHE_DIR = ""
     return _RESOLVED_CACHE_DIR
 
 

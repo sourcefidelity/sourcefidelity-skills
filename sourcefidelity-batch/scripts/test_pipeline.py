@@ -3701,6 +3701,20 @@ class ReviewPipelineRegressionTests(unittest.TestCase):
         self.assertIn("100 prompt (90 cached + 10 uncached) / 20 output", text)
         self.assertIn("$0.0100 (estimated)", text)
 
+    def test_cache_dir_is_stable_under_threads(self):
+        from concurrent.futures import ThreadPoolExecutor
+        original = http_cache.cache_dir()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                target = os.path.join(tmp, "nested", "cache")
+                http_cache.set_disabled(False)
+                http_cache.set_cache_dir(target)
+                with ThreadPoolExecutor(max_workers=16) as pool:
+                    seen = set(pool.map(lambda _i: http_cache.cache_dir(), range(64)))
+                self.assertEqual(seen, {target})
+        finally:
+            http_cache.set_cache_dir(original)
+
     def test_host_state_remembers_a_blocked_host(self):
         original = http_cache.cache_dir()
         try:
