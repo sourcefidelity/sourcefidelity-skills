@@ -1,6 +1,7 @@
 # Public release plan
 
-**Status:** decided, not yet implemented.
+> **Status:** implemented in the 1.0.0 release. The remaining release work is tracked in [docs/PLAN.md](../PLAN.md) R1. Retained as history.
+
 **Audience:** university instructors and writing-centre staff who are not coding
 harness users and may be on Windows or macOS.
 **Baseline:** `main` at the commit that adds this plan; batch suite 142 tests.

@@ -1,5 +1,7 @@
 # Review-quality port: useful modules beyond retrieval
 
+> **Status:** superseded by [docs/PLAN.md](../PLAN.md) R4. Retained for detail.
+
 Source: `sourcefidelity/sourcefidelity-api` at `06fa131`, MIT. The retrieval
 plan covers coverage; these modules improve what the skill can see and how it
 labels what it sees. Port order follows the existing pipeline seams.

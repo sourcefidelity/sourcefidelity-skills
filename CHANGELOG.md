@@ -26,9 +26,7 @@
   wrong supplied DOI, split URLs, title containment, the host cache and the
   scope-line update.
 
-## Unreleased
-
-- **Weekly update check.** `scripts/update_check.py` is silent when the install
+- **Weekly update check.** `sourcefidelity-review/scripts/update_check.py` is silent when the install
   is current, checks the network at most once a week, and keeps a found update
   visible on later reviews. It accepts a BOM from the PowerShell installer, and
   its state lives beside the installed skills with user and workspace fallbacks.

@@ -8,25 +8,68 @@ Each `sourcefidelity-*/` directory is one skill: `SKILL.md` is its entry point, 
 
 The three directories must stay siblings with these exact names: batch scripts resolve `../sourcefidelity-review/scripts` from their own path (`prepare_batch.py`, `render_review.py`) and import `detect_structure` and `page_map` from there, so moving, renaming or nesting a skill directory breaks those imports.
 
+## Documentation map
+
+Read the document that owns the question; do not reconstruct it from code or memory.
+
+| Document | Owns | Read it when |
+|---|---|---|
+| `docs/ARCHITECTURE.md` | System design: skill boundaries, data flow, invariants, verification, release, extension points | Before changing a component or proposing a competing mechanism |
+| `docs/STATE.md` | Current truth: version, branch, test counts, release and install status, verified results, limitations | At the start of substantial work |
+| `docs/PLAN.md` | Active work order, acceptance rules, superseded and deferred work | Before choosing what to do next |
+| `REVIEW_PROTOCOL.md` in each skill | The method for that skill | Before a review or a protocol change |
+| `README.md` | User-facing installation and usage | Before changing user-visible behaviour |
+| `CHANGELOG.md`, `VERSION`, `latest.json` | Release identity and history | At a release |
+
+`docs/agents/` holds harness-specific workflow adapters (issue tracker, triage labels, domain docs); `docs/reviews/` is historical handoff material, not current guidance.
+
+## Sources of truth
+
+The filesystem and the tests describe what exists. The guiding documents describe intent. If they conflict, report the discrepancy instead of silently treating either side as correct.
+
+- Code and tests win on "what the code does now".
+- `REVIEW_PROTOCOL.md` wins on review method.
+- `ARCHITECTURE.md` wins on design intent and invariants.
+- `STATE.md` wins on current status and measured results.
+- `PLAN.md` wins on work order and acceptance.
+
+Use concise cross-references instead of copying a fact into a second document. One canonical specification per topic.
+
 ## Environment
 
-Run the suites and helpers with the repo's `.venv` (built from `/opt/homebrew/bin/python3.12`): the skills need 3.12+, and the system `python3` is 3.9. `pypdf` is the only dependency the tests need.
+Run the suites and helpers with any Python 3.12; the system `python3` on macOS is 3.9 and does not qualify. CI uses `actions/setup-python` 3.12. This repo has no `.venv`; an installed copy has the shared venv at `<skills>/sourcefidelity-review/.venv`, and every skill resolves it.
 
-PDF and DOCX extraction upgrades itself when a skill has its own `.venv` at `<skill>/.venv` with PyMuPDF installed (`word_count.py`, `authorship_signals.py` shell out to that interpreter); absent it, the same code falls back to `pypdf` in the invoking interpreter with less layout detail.
+`pypdf` is the only dependency the tests need. PDF and DOCX extraction upgrades itself when the shared venv has PyMuPDF; otherwise it falls back to `pypdf` with less layout detail.
 
 GitHub has no direct route from this machine. `.git/config` carries `http.proxy = http://127.0.0.1:7890` for `fetch` and `push`; for any git work outside this repo, pass `-c http.proxy=http://127.0.0.1:7890`.
 
 ## Tests
 
-From the repo root, all three suites:
+From the repo root, all three suites plus the docs check:
 
 ```bash
-cd sourcefidelity-batch/scripts   && ../../.venv/bin/python -I test_pipeline.py
-cd sourcefidelity-batch/scripts   && ../../.venv/bin/python -I test_style_signals.py
-cd sourcefidelity-review/scripts  && ../../.venv/bin/python -I test_pdf_quality.py
+python -I sourcefidelity-batch/scripts/test_pipeline.py
+python -I sourcefidelity-batch/scripts/test_style_signals.py
+python -I sourcefidelity-review/scripts/test_pdf_quality.py
+python scripts/check_docs.py
 ```
 
-Done when each exits 0 and reports no failures.
+Done when each exits 0 and reports no failures. Replace `python` with a Python 3.12 interpreter, for example the installed shared venv at `<skills>/sourcefidelity-review/.venv/bin/python`. The PDF-quality suite reports layout checks as skipped when PyMuPDF is absent.
+
+## Documentation maintenance
+
+- Update a document when its owned fact changes: `STATE.md` for status, test counts, measured results or limitations; `ARCHITECTURE.md` for a design decision or a changed boundary; `PLAN.md` for work order, acceptance or a superseded row; `CHANGELOG.md` and the release files for a release.
+- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 2,000 words.
+- Maintain in place. Do not prepend dated overrides or leave two competing instructions; rewrite the owning section and let git carry the history.
+- Do not mark work complete because code exists. Record the command and the observed result.
+- Run `python scripts/check_docs.py` after a substantive documentation change. It checks links, budgets, required headings, version agreement between `VERSION`, `latest.json` and `CHANGELOG.md`, and referenced repo paths. Passing it does not establish that the text is true.
+
+## Verification and release
+
+- Verify proportionally: the three suites for code, `scripts/check_docs.py` for docs, and a real-document check when the change affects extraction, retrieval or review output.
+- Release state must agree across `VERSION`, `latest.json` (`version`, `tag`, `url`, `sha256`, `min_supported`, `notes`) and `CHANGELOG.md`; the installer records `version`, `commit`, `channel` and `installed_at` in `<skills>/.sourcefidelity/installed.json`.
+- Do not apply updates silently. `update_check.py` checks at most weekly and prints one line; `install.sh --update` verifies the checksum; `--version` pins a tag.
+- Do not stage, commit, push or publish unless the user asks.
 
 ## Data and secrets
 

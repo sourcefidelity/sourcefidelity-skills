@@ -47,3 +47,5 @@ jobs:
           python -I sourcefidelity-batch/scripts/test_pipeline.py
           python -I sourcefidelity-batch/scripts/test_style_signals.py
           python -I sourcefidelity-review/scripts/test_pdf_quality.py
+      - name: Check the development docs
+        run: python scripts/check_docs.py

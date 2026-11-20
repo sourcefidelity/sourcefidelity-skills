@@ -1,6 +1,8 @@
 # Retrieval port plan: coverage for batch reviews
 
-Status: proposed, 2026-11-18. Source under assessment: the public
+> **Status:** superseded by [docs/PLAN.md](../PLAN.md) R4. Retained for detail.
+
+Historical status: proposed 2026-11-18. Source under assessment: the public
 `sourcefidelity/sourcefidelity-api` repository at `06fa131` (2026-10-21),
 MIT licensed, cloned outside this repo at `../sourcefidelity-api`.
 

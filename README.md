@@ -103,7 +103,7 @@ Releases are tagged on GitHub and described by `latest.json` at the repository r
 ./install.sh --version v1.1.0   # require a checkout of that tag
 ```
 
-Every review starts with `scripts/update_check.py`. It is silent when the install is current, checks the network at most once a week, and prints one line when an update is due. A notice persists on later reviews until the installed version changes. The check sends one GET for `latest.json` and no identifying data. State lives in `<skills dir>/.sourcefidelity/update.json`, with a user-level and workspace fallback; when no state file is writable the weekly check is skipped and `--check` still works.
+Every review starts with `sourcefidelity-review/scripts/update_check.py`. It is silent when the install is current, checks the network at most once a week, and prints one line when an update is due. A notice persists on later reviews until the installed version changes. The check sends one GET for `latest.json` and no identifying data. State lives in `<skills dir>/.sourcefidelity/update.json`, with a user-level and workspace fallback; when no state file is writable the weekly check is skipped and `--check` still works.
 
 `--update` refuses a release whose `sha256` is empty unless `--allow-unverified` is passed. The release process is: bump `VERSION` and `CHANGELOG.md`, tag `vX.Y.Z`, build the archive, put its SHA-256 and download URL in `latest.json`, then publish the release. Set `min_supported` when an older instrument must not be used for new reviews.
 
