@@ -62,6 +62,8 @@ import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
+import http_cache  # noqa: E402
+import dossier  # noqa: E402
 import user_settings  # noqa: E402
 
 
@@ -713,7 +715,7 @@ class ReportModeTests(unittest.TestCase):
         text = rr.render_md(self._paper(), findings, rr.counts(findings), {})
         self.assertIn("4 excluded as non-linkable", text)
         self.assertIn("11 full-text", text)
-        self.assertIn("HL total: 10 (Category A)", text)
+        self.assertIn("HL total: 10 (HL = distinct works", text)
         self.assertNotIn("Hyperlinks missing:", text)
 
     def test_measured_word_counts_override_the_paper_record(self):
@@ -815,6 +817,9 @@ class ReportModeTests(unittest.TestCase):
         self.assertNotIn("## 5. Unresolved", text)
 
 
+@unittest.skipUnless(os.path.exists(os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                                               "install.sh" if os.name != "nt" else "install.ps1")),
+                     "installer not shipped with the installed skills")
 class InstallerTests(unittest.TestCase):
     SCRIPT = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                           "install.ps1" if os.name == "nt" else "install.sh")
@@ -3606,6 +3611,117 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             rd.crossref_search(parsed)
         self.assertNotIn("edition-number", captured["url"])
         self.assertIn("select=", captured["url"])
+
+
+class ReviewPipelineRegressionTests(unittest.TestCase):
+    """The bugs the public-review run exposed; each test fails on the old code."""
+
+    def test_masker_keeps_doi_url_isbn_and_query_value(self):
+        text = ("doi: 10.1108/10595421011080760 ISBN 9780203122747 "
+                "https://example.org/x?contentId=8448721")
+        self.assertEqual(ri.mask_ranges(text), [])
+        text = "12345678"
+        self.assertEqual([text[start:end] for start, end in ri.mask_ranges(text)],
+                         ["12345678"])
+
+    def test_crossref_by_doi_cached_passes_one_argument(self):
+        meta = {"title": "Trade protectionism: reasons and outcomes"}
+        with mock.patch.object(rd, "cache_get", return_value=None), \
+                mock.patch.object(rd, "cache_put"), \
+                mock.patch.object(rd, "crossref_by_doi", return_value=meta) as lookup:
+            self.assertEqual(rd.crossref_by_doi_cached("10.1108/x"), meta)
+        lookup.assert_called_once_with("10.1108/x")
+
+    def test_a_matching_supplied_doi_is_confirmed(self):
+        parsed = rd.parse_reference(
+            "Abboushi, S. (2010). Trade protectionism: reasons and outcomes. "
+            "Competitiveness Review, 20(5), 384-394. https://doi.org/10.1108/x")
+        meta = {"title": "Trade protectionism: reasons and outcomes",
+                "authors": ["Abboushi"], "year": 2010,
+                "container": "Competitiveness Review", "volume": "20",
+                "page": "384-394", "publisher": "Emerald"}
+        verdict, _evidence = rd.doi_verdict(parsed, meta, "article")
+        self.assertEqual(verdict, "confirmed")
+
+    def test_a_supplied_doi_to_another_work_is_a_conflict(self):
+        parsed = rd.parse_reference(
+            "Abboushi, S. (2010). Trade protectionism: reasons and outcomes. "
+            "Competitiveness Review, 20(5), 384-394. https://doi.org/10.1177/x")
+        meta = {"title": "Media imperialism revisited: some findings from the Asian case",
+                "authors": ["Chadha", "Kavoori"], "year": 2000,
+                "container": "Media, Culture & Society", "volume": "22",
+                "page": "415-432", "publisher": "SAGE"}
+        verdict, _evidence = rd.doi_verdict(parsed, meta, "article")
+        self.assertEqual(verdict, "bibliographic_conflict")
+
+    def test_title_containment_needs_three_tokens(self):
+        self.assertEqual(rd.title_score(
+            "Global entertainment media",
+            "Global entertainment media: Between cultural imperialism and cultural "
+            "globalization"), 1.0)
+        self.assertEqual(rd.title_score(
+            "Trade policy", "Trade policy and development"), 0.7)
+
+    def test_a_url_split_across_paragraphs_is_joined(self):
+        records = [
+            {"text": "Reference", "links": []},
+            {"text": "Cui, B. (2017). A chapter. https://www.pishu.com.cn/x?", "links": []},
+            {"text": "contentId=8448721&contentType=literature", "links": []},
+        ]
+        entries = ha.reference_entries(records)
+        self.assertEqual(len(entries), 1)
+        self.assertIn("https://www.pishu.com.cn/x?contentId=8448721", entries[0]["text"])
+
+    def test_doi_work_mismatch_compares_the_record_title(self):
+        with mock.patch.object(ha, "_doi_record",
+                               return_value={"title": ["Media imperialism revisited"]}):
+            self.assertTrue(ha.doi_work_mismatch(
+                "10.1/x", "Abboushi, S. (2010). Trade protectionism: reasons and outcomes."))
+        with mock.patch.object(ha, "_doi_record",
+                               return_value={"title": ["Trade protectionism: reasons and outcomes"]}):
+            self.assertFalse(ha.doi_work_mismatch(
+                "10.1/x", "Abboushi, S. (2010). Trade protectionism: reasons and outcomes."))
+
+    def test_scope_line_updates_instead_of_duplicating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(
+                "# Review\n\n## Review scope and counts\n\n"
+                "Review time: not recorded; tokens: not recorded.\n\n"
+                "## Summary of academic-integrity findings\n\nCounts.\n")
+            data = {"runs": [{"phase": "review", "duration_ms": 63000,
+                              "usage": {"input_tokens": 10, "output_tokens": 20,
+                                        "cache_read_tokens": 90, "total_tokens": 120},
+                              "cost_status": "estimated",
+                              "estimated_cost_usd": 0.01}]}
+            self.assertTrue(rm.update_scope_line(path, data))
+            text = open(path, encoding="utf-8").read()
+        self.assertEqual(text.count("Review time:"), 1)
+        self.assertIn("Review time: 1m 03s", text)
+        self.assertIn("100 prompt (90 cached + 10 uncached) / 20 output", text)
+        self.assertIn("$0.0100 (estimated)", text)
+
+    def test_host_state_remembers_a_blocked_host(self):
+        original = http_cache.cache_dir()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                http_cache.set_cache_dir(tmp)
+                http_cache.set_disabled(False)
+                http_cache.host_note("https://blocked.example/a", "blocked")
+                note = http_cache.host_known("https://blocked.example/b")
+                self.assertEqual(note["state"], "blocked")
+        finally:
+            http_cache.set_cache_dir(original)
+
+    def test_dossier_renders_a_row(self):
+        row = {"id": "R1", "entry": "Abboushi (2010)", "url": "https://doi.org/x",
+               "link_class": "doi", "fetch": {"state": "ok", "detail": "200"},
+               "host": None, "identity": "confirmed", "doi": "10.1/x",
+               "kind": "article", "notes": []}
+        text = dossier.markdown([row], "paper.docx", "cache")
+        self.assertIn("Source dossier", text)
+        self.assertIn("confirmed", text)
+
 
 
 if __name__ == "__main__":

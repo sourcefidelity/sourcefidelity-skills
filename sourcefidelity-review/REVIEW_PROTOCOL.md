@@ -158,7 +158,7 @@ Adapters are tiered by what they can establish, and the budget for waiting follo
 | Film, web page, news item | Web only; the bibliographic adapters do not apply |
 | Fragment or title-less entry | `insufficient_metadata`; do not search and do not record an absence |
 
-**Record `identity_outcome` for every cited work.** It is separate from retrieval: a work can be identified without its text, and unretrieved without being unidentified.
+**Record `identity_outcome` for every cited work.** It is separate from retrieval: a work can be identified without its text, and unretrieved without being unidentified. A work whose identity is its URL — a film, a web page, a government document or a database record — is `web_only`: inspect the supplied page as the identity route, record `searched` when it was read and `partial` when it was blocked, and do not send it to the bibliographic adapters.
 
 | Outcome | Meaning | May support `unverifiable`? |
 | --- | --- | --- |
@@ -170,6 +170,7 @@ Adapters are tiered by what they can establish, and the budget for waiting follo
 | `unlocated_after_search` | Every route suited to the kind completed and none located it, with no affirmative impossibility | **Yes** — reported as unverifiable |
 | `insufficient_metadata` | Too little to search (fragment, no title, no author) | **No** |
 | `search_incomplete` | A required route failed, was skipped, or was rate-limited | **No** |
+| `web_only` | The work's identity is its supplied URL (a film, web page, government document or database record); the bibliographic adapters do not apply | **No** |
 
 A lookup that returns `empty: true` should be retried once with the title alone before any absence is considered; Crossref in particular returns a fuzzy record rather than nothing, so a wrong record must be compared, not treated as an answer.
 
@@ -213,6 +214,10 @@ Record the service, query, result, and any metadata conflict. Prefer the publish
 When a service supplies a link to a complete text, retrieve it and use it for content assessment only after verifying identity, edition or transcription, and completeness.
 
 **Retrieval is attempted, not inferred.** Resolve every supplied or discovered DOI, and every ISBN, regardless of what the open-access services report: an OA status is a hypothesis that goes stale, and a paywalled landing page sometimes serves a PDF. `scripts/resolve_dois.py` runs the loop — parse the reference, find an identifier, verify author and year against the record, call the DOI resolver, keep a publisher-served PDF — and writes an accession record (`accession.json`, `accession.md`). Record the resolver call, its HTTP outcome and whether a usable copy arrived. A 429, a 403, a cookie wall or a chooser page is a transport limitation, not absence. Provider keys are held in `~/.dsh/sourcefidelity.json` through `scripts/user_settings.py`, never in the venv, a skill directory or a review artifact. Search the text for the quoted or paraphrased passage and inspect enough surrounding context. Record the URL, access date, edition or transcription, and page or section mapping. A metadata record, preview, abstract, or snippet is not content evidence.
+
+**Check a supplied DOI before the landing page.** Query Crossref for a supplied DOI first, compare the record's title, author and container with the entry, and only then fetch the publisher's landing page when a copy is being attempted. A DOI whose record is a different work is a `bibliographic_conflict` and a `wrong-work` link, reported as two findings, not one. A DOI registered in Crossref proves the identifier exists; it does not prove that it points at the cited work.
+
+**Route budget for a closed-access work.** One DOI-resolver attempt, one batched open-access location query, and at most one repository or working-paper PDF fetch; then record the access limitation and stop. Do not re-probe a host that has already answered with a block or a paywall, and do not hunt unrelated mirrors. The supplied link is always inspected first: a dead or blocked supplied link is a link-state finding, not a reason to skip the identity check.
 
 Public-domain transcriptions from Project Gutenberg or Wikisource may differ from the student's edition in pagination and wording; use them for wording and substance with an explicit edition limitation, not as proof of the student's page locators. For ERIC, distinguish the ERIC document version (ED) from the published journal version (EJ). For digitised library copies, including the National Library of Scotland, verify the scanned edition. Retrieve only the passages needed; do not reproduce or redistribute the full text.
 
@@ -368,7 +373,7 @@ Only include a category line when at least one confirmed finding exists. Do not 
 
 ### Report order
 
-1. **Review scope and counts, then the summary.** Open with the scope block: word counts; occurrences, References, works discussed, uncited passages and missing hyperlinks; and the report's review time and input/output tokens when metrics were recorded (`not recorded`, never zero, when they were not). The scope block carries counts only and uses no findings language. Then the academic-integrity summary. Use these blocks:
+1. **Review scope and counts, then the summary.** Open with the scope block: word counts; occurrences, References, works discussed, uncited passages and missing hyperlinks; and the report's review time, prompt tokens (cached and uncached), output tokens and estimated cost when metrics were recorded (`not recorded`, never zero, when they were not). The scope block carries counts only and uses no findings language. Then the academic-integrity summary. Use these blocks:
 
 ```markdown
 ## Review scope and counts
@@ -378,7 +383,7 @@ Occurrences: N inventoried (Supports N; Qualified or Mixed N; Contradicts N; Not
 References: N entries. Works discussed: N.
 Uncited substantive passages: N.
 Hyperlinks: N absent; N excluded as non-linkable; N not permanent; N record-only; N fetch failures (unreachable N; blocked N; dead N); N verified. HL total: N (HL = distinct works missing a required DOI or URL under APA 7, or supplying a non-permanent or wrong-work one; counted once per work).
-Review time: Nm Ns; tokens: N in / N out.
+Review time: Nm Ns; tokens: N prompt (N cached + N uncached) / N output; cost: $N (estimated).
 
 ## Summary of academic-integrity findings
 

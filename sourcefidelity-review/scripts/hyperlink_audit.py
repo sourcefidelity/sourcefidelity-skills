@@ -17,12 +17,15 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -34,7 +37,11 @@ except ImportError:  # pragma: no cover
 from datetime import datetime, timezone
 from xml.etree import ElementTree as ET
 
-UA = "sourcefidelity-hyperlink-audit/1.0"
+# A browser user agent: this audit tests the link a reader would open.
+# Bot user agents draw 403/404 from doi.org and several publishers, which
+# turns a working link into a false "dead" state.
+UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 # When set, a fetched body is written here and recorded on the row, so a
 # working full-text link also serves as a retrieved source copy.
 SAVE_DIR = None
@@ -47,7 +54,8 @@ CLOUD_HOSTS = ("pan.baidu.com", "aliyundrive.com", "aliyundrive.net", "123pan.co
 FULLTEXT_HOSTS = ("lantern.mediahist.org", "archive.org", "gutenberg.org",
                   "hathitrust.org", "biodiversitylibrary.org")
 RECORD_HOSTS = ("worldcat.org", "catalogue.bnf.fr", "k10plus", "openlibrary.org",
-                "loc.gov", "books.google", "jstor.org")
+                "loc.gov", "books.google", "jstor.org",
+                "pishu.com.cn", "cnki.net", "link.cnki.net")
 DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"'<>,;]+")
 URL_RE = re.compile(r"https?://[^\s\"'<>\])]+")
 REFERENCE_HEADING = re.compile(r"^\s*(references?|reference list|bibliography|works cited)"
@@ -149,6 +157,25 @@ def _first_entry_run(records):
     return None
 
 
+URL_FRAGMENT = re.compile(r"^[A-Za-z0-9%._~:/?#\[\]@!$&'()*+,;=-]+$")
+
+
+def _is_url_continuation(previous, text):
+    """True when a paragraph is the tail of a URL split by Word.
+
+    Word breaks a long reference URL across paragraphs. The second paragraph is
+    a bare query string or path fragment; joining it with a space would leave
+    the audit fetching a truncated URL.
+    """
+    previous = (previous or "").rstrip()
+    fragment = (text or "").strip()
+    if not previous or not fragment or " " in fragment:
+        return False
+    if not previous.endswith(("?", "&", "=", "/")):
+        return False
+    return bool(URL_FRAGMENT.match(fragment)) and ("=" in fragment or "/" in fragment)
+
+
 def reference_entries(paragraphs):
     """Reference entries with URL-only lines and hyperlink targets attached."""
     records = []
@@ -179,7 +206,11 @@ def reference_entries(paragraphs):
         if looks_like_entry(text):
             entries.append({"lines": [text.strip()], "links": list(links)})
         elif entries:
-            entries[-1]["lines"].append(text.strip())
+            previous = entries[-1]["lines"][-1] if entries[-1]["lines"] else ""
+            if _is_url_continuation(previous, text):
+                entries[-1]["lines"][-1] = previous + text.strip()
+            else:
+                entries[-1]["lines"].append(text.strip())
             entries[-1]["links"].extend(links)
     for entry in entries:
         entry["text"] = " ".join(entry.pop("lines"))
@@ -197,6 +228,57 @@ def entry_links(entry):
     urls = list(urls) + [link for link in entry.get("links", []) if link not in urls]
     return urls, dois
 
+
+
+CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _doi_record(doi, timeout=10):
+    """Crossref metadata for a DOI, or {} when the record is unavailable."""
+    url = "https://api.crossref.org/works/" + urllib.parse.quote(doi)
+    if http_cache is not None:
+        hit = http_cache.cache_get(url)
+        if hit and hit.get("body"):
+            try:
+                return json.loads(hit["body"].decode("utf-8", "replace")).get("message") or {}
+            except ValueError:
+                return {}
+    try:
+        status, final, headers, body = _request(
+            url, accept="application/json", timeout=timeout)
+    except Exception:  # noqa: BLE001
+        return {}
+    if http_cache is not None:
+        http_cache.cache_put(url, "ok", status, final,
+                             (headers.get("Content-Type") or "").lower(), body)
+    try:
+        return json.loads(body.decode("utf-8", "replace")).get("message") or {}
+    except ValueError:
+        return {}
+
+
+def _word_tokens(text):
+    return [word for word in re.findall(r"[a-z0-9]{3,}", (text or "").lower())]
+
+
+def doi_work_mismatch(doi, entry_text, timeout=10):
+    """True when the DOI's Crossref title is largely absent from the entry.
+
+    A DOI registered in Crossref proves the identifier exists, not that it
+    points at the cited work. Compare the record's title with the entry's own
+    words; short or CJK titles are left alone because token overlap is not a
+    fair test for them.
+    """
+    record = _doi_record(doi, timeout=timeout)
+    title = (record.get("title") or [""])[0]
+    if not title or CJK_RE.search(title):
+        return False
+    tokens = _word_tokens(title)
+    if len(tokens) < 3:
+        return False
+    entry = set(_word_tokens(entry_text))
+    matched = sum(1 for token in tokens if token in entry)
+    return matched / len(tokens) < 0.6
 
 
 COURSE_PATH_HINTS = ("/pluginfile.php/", "/mod/resource/", "/mod/forum/",
@@ -320,6 +402,22 @@ def _cached_state(url):
             "saved": saved, "environment": False}
 
 
+def _curl_status(url, timeout=8):
+    """A second client's view of a link that returned 401/403/429 to urllib."""
+    curl = shutil.which("curl")
+    if not curl:
+        return None
+    try:
+        proc = subprocess.run(
+            [curl, "-s", "-o", os.devnull, "-L", "-m", str(max(3, int(timeout))),
+             "-A", UA, "-w", "%{http_code}", url],
+            capture_output=True, text=True, timeout=timeout + 3)
+        code = (proc.stdout or "").strip()
+        return int(code) if code.isdigit() else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def fetch_state(url, timeout=10):
     """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
 
@@ -342,6 +440,12 @@ def fetch_state(url, timeout=10):
         if error.code in (404, 410):
             return {"state": "dead", "status": error.code, "detail": "HTTP 404/410",
                 "environment": False}
+        if error.code in (401, 403, 429):
+            alternative = _curl_status(url, timeout=timeout)
+            if alternative == 200:
+                return {"state": "ok", "status": 200,
+                        "detail": f"HTTP 200 via curl (HTTP {error.code} to urllib)",
+                        "client_specific": True, "environment": False}
         return {"state": "blocked", "status": error.code, "detail": f"HTTP {error.code}",
                 "environment": False}
     except urllib.error.URLError as error:
@@ -374,44 +478,70 @@ def fetch_state(url, timeout=10):
             "environment": False}
 
 
-def audit(path, fetch=True, timeout=8, delay=0.5):
+def audit(path, fetch=True, timeout=8, delay=0.0, wayback=False, jobs=6):
     entries = reference_entries(paragraph_records(path))
     rows = []
-    unreachable_streak = 0
     for number, entry in enumerate(entries, start=1):
         urls, dois = entry_links(entry)
         link = urls[0] if urls else (f"https://doi.org/{dois[0]}" if dois else "")
         state = classify_media_link(entry["text"], link)
-        row = {"id": f"R{number}", "entry": entry["text"][:110], "url": link,
-               "media": media_type(entry["text"]), "link_class": state, "fetch": None}
-        if state == "not-linkable":
+        rows.append({"id": f"R{number}", "entry": entry["text"][:110], "url": link,
+                     "media": media_type(entry["text"]), "link_class": state,
+                     "fetch": None, "_entry_text": entry["text"], "_dois": dois})
+
+    def run(row):
+        if row["link_class"] == "not-linkable":
             row["fetch"] = {"state": "not required", "status": None,
                             "detail": "traditional audio-visual media: no link expected"}
-        elif fetch and link and (state != "non-permanent" or is_course_platform(link)):
-            if delay:
-                time.sleep(delay)
-            row["fetch"] = fetch_state(link, timeout=timeout)
-            state = row["fetch"].get("state")
-            if state == "login-page" and is_course_platform(link):
-                row["link_class"] = "non-permanent"
-            if state in ("unreachable", "tls", "timeout"):
-                unreachable_streak += 1
-            elif state == "ok":
-                unreachable_streak = 0
-            if state in ("dead", "unreachable", "tls", "timeout", "blocked",
-                         "login-page") and unreachable_streak < 2:
-                archive = wayback_url(link, timeout=min(timeout, 6))
-                if archive:
-                    archived = fetch_state(archive, timeout=timeout)
-                    if archived.get("state") == "ok":
-                        archived["archive_of"] = link
-                        row["fetch"] = archived
-        elif fetch and state == "non-permanent":
-            row["fetch"] = {"state": "not attempted",
-                            "status": None,
+            return row
+        if not row["url"]:
+            return row
+        if row["link_class"] == "non-permanent" and not is_course_platform(row["url"]):
+            row["fetch"] = {"state": "not attempted", "status": None,
                             "detail": "cloud-share link: not permanent, contents unverifiable"}
-        rows.append(row)
-    return {"paper": os.path.basename(path), "checked": now(), "rows": rows}
+            return row
+        if delay:
+            time.sleep(delay)
+        result = fetch_state(row["url"], timeout=timeout)
+        row["fetch"] = result
+        if http_cache is not None:
+            http_cache.host_note(row["url"], result.get("state"))
+        if result.get("state") == "login-page" and is_course_platform(row["url"]):
+            row["link_class"] = "non-permanent"
+        if wayback and result.get("state") == "dead":
+            archived_url = wayback_url(row["url"], timeout=min(timeout, 6))
+            if archived_url:
+                archived = fetch_state(archived_url, timeout=timeout)
+                if archived.get("state") == "ok":
+                    archived["archive_of"] = row["url"]
+                    row["fetch"] = archived
+        if row["_dois"] and doi_work_mismatch(row["_dois"][0], row["_entry_text"],
+                                              timeout=timeout):
+            row["link_class"] = "wrong-work"
+            row["fetch"] = dict(result, wrong_work=True,
+                                detail="DOI record is a different work")
+        return row
+
+    if fetch:
+        with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+            rows = list(pool.map(run, rows))
+    else:
+        for row in rows:
+            if row["link_class"] == "not-linkable":
+                row["fetch"] = {"state": "not required", "status": None,
+                                "detail": "traditional audio-visual media: no link expected"}
+    for row in rows:
+        row.pop("_entry_text", None)
+        row.pop("_dois", None)
+    if http_cache is None:
+        cache = "unavailable"
+    elif http_cache.cache_disabled():
+        cache = "disabled"
+    else:
+        cache = http_cache.cache_dir() or "unavailable"
+    return {"paper": os.path.basename(path), "checked": now(), "rows": rows,
+            "cache": cache,
+            "transport": "urllib.request with browser UA; curl fallback on 401/403/429"}
 
 
 def totals(report):
@@ -430,6 +560,7 @@ def scope_lines(report):
     classes, outcomes = totals(report)
     absent = classes.get("absent", 0)
     non_permanent = classes.get("non-permanent", 0)
+    wrong = classes.get("wrong-work", 0)
     fulltext = classes.get("full-text", 0)
     record = classes.get("record-only", 0)
     excluded = classes.get("not-linkable", 0)
@@ -440,6 +571,8 @@ def scope_lines(report):
              f"Full-text links to the work: {fulltext}.",
              f"Links that are only a catalogue or record page: {record}.",
              f"Links that should resolve to the work: {permanent}."]
+    if wrong:
+        lines.append(f"Links that resolve to a different work: {wrong}.")
     ok = outcomes.get("ok", 0)
     env_failures = sum(value for key, value in outcomes.items()
                        if key in ENVIRONMENT_STATES)
@@ -452,9 +585,15 @@ def scope_lines(report):
         lines.append(f"Full-text links unreachable from the review environment: "
                      f"{env_failures} (network restriction, not a link defect; access "
                      f"not verifiable, not HL).")
-    if absent or non_permanent:
-        lines.append(f"Hyperlink findings (HL): {absent + non_permanent} "
-                     f"({absent} absent, {non_permanent} not permanent).")
+    hl = absent + non_permanent + wrong
+    if hl:
+        lines.append(f"Hyperlink findings (HL): {hl} "
+                     f"({absent} absent, {non_permanent} not permanent, "
+                     f"{wrong} wrong work).")
+    if report.get("cache"):
+        lines.append(f"Cache: {report['cache']}.")
+    if report.get("transport"):
+        lines.append(f"Transport: {report['transport']}.")
     return lines
 
 
@@ -485,8 +624,24 @@ def main(argv=None):
     parser.add_argument("--no-fetch", action="store_true",
                         help="classify links without requesting them")
     parser.add_argument("--timeout", type=int, default=8)
+    parser.add_argument("--jobs", type=int, default=6,
+                        help="links fetched in parallel")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="seconds to sleep before each fetch (politeness)")
+    parser.add_argument("--wayback", action="store_true",
+                        help="try a Wayback snapshot when a link is dead")
+    parser.add_argument("--cache-dir", default="",
+                        help="directory for fetched pages and host state")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="ignore and do not write the fetch cache")
     args = parser.parse_args(argv)
-    report = audit(args.paper, fetch=not args.no_fetch, timeout=args.timeout)
+    if http_cache is not None:
+        if args.cache_dir:
+            http_cache.set_cache_dir(args.cache_dir)
+        if args.no_cache:
+            http_cache.set_disabled(True)
+    report = audit(args.paper, fetch=not args.no_fetch, timeout=args.timeout,
+                   delay=args.delay, wayback=args.wayback, jobs=args.jobs)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "hyperlink-audit.md"), "w", encoding="utf-8",
               newline="\n") as handle:
@@ -494,6 +649,7 @@ def main(argv=None):
     with open(os.path.join(args.out, "hyperlink-audit.json"), "w", encoding="utf-8",
               newline="\n") as handle:
         json.dump(report, handle, indent=1, ensure_ascii=False)
+    print(f"Cache: {report.get('cache', 'unavailable')}")
     for line in scope_lines(report):
         print(line)
     return 0

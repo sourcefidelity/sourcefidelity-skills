@@ -215,10 +215,22 @@ def _tokens(text):
 
 
 def title_score(left, right):
-    """Jaccard overlap of significant title words, 0..1."""
+    """Jaccard overlap of significant title words, 0..1.
+
+    A record that carries the title without its subtitle (or the entry that
+    carries a subtitle the record omits) is the same title, not a partial one.
+    Three or more contained words score as a full match. A two-word containment
+    is weak on its own, so it scores 0.7: enough to confirm only when the author
+    or a container coordinate agrees, which match_record then tests.
+    """
     a, b = _tokens(left), _tokens(right)
     if not a or not b:
         return 0.0
+    if a <= b or b <= a:
+        if len(a) >= 3 and len(b) >= 3:
+            return 1.0
+        if min(len(a), len(b)) == 2:
+            return 0.7
     return round(len(a & b) / len(a | b), 2)
 
 
@@ -733,7 +745,7 @@ def crossref_by_doi_cached(doi, mailto=""):
     cached = cache_get("metadata", key)
     if cached:
         return cached
-    meta = crossref_by_doi(doi, mailto)
+    meta = crossref_by_doi(doi)
     cache_put("metadata", key, meta)
     return meta
 
@@ -1672,12 +1684,56 @@ def read_paper_references(paper):
     return entries
 
 
+CJK_RE = re.compile(r"[\u3400-\u9fff]")
+
+
+def _web_only_entry(parsed):
+    """A CJK or Chinese-database entry has no useful Crossref title search.
+
+    Crossref fuzzy matching on a Chinese title returns unrelated English
+    records; the supplied URL already identifies the work, so the adapters
+    would add cost and false candidates, not identity.
+    """
+    if parsed.get("doi"):
+        return False
+    if CJK_RE.search(parsed.get("title") or ""):
+        return True
+    entry = parsed.get("entry") or ""
+    return any(host in entry for host in ("gov.cn", "pishu.com.cn",
+                                          "cnki.net", "link.cnki.net"))
+
+
 KIND_ROUTES = {
     "article": ("crossref", "openalex"),
     "book": ("crossref", "openalex", "openlibrary"),
     "unclassified": ("crossref",),
     "film": (),
 }
+
+
+def doi_verdict(parsed, meta, kind, match=None):
+    """The verdict for a supplied DOI, after comparing its record with the entry.
+
+    A supplied DOI is decisive for identity, but it still has to point at the
+    cited work. A near-exact title, or a matching title with an author or a
+    container coordinate, confirms; a different title or a different author is a
+    wrong-work identifier, which is an entry defect, not a failed match.
+    """
+    match = match or match_record
+    verdict, evidence = match(parsed, meta, kind)
+    if verdict in ("possible_match", "unlocated_after_search"):
+        title = evidence.get("title") or 0.0
+        support = sum(1 for value in (evidence.get("container"),
+                                      evidence.get("volume"),
+                                      evidence.get("pages"))
+                      if value is True)
+        if title >= 0.85 or (title >= 0.6
+                             and (evidence.get("author") is True
+                                  or support >= 1)):
+            verdict = "confirmed"
+        elif title < 0.6 or evidence.get("author") is False:
+            verdict = "bibliographic_conflict"
+    return verdict, evidence
 
 
 def process(entry, out_dir, attempt, mailto, check_contents=False):
@@ -1693,14 +1749,6 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
 
     def past_deadline():
         return deadline is not None and time.monotonic() >= deadline
-    if kind == "article" and parsed["doi"]:
-        record["publisher"] = landing_metadata(parsed["doi"], mailto)
-        if record["publisher"].get("toc_url"):
-            record["publisher"]["toc"] = toc_entries(record["publisher"]["toc_url"])
-        if (not parsed.get("pages") and record["publisher"].get("first_page")
-                and record["publisher"].get("last_page")):
-            record["notes"].append("publisher pages: " + record["publisher"]["first_page"]
-                                   + "-" + record["publisher"]["last_page"])
     if kind == "film":
         record["identity"] = "web_only"
         record["notes"].append("film entry: bibliographic adapters do not apply")
@@ -1718,6 +1766,11 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["doi"] = _cached_identity.get("doi") or record["doi"]
             record["record_title"] = _cached_identity.get("record_title") or ""
             record["notes"].append("identity: cache hit")
+    if _web_only_entry(parsed):
+        record["identity"] = "web_only"
+        record["notes"].append("web-only entry: bibliographic adapters skipped")
+        record["notes"].append("routes run: none")
+        return record
     routes = KIND_ROUTES[kind]
     ran, failed, seen = [], [], []
 
@@ -1736,12 +1789,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             try:
                 meta = crossref_by_doi_cached(parsed["doi"])
                 ran.append("crossref(doi)")
-                verdict, evidence = match_record(parsed, meta, kind)
-                if verdict in ("possible_match", "unlocated_after_search"):
-                    # A supplied DOI is decisive for identity; a title difference is
-                    # an entry defect, not a failed match.
-                    verdict = ("confirmed" if evidence["title"] >= 0.5
-                               else "bibliographic_conflict")
+                verdict, evidence = doi_verdict(parsed, meta, kind)
                 seen.append((meta, verdict, evidence))
             except Exception as exc:  # noqa: BLE001
                 failed.append(f"crossref(doi) {type(exc).__name__}")
@@ -1776,7 +1824,9 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
         candidate, verdict, evidence = seen[0]
         record["identity"] = verdict
         record["record_title"] = candidate.get("title") or ""
-        if candidate.get("doi") and not record["doi"]:
+        if (candidate.get("doi") and not record["doi"]
+                and verdict in ("confirmed", "same_work_other_edition",
+                                "bibliographic_conflict")):
             record["doi"] = candidate["doi"]
         record["evidence"] = evidence
         if verdict == "same_work_other_edition":
@@ -1795,6 +1845,18 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
                 "author and coordinates point at a real record, but no record carries this "
                 "title: inspect the volume/issue contents before judging the entry")
 
+    if attempt and kind == "article" and parsed["doi"] and not past_deadline():
+        try:
+            record["publisher"] = landing_metadata(parsed["doi"], mailto)
+            if record["publisher"].get("toc_url"):
+                record["publisher"]["toc"] = toc_entries(record["publisher"]["toc_url"])
+            if (not parsed.get("pages") and record["publisher"].get("first_page")
+                    and record["publisher"].get("last_page")):
+                record["notes"].append(
+                    "publisher pages: " + record["publisher"]["first_page"]
+                    + "-" + record["publisher"]["last_page"])
+        except Exception:  # noqa: BLE001
+            record["notes"].append("publisher landing page unavailable")
     if past_deadline():
         record["notes"].append("reference deadline: remaining routes skipped")
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
@@ -1919,6 +1981,8 @@ def main(argv=None):
                         help="for articles, list what occupies the cited pages in that volume")
     parser.add_argument("--limit", type=int, default=0, help="stop after N references")
     parser.add_argument("--mailto", default="", help="contact address for polite Crossref use")
+    parser.add_argument("--batch-metadata", action="store_true",
+                        help="prefetch DOI metadata in one batch (batch pipeline)")
     args = parser.parse_args(argv)
     global CACHE_ROOT
     CACHE_ROOT = (args.cache_root
@@ -1945,9 +2009,10 @@ def main(argv=None):
 
     out_dir = os.path.abspath(args.out or (os.path.dirname(args.refs) if args.refs else "."))
     os.makedirs(out_dir, exist_ok=True)
-    batch = batch_metadata(entries, args.mailto or email_for_requests())
-    if batch.get("crossref") or batch.get("openalex"):
-        print(json.dumps({"batch_metadata": batch}), flush=True)
+    if args.batch_metadata:
+        batch = batch_metadata(entries, args.mailto or email_for_requests())
+        if batch.get("crossref") or batch.get("openalex"):
+            print(json.dumps({"batch_metadata": batch}), flush=True)
     records = []
     jobs = max(1, int(args.jobs or 1))
     if jobs > 1 and len(entries) > 1:

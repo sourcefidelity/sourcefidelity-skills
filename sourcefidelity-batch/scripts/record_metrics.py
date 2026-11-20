@@ -241,6 +241,8 @@ def main():
     ap.add_argument("--since", default="", help="window start (ISO) for a shared session")
     ap.add_argument("--until", default="", help="window end (ISO) for a shared session")
     ap.add_argument("--status", default="completed")
+    ap.add_argument("--review", default="",
+                    help="review.md to update in a single-review layout")
     args = ap.parse_args()
 
     metadata_path = args.metadata_path
@@ -284,8 +286,11 @@ def main():
     json.dump(data, open(sidecar, "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
 
-    review = os.path.join(os.path.abspath(args.batch), args.paper, "review.md")
-    updated = metrics.update_review_block(review, data)
+    if args.review:
+        updated = metrics.update_scope_line(os.path.abspath(args.review), data)
+    else:
+        review = os.path.join(os.path.abspath(args.batch), args.paper, "review.md")
+        updated = metrics.update_review_block(review, data)
     print(json.dumps({
         "paper": args.paper, "phase": args.phase,
         "duration": metrics.format_duration(run.get("duration_ms")),

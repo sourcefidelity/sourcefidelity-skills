@@ -397,6 +397,52 @@ def update_review_block(path, metrics):
     return True
 
 
+SCOPE_LINE = re.compile(r"(?m)^Review time:.*$")
+
+
+def scope_line(metrics):
+    """The one scope-block line for a single-review layout, or ""."""
+    runs = [r for r in (metrics or {}).get("runs") or [] if r.get("phase") == "review"]
+    if not runs:
+        return ""
+    summary = summarize_runs(runs)
+    if summary["total_tokens"] is None:
+        tokens = "not recorded"
+    else:
+        prompt = summary["cache_hit_tokens"] + summary["cache_miss_tokens"]
+        tokens = (f"{format_tokens(prompt)} prompt "
+                  f"({format_tokens(summary['cache_hit_tokens'])} cached + "
+                  f"{format_tokens(summary['cache_miss_tokens'])} uncached) / "
+                  f"{format_tokens(summary['output_tokens'])} output")
+    if summary["cost_usd"] is None:
+        cost = "not recorded"
+    else:
+        cost = f"{format_cost(summary['cost_usd'])} (estimated)"
+    return (f"Review time: {format_duration(summary['duration_ms'])}; "
+            f"tokens: {tokens}; cost: {cost}.")
+
+
+def update_scope_line(path, metrics):
+    """Replace the scope block's Review time line in a single-review report.
+
+    The batch renderer inserts a separate metrics block; a hand-written single
+    review already has one line, so replace it instead of adding a second block.
+    """
+    line = scope_line(metrics)
+    if not line or not os.path.exists(path):
+        return False
+    text = open(path, encoding="utf-8").read()
+    if SCOPE_LINE.search(text):
+        text = SCOPE_LINE.sub(line, text, count=1)
+    else:
+        heading = re.search(r"(?m)^## Summary of academic-integrity findings\s*$", text)
+        if not heading:
+            return False
+        text = text[:heading.start()] + line + "\n\n" + text[heading.start():]
+    open(path, "w", encoding="utf-8").write(text)
+    return True
+
+
 def load_metrics(root, paper_id):
     path = os.path.join(root, "_work", paper_id, "review_metrics.json")
     try:

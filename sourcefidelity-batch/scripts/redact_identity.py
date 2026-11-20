@@ -51,6 +51,15 @@ LABEL_LINE = re.compile(
     + r")\s*[:：]\s*)(\S.*?)\s*$")
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 LONG_NUMBER = re.compile(r"\b\d{7,}\b")
+# Bibliographic identifiers are not identity: a long digit run inside a URL, a
+# DOI or an ISBN must survive masking, or a link audit fetches `doi.org/10.***`
+# and reports a working DOI as dead.
+URL_SPAN = re.compile(r"(?:https?://|www\.)\S+")
+DOI_SPAN = re.compile(r"10\.\d{4,9}/[^\s\"'<>,;]+")
+# A URL split across paragraphs can leave a bare query string in the next
+# paragraph; its values are still address data, not identity.
+QUERY_SPAN = re.compile(r"[?&][\w.-]+=[^&\s]*")
+ISBN13 = re.compile(r"97[89]\d{10}")
 TEXT_RUN = re.compile(r"(<w:t[^>]*>)(.*?)(</w:t>)", re.S)
 PARAGRAPH = re.compile(r"<w:p\b[^>]*>.*?</w:p>", re.S)
 
@@ -68,6 +77,9 @@ def escape(value):
 def mask_ranges(text):
     """(start, end) spans to mask in one paragraph of plain text."""
     spans = []
+    protected = []
+    for regex in (URL_SPAN, DOI_SPAN, QUERY_SPAN):
+        protected.extend((match.start(), match.end()) for match in regex.finditer(text))
     for match in LABEL_LINE.finditer(text):
         start = match.start(2)
         end = match.end(2)
@@ -76,9 +88,14 @@ def mask_ranges(text):
     for regex in (EMAIL, LONG_NUMBER):
         for match in regex.finditer(text):
             value = match.group(0)
-            if regex is LONG_NUMBER and re.fullmatch(
-                    r"(?:19|20)\d{2}(?:19|20)\d{2}", value):
-                continue  # two years run together by a lost dash, not an ID
+            if regex is LONG_NUMBER:
+                if re.fullmatch(r"(?:19|20)\d{2}(?:19|20)\d{2}", value):
+                    continue  # two years run together by a lost dash, not an ID
+                if ISBN13.fullmatch(value):
+                    continue  # an ISBN, not identity
+                if any(start <= match.start() and match.end() <= end
+                       for start, end in protected):
+                    continue  # a URL, DOI or database id, not identity
             spans.append((match.start(), match.end()))
     spans.sort()
     merged = []

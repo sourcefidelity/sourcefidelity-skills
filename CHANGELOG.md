@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- **Supplied-DOI matching.** A supplied DOI is compared with its Crossref
+  record before the publisher landing page is fetched. A DOI to a different
+  work is a `bibliographic_conflict` and a `wrong-work` link, reported as two
+  findings. Fixed an arity error that made every DOI comparison fall through as
+  `search_incomplete`, a subtitle-containment false conflict, and a landing
+  fetch that ran before identity and could consume the reference budget.
+- **Identity masking.** DOI suffixes, ISBNs, URLs and query-string ids survive
+  masking; only identity values are masked, so the link audit no longer requests
+  `doi.org/10.****`.
+- **Link audit.** Parallel fetches, a browser user agent, opt-in Wayback, a
+  curl fallback for client-specific 401/403/429 responses, joining URLs split
+  across paragraphs, Chinese database hosts as record-only, and the cache and
+  transport recorded in the report (`--cache-dir`, `--no-cache`).
+- **Dossier.** New `sourcefidelity-review/scripts/dossier.py` writes one
+  per-reference evidence table (`dossier.md`, `dossier.json`) in a single call.
+- **Host state.** Blocked, dead and paywalled hosts are remembered for 24 hours
+  and shown in the dossier.
+- **Metrics.** `record_metrics.py --review` replaces a single review's scope
+  line with prompt tokens (cached and uncached), output tokens and estimated
+  cost, without inserting a second metrics block.
+- **Tests.** Regressions for the DOI arity crash, masker identifier loss, a
+  wrong supplied DOI, split URLs, title containment, the host cache and the
+  scope-line update.
+
 ## 1.0.0 — public release
 
 First packaged release for instructors. Based on the internal review series

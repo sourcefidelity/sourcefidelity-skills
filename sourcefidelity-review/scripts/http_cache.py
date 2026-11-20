@@ -18,7 +18,9 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
+import urllib.parse
 
 TTL_SECONDS = 7 * 24 * 3600
 # A blocked, paywalled or empty page is not likely to change in
@@ -48,6 +50,10 @@ def max_web_bytes():
     return _setting_bytes("cache_max_web_bytes", TEXT_CACHE_MAX_BYTES)
 CACHE_DIR = (os.environ.get("SOURCEFIDELITY_WEB_CACHE")
              or os.path.join(os.path.expanduser("~"), ".dsh", "cache", "web"))
+
+_DISABLED = False
+_HOST_TTL_SECONDS = 24 * 3600
+_HOST_LOCK = threading.Lock()
 FALLBACK_CACHE_DIR = os.path.join(tempfile.gettempdir(), "sourcefidelity-web-cache")
 _RESOLVED_CACHE_DIR = None
 
@@ -63,6 +69,23 @@ def _writable(directory):
         return True
     except OSError:
         return False
+
+
+def set_cache_dir(path):
+    """Point every fetch at this cache directory (prints nothing)."""
+    global CACHE_DIR, _RESOLVED_CACHE_DIR
+    CACHE_DIR = os.path.abspath(path) if path else CACHE_DIR
+    _RESOLVED_CACHE_DIR = None
+
+
+def set_disabled(flag=True):
+    """Bypass reads and writes for a cold, auditable run."""
+    global _DISABLED
+    _DISABLED = bool(flag)
+
+
+def cache_disabled():
+    return _DISABLED
 
 
 def cache_dir():
@@ -94,6 +117,8 @@ def _path(url):
 
 
 def cache_get(url):
+    if _DISABLED:
+        return None
     path = _path(url)
     if not path:
         return None
@@ -112,6 +137,8 @@ def cache_get(url):
 
 
 def cache_put(url, state, status, final, content_type, body):
+    if _DISABLED:
+        return
     path = _path(url)
     directory = cache_dir()
     if not path or not directory:
@@ -273,3 +300,60 @@ def prune_url_cache(max_bytes=None):
         except OSError:
             pass
     return removed
+
+HOST_STATES = ("blocked", "dead", "login-page", "paywalled", "ok")
+
+
+def _host_path():
+    directory = cache_dir()
+    return os.path.join(directory, "hosts.json") if directory else ""
+
+
+def _read_hosts():
+    path = _host_path()
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def host_note(url, state):
+    """Remember what a host did, so a review does not re-probe a blocked host."""
+    if _DISABLED or not url or state not in HOST_STATES:
+        return
+    host = urllib.parse.urlparse(url).netloc.lower()
+    path = _host_path()
+    if not host or not path:
+        return
+    with _HOST_LOCK:
+        data = _read_hosts()
+        data[host] = {"state": state, "checked": time.time()}
+        temporary = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(temporary, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, indent=1, sort_keys=True)
+            os.replace(temporary, path)
+        except OSError:
+            try:
+                os.remove(temporary)
+            except OSError:
+                pass
+
+
+def host_known(url):
+    """The recent blocked/dead record for this host, or None."""
+    if _DISABLED or not url:
+        return None
+    host = urllib.parse.urlparse(url).netloc.lower()
+    note = _read_hosts().get(host)
+    if not note or note.get("state") not in ("blocked", "dead", "login-page", "paywalled"):
+        return None
+    if time.time() - float(note.get("checked") or 0) > _HOST_TTL_SECONDS:
+        return None
+    return {"host": host, "state": note.get("state"),
+            "checked": note.get("checked")}
