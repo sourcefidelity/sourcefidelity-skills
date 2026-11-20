@@ -64,6 +64,9 @@ import resolve_dois as rd  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
+import sourcepack as sp  # noqa: E402
+import openfetch as of  # noqa: E402
+import fetch as fetch_helper  # noqa: E402
 import user_settings  # noqa: E402
 
 
@@ -3611,6 +3614,59 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             rd.crossref_search(parsed)
         self.assertNotIn("edition-number", captured["url"])
         self.assertIn("select=", captured["url"])
+
+
+class ReferenceSpeedupTests(unittest.TestCase):
+    def test_sourcepack_maps_a_filename(self):
+        refs = [{"text": "O'Connell, S. P. (1996). Television without Frontiers: The "
+                         "European Union's Continuing Struggle for Cultural Survival. "
+                         "Case Western Reserve Journal of International Law, 28(2), 501-523."}]
+        mapping = sp.map_refs(refs, ["/tmp/oconnell1996.pdf"], {})
+        self.assertIn("R1", mapping)
+        self.assertTrue(mapping["R1"]["path"].endswith("oconnell1996.pdf"))
+
+    def test_sourcepack_search_reports_printed_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "_work", "sources", "R1")
+            os.makedirs(source)
+            open(os.path.join(source, "text.txt"), "w", encoding="utf-8").write(
+                "=== PDF p7 | printed p42 | native\n"
+                "freedom of reception and retransmission\n")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                sp.search(tmp, "freedom of reception")
+        self.assertIn("R1", buf.getvalue())
+        self.assertIn("printed p42", buf.getvalue())
+
+    def test_openfetch_candidates_are_deduped(self):
+        openalex = [{"best_oa_location": {"pdf_url": "https://x/a.pdf"},
+                     "locations": [{"pdf_url": "https://x/a.pdf"}],
+                     "open_access": {"oa_url": "https://x/b"}}]
+        core = [{"downloadUrl": "https://x/a.pdf"}, {"downloadUrl": "https://x/c.pdf"}]
+        urls = [url for url, _kind, _source in of._candidate_urls(openalex, core)]
+        self.assertEqual(urls, ["https://x/a.pdf", "https://x/b", "https://x/c.pdf"])
+
+    def test_openfetch_title_filter(self):
+        parsed = {"title": "Television without Frontiers: The European Union's "
+                           "Continuing Struggle for Cultural Survival"}
+        self.assertTrue(of._title_ok(parsed, "Television Without Frontiers"))
+        self.assertFalse(of._title_ok(parsed, "Consequences of EU directive"))
+
+    def test_fetch_known_blocked_host_is_not_retried(self):
+        original = http_cache.cache_dir()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                http_cache.set_cache_dir(tmp)
+                http_cache.set_disabled(False)
+                http_cache.host_note("https://blocked.example/x", "blocked")
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = fetch_helper.main(["--url", "https://blocked.example/y",
+                                            "--out", tmp])
+                self.assertEqual(rc, 0)
+                self.assertIn("known_blocked", buf.getvalue())
+        finally:
+            http_cache.set_cache_dir(original)
 
 
 class ReviewPipelineRegressionTests(unittest.TestCase):
