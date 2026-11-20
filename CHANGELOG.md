@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — November 20, 2026
 
 - **Supplied-DOI matching.** A supplied DOI is compared with its Crossref
   record before the publisher landing page is fetched. A DOI to a different
@@ -38,6 +38,8 @@
 - **Instrument stamp.** Every review scope block records the skill version and
   commit from `update_check.py --stamp`, so a report can be reproduced against
   the instrument that produced it.
+
+- **Development docs.** Added `AGENTS.md` documentation map and write rules, `docs/ARCHITECTURE.md`, `docs/STATE.md`, `docs/PLAN.md`, and `scripts/check_docs.py`; CI now checks links, budgets, headings and release-version agreement.
 
 ## 1.0.0 — public release
 

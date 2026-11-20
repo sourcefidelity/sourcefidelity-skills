@@ -1,9 +1,9 @@
 {
-  "version": "1.0.0",
-  "tag": "v1.0.0",
-  "url": "https://github.com/sourcefidelity/sourcefidelity-skills/archive/refs/tags/v1.0.0.tar.gz",
+  "version": "1.1.0",
+  "tag": "v1.1.0",
+  "url": "https://github.com/sourcefidelity/sourcefidelity-skills/releases/download/v1.1.0/sourcefidelity-v1.1.0.tar.gz",
   "sha256": "",
-  "min_supported": "1.0.0",
-  "notes": "Public release.",
-  "released": "2026-11-18"
+  "min_supported": "1.1.0",
+  "notes": "Pipeline and masking fixes, dossier/source-pack/open-access helpers, weekly update check, release installer, development docs.",
+  "released": "2026-11-20"
 }
