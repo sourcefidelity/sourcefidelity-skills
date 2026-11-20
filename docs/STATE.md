@@ -7,11 +7,11 @@
 
 | Item | Value |
 |---|---|
-| Branch | `fix/review-pipeline-hardening` |
-| Source version | `1.0.0` (`VERSION`) |
-| Latest published release | `v1.0.0`; `latest.json` still carries `1.0.0` with an empty `sha256` |
-| `latest.json` availability | Present on the feature branch only; `main` does not have it, so the default update check reports “Could not check” until it is merged |
-| Installed copy | `~/.dsh/skills`, version `1.0.0`, commit `1dc5304`, channel `dev`, shared venv intact |
+| Branch | `main`; release tag `v1.1.0` |
+| Source version | `1.1.0` (`VERSION`) |
+| Latest published release | `v1.1.0`, with the release asset and `sha256` recorded in `latest.json` on `main` |
+| `latest.json` availability | On `main`; the default update check reaches it |
+| Installed copy | `~/.dsh/skills`, version `1.1.0`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
 | Test suites | 304 pipeline tests; style and PDF suites report no failures |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
@@ -30,13 +30,15 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Dual-client fetch | Middleton landing page (curl 403, urllib 200) and a remembered blocked host | Saved through urllib; blocked host refused without retry |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.0.0 (commit 1dc5304)` |
 | Deploy | `install.sh --target ~/.dsh/skills --no-venv --channel dev` | New scripts and `installed.json` written; venv preserved |
-| Docs check | `python scripts/check_docs.py` | ok; the only warning is the known empty `latest.json` checksum |
+| Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.0` notice from `1.0.0`; version, tag and checksum agree |
+| Release install | `install.sh --update` on the live install | Upgraded `1.0.0` → `1.1.0`; checksum verified; venv preserved; stamp is `v1.1.0` |
+| Docs check | `python scripts/check_docs.py` | ok, no warnings |
 
 ## 3. Known limitations and risks
 
 | Item | Impact | Mitigation |
 |---|---|---|
-| `latest.json` is not on `main` and has no checksum | Default `--check` cannot reach it; `--update` refuses an unverified release | Merge the branch, tag the release, fill `sha256`, then verify the default URL |
+| Release archive has no git commit | An install updated from a release archive records an empty `commit`; the version and channel remain correct | Treat `installed.json` version as authoritative; use a checkout for commit-level reproducibility |
 | PowerShell installer paths unexecuted here | `install.ps1 -Check/-Update` reviewed but not runtime-tested (no PowerShell on this machine) | Run on Windows before announcing the release |
 | `openfetch.py` is best-effort | CORE's title search did not return the O'Connell article; a missed work is recorded as `no_candidate`, not absence | Treat it as a first pass; use the dossier and manual retrieval for gaps |
 | `sourcepack.py` maps by filename heuristic | Opaque names (`8.pdf`, `Archive.pdf`) do not map | Use `--map R3=PATH`; adjudicate the mapping |
