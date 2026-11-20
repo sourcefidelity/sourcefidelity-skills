@@ -67,6 +67,7 @@ import dossier  # noqa: E402
 import sourcepack as sp  # noqa: E402
 import openfetch as of  # noqa: E402
 import fetch as fetch_helper  # noqa: E402
+import update_check as uc  # noqa: E402
 import user_settings  # noqa: E402
 
 
@@ -3614,6 +3615,75 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             rd.crossref_search(parsed)
         self.assertNotIn("edition-number", captured["url"])
         self.assertIn("select=", captured["url"])
+
+
+class UpdateCheckTests(unittest.TestCase):
+    def _installed(self):
+        return {"version": "1.0.0", "commit": "abc1234", "channel": "dev"}
+
+    def test_notice_versions(self):
+        self.assertEqual(uc.notice("1.0.0", "1.0.0", ""), "")
+        self.assertIn("1.2.0 is available", uc.notice("1.0.0", "1.2.0", ""))
+        self.assertIn("minimum supported", uc.notice("1.0.0", "1.2.0", "1.2.0"))
+
+    def test_fresh_state_skips_network_and_keeps_notice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "update.json")
+            uc._write_json(state, {"last_check": time.time(),
+                                   "latest_version": "1.2.0"})
+            buf = io.StringIO()
+            with mock.patch.object(uc, "installed", return_value=self._installed()), \
+                    mock.patch.object(uc, "fetch_latest",
+                                      side_effect=AssertionError("network")), \
+                    redirect_stdout(buf):
+                uc.main(["--state", state])
+        self.assertIn("1.2.0 is available", buf.getvalue())
+
+    def test_stale_state_fetches_once_and_persists_notice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "update.json")
+            eight_days = time.time() - 8 * 86400
+            uc._write_json(state, {"last_check": eight_days,
+                                   "last_attempt": eight_days})
+            fetch = mock.Mock(return_value={"version": "1.2.0"})
+            buf = io.StringIO()
+            with mock.patch.object(uc, "installed", return_value=self._installed()), \
+                    mock.patch.object(uc, "fetch_latest", fetch), \
+                    redirect_stdout(buf):
+                uc.main(["--state", state])
+            self.assertEqual(fetch.call_count, 1)
+            self.assertIn("1.2.0 is available", buf.getvalue())
+            buf2 = io.StringIO()
+            with mock.patch.object(uc, "installed", return_value=self._installed()), \
+                    mock.patch.object(uc, "fetch_latest",
+                                      side_effect=AssertionError("second run fetched")), \
+                    redirect_stdout(buf2):
+                uc.main(["--state", state])
+            self.assertIn("1.2.0 is available", buf2.getvalue())
+
+    def test_fetch_failure_is_reported_in_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = os.path.join(tmp, "update.json")
+            buf = io.StringIO()
+            with mock.patch.object(uc, "installed", return_value=self._installed()), \
+                    mock.patch.object(uc, "fetch_latest", return_value={}), \
+                    redirect_stdout(buf):
+                uc.main(["--check", "--json", "--state", state])
+        data = json.loads(buf.getvalue())
+        self.assertTrue(data["fetch_failed"])
+        self.assertEqual(data["notice"], "")
+
+    def test_stamp_reads_the_installed_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".sourcefidelity"))
+            with open(os.path.join(tmp, ".sourcefidelity", "installed.json"),
+                      "w", encoding="utf-8-sig") as handle:
+                json.dump({"version": "2.3.4", "commit": "abc1234",
+                           "channel": "stable"}, handle)
+            buf = io.StringIO()
+            with mock.patch.object(uc, "ROOT", tmp), redirect_stdout(buf):
+                uc.main(["--stamp"])
+        self.assertIn("v2.3.4 (commit abc1234)", buf.getvalue())
 
 
 class ReferenceSpeedupTests(unittest.TestCase):

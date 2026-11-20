@@ -384,6 +384,7 @@ References: N entries. Works discussed: N.
 Uncited substantive passages: N.
 Hyperlinks: N absent; N excluded as non-linkable; N not permanent; N record-only; N fetch failures (unreachable N; blocked N; dead N); N verified. HL total: N (HL = distinct works missing a required DOI or URL under APA 7, or supplying a non-permanent or wrong-work one; counted once per work).
 Review time: Nm Ns; tokens: N prompt (N cached + N uncached) / N output; cost: $N (estimated).
+Instrument: sourcefidelity-review vN (commit H).
 
 ## Summary of academic-integrity findings
 

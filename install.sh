@@ -2,9 +2,12 @@
 # Install the SourceFidelity skills into a coding harness skills directory.
 #
 #   ./install.sh [--target DIR] [--dry-run] [--no-venv]
+#                [--check] [--update] [--channel NAME] [--version TAG]
 #
-# The installer does three things: copy the three skill folders, check for
-# Python 3.12, and (unless --no-venv) build the shared .venv. It never
+# The installer copies the three skill folders, checks for Python 3.12, builds
+# the shared .venv (unless --no-venv), and records the installed version.
+# --check asks whether a newer release exists; --update downloads the release
+# named in latest.json, verifies its checksum, and installs it. It never
 # installs Python, pip packages beyond pypdf/pymupdf, or OCR tools silently.
 set -euo pipefail
 
@@ -13,6 +16,11 @@ SKILLS=(sourcefidelity-review sourcefidelity-batch sourcefidelity-reappraise)
 TARGET=""
 DRY_RUN="0"
 WITH_VENV="1"
+CHANNEL="dev"
+CHECK="0"
+UPDATE="0"
+ALLOW_UNVERIFIED="0"
+PIN_VERSION=""
 
 usage() {
   sed -n '2,9p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -23,6 +31,11 @@ while [ $# -gt 0 ]; do
     --target) TARGET="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN="1"; shift ;;
     --no-venv) WITH_VENV="0"; shift ;;
+    --check) CHECK="1"; shift ;;
+    --update) UPDATE="1"; shift ;;
+    --channel) CHANNEL="${2:-}"; shift 2 ;;
+    --version) PIN_VERSION="${2:-}"; shift 2 ;;
+    --allow-unverified) ALLOW_UNVERIFIED="1"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -51,10 +64,130 @@ for candidate in python3.12 python3; do
   fi
 done
 
+LATEST_URL="${SOURCEFIDELITY_LATEST_URL:-https://raw.githubusercontent.com/sourcefidelity/sourcefidelity-skills/main/latest.json}"
+
+target_python() {
+  local candidate="$TARGET/sourcefidelity-review/.venv/bin/python"
+  if [ -x "$candidate" ]; then printf '%s' "$candidate"; else printf '%s' "$PYTHON"; fi
+}
+
+installed_version() {
+  local json="$TARGET/.sourcefidelity/installed.json"
+  if [ -f "$json" ]; then
+    "$(target_python)" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$json" 2>/dev/null || true
+  elif [ -f "$TARGET/sourcefidelity-review/VERSION" ]; then
+    cat "$TARGET/sourcefidelity-review/VERSION"
+  fi
+}
+
+newer_than() {
+  "$1" - "$2" "$3" <<'PY'
+import re, sys
+def ver(value):
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", value or "")
+    return tuple(int(part) for part in match.groups()) if match else (0, 0, 0)
+sys.exit(0 if ver(sys.argv[2]) > ver(sys.argv[1]) else 1)
+PY
+}
+
+sha256_of() {
+  if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+  elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+  else printf ''; fi
+}
+
 echo "SourceFidelity skills installer"
 echo "  target: $TARGET"
 if [ "$DRY_RUN" = "1" ]; then echo "  mode:   dry run (nothing is written)"; fi
 echo
+
+if [ -n "$PIN_VERSION" ]; then
+  WANT="${PIN_VERSION#v}"
+  HAVE="$(cat "$HERE/VERSION" 2>/dev/null || echo unknown)"
+  if [ "$WANT" != "$HAVE" ]; then
+    echo "this checkout is $HAVE, not $WANT; check out tag v$WANT first" >&2
+    exit 1
+  fi
+  CHANNEL="tag:$PIN_VERSION"
+fi
+
+if [ "$CHECK" = "1" ]; then
+  PYBIN="$(target_python)"
+  CHECKER="$TARGET/sourcefidelity-review/scripts/update_check.py"
+  if [ -z "$PYBIN" ] || [ ! -f "$CHECKER" ]; then
+    echo "no installed skill found at $TARGET; run the installer first" >&2
+    exit 1
+  fi
+  RESULT="$("$PYBIN" -I "$CHECKER" --check --json 2>/dev/null || true)"
+  if [ -z "$RESULT" ]; then
+    echo "Could not check for updates (offline or latest.json unavailable)." >&2
+    exit 1
+  fi
+  NOTICE="$(printf '%s' "$RESULT" | "$PYBIN" -c 'import json,sys; print(json.load(sys.stdin).get("notice") or "")')"
+  FAILED="$(printf '%s' "$RESULT" | "$PYBIN" -c 'import json,sys; print("yes" if json.load(sys.stdin).get("fetch_failed") else "no")')"
+  if [ -n "$NOTICE" ]; then
+    echo "$NOTICE"
+  elif [ "$FAILED" = "yes" ]; then
+    echo "Could not check for updates (offline or latest.json unavailable)." >&2
+    exit 1
+  else
+    echo "SourceFidelity is up to date."
+  fi
+  exit 0
+fi
+
+if [ "$UPDATE" = "1" ]; then
+  PYBIN="$(target_python)"
+  if [ -z "$PYBIN" ]; then
+    echo "Python 3.12 is required for --update" >&2
+    exit 1
+  fi
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+  if ! curl -fsSL --max-time 15 "$LATEST_URL" -o "$TMP/latest.json"; then
+    echo "could not read $LATEST_URL" >&2
+    exit 1
+  fi
+  VERSION="$("$PYBIN" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version",""))' "$TMP/latest.json")"
+  URL="$("$PYBIN" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("url",""))' "$TMP/latest.json")"
+  SHA="$("$PYBIN" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("sha256",""))' "$TMP/latest.json")"
+  HAVE="$(installed_version)"
+  if [ -z "$VERSION" ]; then
+    echo "latest.json is missing version" >&2
+    exit 1
+  fi
+  if [ -n "$HAVE" ] && ! newer_than "$PYBIN" "$HAVE" "$VERSION"; then
+    echo "SourceFidelity $HAVE is up to date (latest $VERSION)."
+    exit 0
+  fi
+  if [ -z "$URL" ]; then
+    echo "latest.json is missing url for $VERSION" >&2
+    exit 1
+  fi
+  echo "downloading SourceFidelity $VERSION"
+  if ! curl -fsSL --max-time 120 "$URL" -o "$TMP/pkg.tar.gz"; then
+    echo "could not download $URL" >&2
+    exit 1
+  fi
+  if [ -n "$SHA" ]; then
+    GOT="$(sha256_of "$TMP/pkg.tar.gz")"
+    if [ "$GOT" != "$SHA" ]; then
+      echo "checksum mismatch for $URL" >&2
+      exit 1
+    fi
+  elif [ "$ALLOW_UNVERIFIED" != "1" ]; then
+    echo "latest.json has no sha256; refusing an unverified update" >&2
+    echo "publish a checksum, or pass --allow-unverified deliberately" >&2
+    exit 1
+  fi
+  mkdir -p "$TMP/src"
+  if ! tar -xzf "$TMP/pkg.tar.gz" -C "$TMP/src" --strip-components=1; then
+    echo "could not extract the release archive" >&2
+    exit 1
+  fi
+  bash "$TMP/src/install.sh" --target "$TARGET" --no-venv --channel stable
+  exit $?
+fi
 
 for skill in "${SKILLS[@]}"; do
   if [ ! -d "$HERE/$skill" ]; then
@@ -69,6 +202,27 @@ for skill in "${SKILLS[@]}"; do
     echo "installed: $skill"
   fi
 done
+
+if [ "$DRY_RUN" = "0" ]; then
+  mkdir -p "$TARGET/.sourcefidelity"
+  VERSION="$(cat "$HERE/VERSION" 2>/dev/null || echo unknown)"
+  COMMIT="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || true)"
+  STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [ -n "$PYTHON" ]; then
+    "$PYTHON" - "$TARGET/.sourcefidelity/installed.json" "$VERSION" "$COMMIT" "$CHANNEL" "$HERE" "$STAMP" <<'PY'
+import json, sys
+path, version, commit, channel, source, stamp = sys.argv[1:7]
+with open(path, "w", encoding="utf-8", newline="\n") as handle:
+    json.dump({"version": version, "commit": commit, "channel": channel,
+               "source": source, "installed_at": stamp}, handle, indent=1)
+    handle.write("\n")
+PY
+  else
+    printf '{\n "version": "%s",\n "commit": "%s",\n "channel": "%s",\n "source": "%s",\n "installed_at": "%s"\n}\n' \
+      "$VERSION" "$COMMIT" "$CHANNEL" "$HERE" "$STAMP" > "$TARGET/.sourcefidelity/installed.json"
+  fi
+  echo "recorded: v$VERSION ($CHANNEL)"
+fi
 
 echo
 if [ -z "$PYTHON" ]; then

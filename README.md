@@ -95,7 +95,19 @@ In a batch, pass `--cache-root ROOT/_work`: DOI metadata, contents verdicts and 
 
 ## Updating
 
-Releases are tagged on GitHub (the current release is `v1.0.0`). To update, replace the skill folders with the new release and run the installer again; your reviews and working folders are outside the repository and are not touched. The installed version is in `VERSION`.
+Releases are tagged on GitHub and described by `latest.json` at the repository root (`version`, `tag`, `url`, `sha256`, `min_supported`, `notes`).
+
+```bash
+./install.sh --check     # is a newer release available?
+./install.sh --update    # download it, verify its checksum, install it
+./install.sh --version v1.1.0   # require a checkout of that tag
+```
+
+Every review starts with `scripts/update_check.py`. It is silent when the install is current, checks the network at most once a week, and prints one line when an update is due. A notice persists on later reviews until the installed version changes. The check sends one GET for `latest.json` and no identifying data. State lives in `<skills dir>/.sourcefidelity/update.json`, with a user-level and workspace fallback; when no state file is writable the weekly check is skipped and `--check` still works.
+
+`--update` refuses a release whose `sha256` is empty unless `--allow-unverified` is passed. The release process is: bump `VERSION` and `CHANGELOG.md`, tag `vX.Y.Z`, build the archive, put its SHA-256 and download URL in `latest.json`, then publish the release. Set `min_supported` when an older instrument must not be used for new reviews.
+
+The installer records `version`, `commit`, `channel` and `installed_at` in `<skills dir>/.sourcefidelity/installed.json`; every review stamps that version in its scope block. Reviews and working folders are outside the repository and are not touched.
 
 ## Tests
 

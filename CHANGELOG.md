@@ -26,6 +26,21 @@
   wrong supplied DOI, split URLs, title containment, the host cache and the
   scope-line update.
 
+## Unreleased
+
+- **Weekly update check.** `scripts/update_check.py` is silent when the install
+  is current, checks the network at most once a week, and keeps a found update
+  visible on later reviews. It accepts a BOM from the PowerShell installer, and
+  its state lives beside the installed skills with user and workspace fallbacks.
+- **Installer updates.** `install.sh --check` and `--update` (and PowerShell
+  `-Check`/`-Update`) read `latest.json`, verify its SHA-256, and install the
+  release; `--version` requires a checkout of that tag. The installer records
+  `version`, `commit`, `channel` and `installed_at` in
+  `<skills>/.sourcefidelity/installed.json`.
+- **Instrument stamp.** Every review scope block records the skill version and
+  commit from `update_check.py --stamp`, so a report can be reproduced against
+  the instrument that produced it.
+
 ## 1.0.0 — public release
 
 First packaged release for instructors. Based on the internal review series
