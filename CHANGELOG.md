@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Open-access retrieval.** `openfetch.py` now searches CORE by the subtitle and
+  the distinctive title words, decodes CORE's escaped apostrophes, treats an
+  HTML landing page as not a copy, and reads a work's output records for the
+  `fullText` field when the work record has none. The Television Without
+  Frontiers references that previously returned `no_candidate` (O'Connell,
+  Harcourt, Middleton, Nenova, Presburger, Wilkins) now retrieve their full
+  texts.
+
 ## 1.1.0 — November 20, 2026
 
 - **Supplied-DOI matching.** A supplied DOI is compared with its Crossref

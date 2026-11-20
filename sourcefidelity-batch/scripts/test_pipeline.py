@@ -3617,6 +3617,52 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         self.assertIn("select=", captured["url"])
 
 
+class OpenFetchFallbackTests(unittest.TestCase):
+    def test_core_unescape_apostrophes(self):
+        self.assertEqual(of._core_unescape(r"O\u27Connell"), "O'Connell")
+        self.assertEqual(of._core_unescape(r"O\\u27Connell"), "O'Connell")
+
+    def test_core_queries_lead_with_subtitle(self):
+        parsed = rd.parse_reference(
+            "Presburger, P., & Tyler, M. R. (1990). Television without Frontiers: "
+            "Opportunity and Debate Created by the New European Community Directive. "
+            "Hastings International and Comparative Law Review, 13, 495-510.")
+        queries = of._core_queries(parsed)
+        self.assertTrue(queries[0].startswith(
+            'title:"Opportunity and Debate Created by the New European Community Directive"'))
+
+    def test_landing_page_is_not_a_copy(self):
+        def fake_download(url, target, timeout=40):
+            path = target + ".html"
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("<html>landing</html>")
+            return "saved", 200, "text/html", path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(of.fetch_helper, "download", side_effect=fake_download):
+                status, _detail, saved = of._fetch(
+                    "https://openfetch.test/x", os.path.join(tmp, "x"))
+        self.assertEqual(status, "landing")
+        self.assertTrue(saved.endswith(".html"))
+
+    def test_core_fulltext_reads_outputs(self):
+        work = of.CORE_WORKS + "123"
+        output = of.CORE_OUTPUTS + "9"
+
+        def fake_json(url, headers=None, timeout=25):
+            if url == work:
+                return {"fullText": "",
+                        "outputs": ["https://api.core.ac.uk/v3/outputs/9"]}
+            if url == output:
+                return {"fullText": "source text " * 200}
+            return {}
+
+        with mock.patch.object(of, "_curl_json", side_effect=fake_json):
+            text, route = of._core_fulltext({"id": 123, "fullText": ""}, "key")
+        self.assertEqual(route, "outputs/9")
+        self.assertIn("source text", text)
+
+
 class UpdateCheckTests(unittest.TestCase):
     def _installed(self):
         return {"version": "1.0.0", "commit": "abc1234", "channel": "dev"}

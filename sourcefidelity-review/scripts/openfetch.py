@@ -38,6 +38,11 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 OPENALEX = "https://api.openalex.org/works"
 CORE_SEARCH = "https://api.core.ac.uk/v3/search/works/"
+CORE_WORKS = "https://api.core.ac.uk/v3/works/"
+CORE_OUTPUTS = "https://api.core.ac.uk/v3/outputs/"
+CORE_STOP = {"the", "and", "for", "with", "from", "that", "this", "into",
+             "its", "their", "between", "under", "during", "over", "about",
+             "after", "before", "more", "than", "also", "such", "have", "has"}
 
 
 def _slug(name):
@@ -77,18 +82,100 @@ def _openalex(parsed):
             if _title_ok(parsed, item.get("title"))]
 
 
+def _core_words(parsed):
+    words = [word for word in re.findall(r"[A-Za-z][A-Za-z'’\-]{2,}",
+                                        parsed.get("title") or "")
+             if word.lower() not in CORE_STOP]
+    return words
+
+
+def _core_queries(parsed):
+    """CORE title queries: the main title and the distinctive last words.
+
+    CORE's title search is a phrase match, so a bag of significant words or a
+    truncated title phrase usually returns nothing. The main title before the
+    colon and the last five words (stopwords included) cover both the short
+    distinctive title and the subtitle that usually carries the topic.
+    """
+    title = (parsed.get("title") or "").strip().rstrip(".")
+    raw = re.findall(r"[A-Za-z][A-Za-z'’\-]*", title)
+    if not raw:
+        return []
+    queries, seen = [], set()
+
+    def add(query):
+        if query and query not in seen:
+            seen.add(query)
+            queries.append(query)
+
+    head, _, subtitle = title.partition(":")
+    head, subtitle = head.strip(), subtitle.strip()
+    if subtitle:
+        add(f'title:"{subtitle}"')
+    if len(raw) >= 5:
+        add('title:"%s"' % " ".join(raw[-5:]))
+    if subtitle:
+        add(f'title:"{head}"')
+    if len(raw) >= 4:
+        add('title:"%s"' % " ".join(raw[:4]))
+    return queries[:4]
+
+
+def _core_unescape(value):
+    """CORE returns some names and titles with a literal backslash-u escape."""
+    value = re.sub(r"\\+u27", "'", value or "")
+    return re.sub(r"\\+u([0-9a-fA-F]{4})",
+                  lambda match: chr(int(match.group(1), 16)), value)
+
+
 def _core(parsed, key):
-    """CORE candidates by title and author."""
+    """CORE works matched by title and author, from several title queries."""
     if not key:
         return []
-    title = parsed.get("title") or ""
-    if not title:
+    if not parsed.get("title"):
         return []
-    query = urllib.parse.quote(title + " " + (parsed.get("surname") or ""))
-    data = _curl_json(f"{CORE_SEARCH}?q={query}&limit=3",
-                      headers={"Authorization": "Bearer " + key})
-    return [item for item in (data.get("results") or [])
-            if _title_ok(parsed, item.get("title"))]
+    found = {}
+    for query in _core_queries(parsed):
+        data = _curl_json(
+            f"{CORE_SEARCH}?q={urllib.parse.quote(query)}&limit=10",
+            headers={"Authorization": "Bearer " + key})
+        for item in data.get("results") or []:
+            item["title"] = _core_unescape(item.get("title"))
+            if not _title_ok(parsed, item["title"]):
+                continue
+            authors = [_core_unescape(author.get("name", ""))
+                       for author in item.get("authors") or []]
+            if authors and not rd.author_match(parsed, authors):
+                continue
+            found.setdefault(item.get("id") or item.get("title"), item)
+        time.sleep(0.4)
+        if found:
+            break
+    return list(found.values())
+
+
+def _core_fulltext(item, key):
+    """CORE full text from the work, else from one of its outputs."""
+    if not key:
+        return "", ""
+    text = _core_unescape(item.get("fullText") or "")
+    if len(text) > 500:
+        return text, "work"
+    work_id = item.get("id")
+    if work_id:
+        work = _curl_json(f"{CORE_WORKS}{work_id}",
+                          headers={"Authorization": "Bearer " + key})
+        text = _core_unescape(work.get("fullText") or "")
+        if len(text) > 500:
+            return text, f"works/{work_id}"
+        for output in (work.get("outputs") or [])[:3]:
+            output_id = str(output).rstrip("/").rsplit("/", 1)[-1]
+            data = _curl_json(f"{CORE_OUTPUTS}{output_id}",
+                              headers={"Authorization": "Bearer " + key})
+            text = _core_unescape(data.get("fullText") or "")
+            if len(text) > 500:
+                return text, f"outputs/{output_id}"
+    return "", ""
 
 
 def _candidate_urls(openalex, core):
@@ -126,6 +213,8 @@ def _fetch(url, target):
     state, status, _ctype, saved = fetch_helper.download(url, target)
     http_cache.host_note(url, state if state in ("blocked", "dead", "unreachable")
                          else "ok")
+    if saved and saved.endswith(".html"):
+        return "landing", _ctype or "html", saved
     if saved:
         return "saved", _ctype or "pdf", saved
     return state, f"HTTP {status}" if status else state, ""
@@ -200,13 +289,17 @@ def main(argv=None):
             if kind != "pdf":
                 continue
             status, detail, saved = _fetch(url, target)
+            if status == "landing":
+                row.update({"status": "landing", "url": url, "source": source,
+                            "detail": detail})
+                continue
             row.update({"status": status, "url": url, "source": source,
                         "file": saved, "detail": detail})
             if status == "saved":
                 break
         if not row["file"]:
             for item in core_items:
-                text = item.get("fullText") or ""
+                text, route = _core_fulltext(item, key)
                 if not text:
                     continue
                 path = os.path.join(base, ref_id, f"{surname}{year}.txt")
@@ -216,7 +309,7 @@ def main(argv=None):
                 except OSError:
                     continue
                 row.update({"status": "saved_text", "source": "core",
-                            "file": path, "detail": "CORE fullText"})
+                            "file": path, "detail": f"CORE {route}"})
                 break
         rows.append(row)
         print(f"{ref_id}: {row['status']} {os.path.basename(row['file']) or ''}".rstrip())
