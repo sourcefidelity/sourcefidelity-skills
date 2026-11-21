@@ -79,6 +79,7 @@ import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
 import sourcepack as sp  # noqa: E402
+import open_text_pages as otp  # noqa: E402
 import openfetch as of  # noqa: E402
 import fetch as fetch_helper  # noqa: E402
 import update_check as uc  # noqa: E402
@@ -4837,6 +4838,36 @@ class KindCoverageTests(unittest.TestCase):
         self.assertFalse(failed["complete"])
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
+
+
+class OpenTextPageTests(unittest.TestCase):
+    def test_running_heads_become_page_blocks(self):
+        text = ("front matter\n502 [Vol. 28:501\n"
+                "CULTURAL SURVIVAL AND THE EUROPEAN UNION\n"
+                "ness.7 Since the early days of television.\n"
+                "50319961\nCASE W. RES. J. INT'L L.\nnext page text\n")
+        pages = otp.split_pages(text, start=501)
+        by_printed = {page["printed"]: page for page in pages}
+        self.assertIn("502", by_printed)
+        self.assertIn("503", by_printed)
+        self.assertIn("Since the early days", "\n".join(by_printed["502"]["lines"]))
+        self.assertIn("next page text", "\n".join(by_printed["503"]["lines"]))
+
+    def test_no_running_heads_stays_one_page(self):
+        pages = otp.split_pages("one undifferentiated blob", start=57)
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(pages[0]["printed"], "57")
+
+    def test_writes_text_and_page_csv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = otp.write_extraction(
+                "502 [Vol. 28:501\npassage here\n50319961\nnext page\n",
+                tmp, start=501)
+            self.assertIn("502", result["printed"])
+            self.assertTrue(os.path.exists(os.path.join(tmp, "text.txt")))
+            self.assertTrue(os.path.exists(os.path.join(tmp, "pages.csv")))
+            self.assertIn("PDF p2", open(os.path.join(tmp, "text.txt"),
+                                          encoding="utf-8").read())
 
 
 class EvidenceSelectionTests(unittest.TestCase):
