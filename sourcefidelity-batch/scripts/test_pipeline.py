@@ -3829,6 +3829,17 @@ class DocxFormattingTests(unittest.TestCase):
         ])
         self.assertIn("_Journal", dt.markdown(data))
 
+    def test_citation_groups_preserve_mixed_width_punctuation_and_offsets(self):
+        marker = "（Hart, 1996；Lee, 2000)"
+        paragraph = f"The study reports a rise {marker}. The year alone was （2002）."
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_docx(tmp, f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>")
+            result = ec.build(path, "sample")
+        citation, = result["citations"]
+        self.assertEqual(citation["marker"], marker)
+        self.assertEqual(paragraph[citation["start"]:citation["end"]], marker)
+        self.assertEqual(citation["parts"], ["Hart, 1996", "Lee, 2000"])
+
     def test_short_named_assertion_is_an_uncited_candidate(self):
         body = ("<w:p><w:r><w:t>Quiet authority is the central feature of Dana Hart's "
                 "screen persona.</w:t></w:r></w:p>"

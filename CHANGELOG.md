@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Citation inventory.** Recognize parenthetical citations with full-width or
+  mixed-width delimiters while preserving the submitted marker and offsets.
+
 - **Source coverage and extraction.** Match supplied PDFs using first-page
   title and author evidence, list unmapped copies, and record attempted CORE
   queries. Preserve DOCX tabs and line breaks and surface short named

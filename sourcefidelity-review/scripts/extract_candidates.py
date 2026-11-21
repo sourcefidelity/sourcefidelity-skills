@@ -43,8 +43,8 @@ REF_HEAD_RE = re.compile(
     r"references?\s+cited|works\s+cited|works\s+referenced|bibliography)\s*:?\s*$", re.I)
 YEAR = r"(?:19|20)\d{2}[a-z]?"
 YEAR_RE = re.compile(YEAR)
-PAREN_RE = re.compile(r"\(([^()]{0,300}?" + YEAR + r"[^()]{0,160})\)")
-ND_RE = re.compile(r"\(\s*([^()]{0,200}?\bn\.d\.(?:-[a-z])?[^()]{0,120})\)", re.I)
+PAREN_RE = re.compile(r"[(（]([^()（）]{0,300}?" + YEAR + r"[^()（）]{0,160})[)）]")
+ND_RE = re.compile(r"[(（]\s*([^()（）]{0,200}?\bn\.d\.(?:-[a-z])?[^()（）]{0,120})[)）]", re.I)
 BRACKET_RE = re.compile(r"\[([^\[\]]{0,300}?" + YEAR + r"[^\[\]]{0,160})\]")
 NARRATIVE_RE = re.compile(
     r"\b((?:[A-Z][A-Za-z'’\-]+|(?:The|Ministry|Department|National|State|China|Warner|Walt)\b)"
@@ -239,7 +239,7 @@ def build(path, paper_id):
                 return
             taken.append((start, end))
             inside = text[start:end]
-            inner = inside.strip("()[]").strip()
+            inner = inside.strip("()（）[]").strip()
             if cite_kind == "year_only":
                 year_mentions.append({"paragraph_id": p["id"], "marker": marker})
                 return  # a bare year is a film date or expression, not a citation
@@ -294,12 +294,12 @@ def build(path, paper_id):
             add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
         for m in PAREN_RE.finditer(text):
             inner = m.group(1)
-            parts = [part.strip() for part in inner.split(";") if part.strip()]
+            parts = [part.strip() for part in re.split(r"[;；]", inner) if part.strip()]
             add(m.start(), m.end(), m.group(0), "parenthetical",
                 parts if len(parts) > 1 else [])
         for m in ND_RE.finditer(text):
             inner = m.group(1)
-            parts = [part.strip() for part in inner.split(";") if part.strip()]
+            parts = [part.strip() for part in re.split(r"[;；]", inner) if part.strip()]
             add(m.start(), m.end(), m.group(0), "parenthetical",
                 parts if len(parts) > 1 else [])
         for m in BRACKET_RE.finditer(text):
