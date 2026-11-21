@@ -51,6 +51,7 @@ import extract_candidates as ec  # noqa: E402
 import academic_checks as ac  # noqa: E402
 import benchmark_retrieval as bm  # noqa: E402
 import make_task as mt  # noqa: E402
+import prepare_html as ph  # noqa: E402
 import prepare_source as ps  # noqa: E402
 import page_map  # noqa: E402
 import pdf_quality as pq  # noqa: E402
@@ -4839,6 +4840,34 @@ class KindCoverageTests(unittest.TestCase):
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
 
+
+class PrepareHtmlTests(unittest.TestCase):
+    def test_local_html_becomes_a_bounded_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "source.html")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("<html><head><title>Example article</title>"
+                             "<style>body{color:red}</style></head><body>"
+                             "<script>ignore_this()</script>"
+                             "<p>First substantive sentence.</p>"
+                             "<p>Second substantive sentence.</p></body></html>")
+            out = os.path.join(tmp, "extract")
+            result = ph.write_extraction(path, out, "R1")
+            text = open(os.path.join(out, "text.txt"), encoding="utf-8").read()
+            meta = json.load(open(os.path.join(out, "meta.json"), encoding="utf-8"))
+        self.assertEqual(result["status"], "prepared")
+        self.assertIn("First substantive sentence", text)
+        self.assertNotIn("ignore_this", text)
+        self.assertEqual(meta["first_page_head"], "Example article")
+        self.assertIn("no printed page numbers", " ".join(meta["gaps"]))
+
+    def test_html_is_an_identity_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "article.html")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("<html><body><p>Identity text here.</p></body></html>")
+            self.assertIn(path, sr.source_candidates(tmp))
+            self.assertIn("Identity text here", sr.first_pages_text(path))
 
 class OpenTextPageTests(unittest.TestCase):
     def test_running_heads_become_page_blocks(self):

@@ -42,6 +42,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 
 import acquisition_list  # noqa: E402
+import prepare_html  # noqa: E402
 import detect_structure  # noqa: E402
 import source_scope  # noqa: E402
 
@@ -310,12 +311,15 @@ def canonicalise(works):
 
 
 def first_pages_text(path, pages=3):
-    """Identity text: PDF metadata plus the first pages, with one OCR fallback.
+    """Identity text: PDF/HTML metadata and first-page text, with one OCR fallback.
 
     A scanned book often has no text layer and no metadata; its title page is
     still the best identity evidence, so pages 1-3 are OCR'd once when the
     native text is too thin. The result is cached by the caller.
     """
+    if str(path).lower().endswith((".html", ".htm")):
+        _title, text = prepare_html.html_text(path)
+        return text[:6000]
     parts = []
     try:
         from pypdf import PdfReader
@@ -479,11 +483,16 @@ def score_file(text, record, parsed, path="", full_text=""):
         "chapter_author": chapter_author_hit}
 
 
-def pdf_candidates(sources):
+def source_candidates(sources):
     found = []
-    for path in sorted(glob.glob(os.path.join(sources, "*.pdf"))):
-        found.append(path)
-    return found
+    for pattern in ("*.pdf", "*.html", "*.htm"):
+        found.extend(sorted(glob.glob(os.path.join(sources, pattern))))
+    return list(dict.fromkeys(found))
+
+
+def pdf_candidates(sources):
+    """Backward-compatible alias for the old PDF-only scanner."""
+    return source_candidates(sources)
 
 
 def resolve_chapters(registry):
@@ -796,7 +805,7 @@ def main():
 
     supplied = []
     if args.sources and os.path.isdir(args.sources):
-        supplied = pdf_candidates(args.sources)
+        supplied = source_candidates(args.sources)
     cache_path = os.path.join(root, "_work", "_file_identity.json")
     cache = {}
     if os.path.exists(cache_path):
@@ -816,14 +825,16 @@ def main():
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     json.dump(cache, open(cache_path, "w", encoding="utf-8"), ensure_ascii=False)
 
-    def pdf_pages(path):
+    def source_pages(path):
+        if str(path).lower().endswith((".html", ".htm")):
+            return 1
         try:
             from pypdf import PdfReader
             return len(PdfReader(path).pages)
         except Exception:
             return 0
 
-    page_counts = {path: pdf_pages(path) for path in supplied}
+    page_counts = {path: source_pages(path) for path in supplied}
     sidecar = {}
     side_path = os.path.join(root, "_work", "source_provider.json")
     if os.path.exists(side_path):
@@ -1003,8 +1014,12 @@ def main():
                         and (not args.prepare_key or key in args.prepare_key))
         if prepare_this:
             out_dir = os.path.join(root, "_sources", key)
-            cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
-                   "--pdf", record["supplied_file"], "--out", out_dir, "--key", key]
+            if str(record["supplied_file"]).lower().endswith((".html", ".htm")):
+                cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_html.py"),
+                       "--html", record["supplied_file"], "--out", out_dir, "--key", key]
+            else:
+                cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
+                       "--pdf", record["supplied_file"], "--out", out_dir, "--key", key]
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode == 0:
                 record["extraction"] = os.path.join(out_dir, "text.txt")

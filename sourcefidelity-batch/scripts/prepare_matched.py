@@ -102,11 +102,14 @@ def main():
 
     for key, path, records in items:
         out_dir = os.path.join(root, "_sources", key)
-        proc = subprocess.run(
-            [sys.executable, "-I", os.path.join(REVIEW, "prepare_source.py"),
-             "--pdf", path, "--out", out_dir, "--key", key,
-             "--max-ocr-pages", str(ocr_limit)],
-            capture_output=True, text=True)
+        if str(path).lower().endswith((".html", ".htm")):
+            cmd = [sys.executable, "-I", os.path.join(REVIEW, "prepare_html.py"),
+                   "--html", path, "--out", out_dir, "--key", key]
+        else:
+            cmd = [sys.executable, "-I", os.path.join(REVIEW, "prepare_source.py"),
+                   "--pdf", path, "--out", out_dir, "--key", key,
+                   "--max-ocr-pages", str(ocr_limit)]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode == 0:
             stats["prepared"] += 1
             try:
