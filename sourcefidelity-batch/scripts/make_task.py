@@ -23,6 +23,10 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+REVIEW_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                             "sourcefidelity-review", "scripts")
+sys.path.insert(0, REVIEW_SCRIPTS)
+import evidence_select  # noqa: E402
 import evidence_window  # noqa: E402
 import source_registry  # noqa: E402
 import web_cache  # noqa: E402
@@ -462,6 +466,10 @@ def main():
                            window_id=f"{cit['id']}:{rid}:{i}")
             found.extend(hits)
             per_ref[rid] = status
+        cit["evidence_selection"] = evidence_select.select_evidence(
+            cit.get("sentence") or cit.get("marker", ""),
+            [{"passage_id": hit["window_id"], "page_index": hit.get("pdf_page"),
+              "text": hit.get("text", "")} for hit in found])
         statuses = {item["status"] for item in per_ref.values()}
         overall = next((state for state in ("found", "web_url", "no_window", "no_extraction")
                         if state in statuses), "no_reference")

@@ -42,6 +42,7 @@ import docx_text as dt  # noqa: E402
 import source_scope as scope  # noqa: E402
 import kind_coverage as kc  # noqa: E402
 import enrich_registry as er  # noqa: E402
+import evidence_select as ev  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
 import file_digest as fd  # noqa: E402
@@ -1245,6 +1246,10 @@ class TaskMatchingTests(unittest.TestCase):
             for hit in hits:
                 original = Path(registry[hit["source_key"]]["extraction"]).read_text(encoding="utf-8")
                 self.assertEqual(" ".join(original[hit["start"]:hit["end"]].split()), hit["text"])
+            selection = task["candidates"]["citations"][0]["evidence_selection"]
+            self.assertIn(selection["status"], {"fallback", "selected"})
+            self.assertTrue(selection["sentences"])
+            self.assertTrue(selection["sentences"][0]["text"])
             self.assertEqual(task["window_status"]["X1"]["by_reference"]["R3"]["status"],
                              "web_url")
             self.assertEqual(fw.task_urls(tmp), {"https://example.test/item": "R3"})
@@ -4832,6 +4837,60 @@ class KindCoverageTests(unittest.TestCase):
         self.assertFalse(failed["complete"])
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
+
+
+class EvidenceSelectionTests(unittest.TestCase):
+    def _passages(self):
+        return [{"passage_id": "w1", "page_index": 1,
+                 "text": "The directive creates a single market. "
+                         "It also sets a minimum level of partial harmonization."}]
+
+    def test_numbered_request_has_exact_sentence_text(self):
+        request = ev.prepare_request("The directive creates a single market",
+                                     self._passages())
+        self.assertEqual(list(request.sentences), ["s1", "s2"])
+        self.assertIn("single market", request.sentences["s1"].text)
+        self.assertIn("minimum level", request.sentences["s2"].text)
+
+    def test_selected_response_binds_ids_and_reasons(self):
+        request = ev.prepare_request("The directive creates a single market",
+                                     self._passages())
+        chosen = ev.bind_response({"selections": [
+            {"sentence_id": "s2", "reason": "qualifies_or_contradicts"}]}, request)
+        self.assertEqual(chosen[0][0].alias, "s2")
+        self.assertEqual(chosen[0][1], "qualifies_or_contradicts")
+
+    def test_unknown_or_duplicate_ids_reject_the_response(self):
+        request = ev.prepare_request("claim text", self._passages())
+        for raw in (
+                {"selections": [{"sentence_id": "s9", "reason": "bears_on_statement"}]},
+                {"selections": [{"sentence_id": "s1", "reason": "bears_on_statement"},
+                                {"sentence_id": "s1", "reason": "necessary_context"}]}):
+            with self.assertRaises(ev.SelectionResponseInvalid):
+                ev.bind_response(raw, request)
+
+    def test_lexical_fallback_selects_shared_terms(self):
+        result = ev.select_evidence("minimum harmonization", self._passages())
+        self.assertEqual(result["status"], "fallback")
+        self.assertEqual(result["sentences"][0]["sentence_id"], "s2")
+
+    def test_model_call_and_invalid_fallback(self):
+        def call(_system, _user):
+            return '{"selections": [{"sentence_id": "s1", "reason": "bears_on_statement"}]}'
+        result = ev.select_evidence("single market", self._passages(), call=call)
+        self.assertEqual(result["status"], "selected")
+        self.assertEqual(result["sentences"][0]["sentence_id"], "s1")
+
+        def broken(_system, _user):
+            return "not json"
+        fallback = ev.select_evidence("minimum harmonization", self._passages(), call=broken)
+        self.assertEqual(fallback["status"], "fallback")
+        self.assertTrue(fallback["limitations"])
+
+    def test_no_sentences_is_empty_not_absence(self):
+        result = ev.select_evidence("claim", [])
+        self.assertEqual(result["status"], "empty")
+        self.assertIn("not absence", " ".join(result["limitations"]))
 
 
 class StageReceiptTests(unittest.TestCase):
