@@ -32,6 +32,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 import source_registry  # noqa: E402
 import make_task  # noqa: E402
+import source_scope  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -165,6 +166,21 @@ def prepare_extraction(root, key, path):
             "sha256": digest, "limitation": ""}
 
 
+def scope_for(extraction, page_range):
+    """Shared copy-scope observation for a reappraisal task source."""
+    if not extraction or not os.path.exists(extraction):
+        return {"status": "unresolved", "reason": "no usable extraction",
+                "absence_allowed": False}
+    if not page_range or len(page_range) < 2:
+        return {"status": "not_required", "reason": "no cited page range",
+                "absence_allowed": True}
+    _text, _marks, pages = make_task.page_index(extraction)
+    meta = load(os.path.join(os.path.dirname(extraction), "meta.json"), {})
+    return source_scope.assess_page_span(
+        page_range[0], page_range[1],
+        [{"printed": value, "text": ""} for value in pages.values()], meta)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
@@ -208,6 +224,7 @@ def main():
         identity = obj.get("identity", rec.get("identity", {}))
         page_range = rec.get("page_range", [])
         restrict = bool(rec.get("restrict_pages"))
+        observation = scope_for(extraction, page_range)
         text_cache = None
         if extraction and os.path.exists(extraction):
             text_cache = make_task.page_index(extraction)
@@ -254,6 +271,9 @@ def main():
                     "statement": sentence,
                     "prior": entry.get("prior", ""),
                     "block": entry.get("block", "")[:2500],
+                    "coverage": {"status": observation["status"],
+                                 "reason": observation.get("reason", ""),
+                                 "absence_allowed": observation.get("absence_allowed", False)},
                 })
             bucket = by_paper.setdefault(pid, {"paper_id": pid, "sources": {},
                                                "entries": [], "windows": {}})
@@ -264,6 +284,10 @@ def main():
                 "extraction_limitation": bound["limitation"],
                 "work_kind": rec.get("work_kind", ""), "form_issue": rec.get("form_issue", ""),
                 "page_range": page_range, "restrict_pages": restrict,
+                "copy_observation": observation,
+                "scope_status": observation["status"],
+                "scope_reason": observation.get("reason", ""),
+                "absence_allowed": observation.get("absence_allowed", False),
             }
             for entry in entries:
                 entry["source_key"] = key

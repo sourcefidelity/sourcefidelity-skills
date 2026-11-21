@@ -155,6 +155,21 @@ def render_review_text(original, task, judgments, day, counts=None):
         new = change.get("new", "")
         if new not in JUDGMENT_KEYS:
             raise SystemExit(f"{cid}: invalid new judgment {new!r}")
+        source_key = change.get("source_key") or (
+            list(task.get("sources", {}))[0] if task.get("sources") else "")
+        observation = (task.get("sources", {}).get(source_key, {})
+                       .get("copy_observation") or {})
+        if observation and new != "Not Judged" and observation.get("status") in (
+                "inadequate", "unresolved"):
+            raise SystemExit(
+                f"{cid}: {source_key} copy coverage is {observation['status']} "
+                f"({observation.get('reason', 'coverage unresolved')}); "
+                "return Not Judged or record the coverage limitation")
+        if (observation and new in ("Contradicts", "Not Supported")
+                and not observation.get("absence_allowed")):
+            raise SystemExit(
+                f"{cid}: {source_key} coverage does not permit an absence "
+                "conclusion; return Not Judged")
         block = set_judgment(block, new)
         evidence = (change.get("evidence") or "").strip()
         locator = (change.get("locator") or "").strip()

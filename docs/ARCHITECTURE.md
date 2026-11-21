@@ -51,7 +51,7 @@ fetch cache.
 
 ### reappraise
 
-`match_sources.py` and `scope.py` identify which references the new sources affect; `reappraise_apply.py` updates only those entries in the existing review and ledger and logs every changed judgment. It never re-runs a whole review silently.
+`match_sources.py` and `scope.py` identify which references the new sources affect; `reappraise_apply.py` updates only those entries in the existing review and ledger and logs every changed judgment. It never re-runs a whole review silently. Reappraisal tasks carry the shared copy-scope observation, and the apply step rejects a judgment from an inadequate or unresolved copy.
 
 ### Shared helpers
 

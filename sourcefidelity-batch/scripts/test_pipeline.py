@@ -2408,6 +2408,40 @@ class SourceBindingTests(unittest.TestCase):
             self.assertEqual(bound["limitation"], "extraction_failed")
 
 
+class ReappraiseCoverageTests(unittest.TestCase):
+    def test_unresolved_copy_cannot_support_a_negative_judgment(self):
+        review = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n")
+        task = {"entries": [{"id": "C1", "prior": "Not Judged"}],
+                "sources": {"source": {"copy_observation": {
+                    "status": "unresolved", "reason": "no printed page evidence",
+                    "absence_allowed": False}}}}
+        judgments = {"changes": [{"id": "C1", "source_key": "source",
+                                  "prior": "Not Judged", "new": "Not Supported",
+                                  "evidence": "quote", "locator": ""}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            with self.assertRaises(SystemExit):
+                ra.apply_review(path, task, judgments, "2026-11-21")
+
+    def test_prepare_scope_observes_cited_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "_sources", "key")
+            os.makedirs(source)
+            with open(os.path.join(source, "pages.csv"), "w", encoding="utf-8") as handle:
+                handle.write("pdf_page,printed_folio,source,confidence,chars,words\n")
+                for page in range(57, 83):
+                    handle.write(f"{page},{page},native,1.0,10,2\n")
+            text = os.path.join(source, "text.txt")
+            with open(text, "w", encoding="utf-8") as handle:
+                handle.write("text\n")
+            with open(os.path.join(source, "meta.json"), "w", encoding="utf-8") as handle:
+                json.dump({"offset": {"coverage": 1.0}}, handle)
+            observation = rp.scope_for(text, [57, 82])
+        self.assertEqual(observation["status"], "adequate")
+        self.assertTrue(observation["absence_allowed"])
+
+
 class ReappraiseApplyTests(unittest.TestCase):
     def test_bold_and_heading_sections(self):
         text = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n\n"

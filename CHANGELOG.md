@@ -10,7 +10,8 @@
   cited page range with observed printed pages and flags previews, front-matter
   samples, incomplete scans and script variants. The source pack index, batch
   registry/task and resolver accession record it; only an `adequate` observation
-  permits an absence conclusion. Reappraisal consumption remains.
+  permits an absence conclusion. Reappraisal tasks carry it and the apply step
+  rejects judgments from inadequate/unresolved copies.
 
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer
