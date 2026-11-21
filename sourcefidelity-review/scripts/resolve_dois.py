@@ -1810,7 +1810,10 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
     parsed = parse_reference(entry)
     kind = entry_kind(parsed["entry"], parsed)
     record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
-              "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
+              "doi": "", "submitted_doi": parsed["doi"], "record_title": "",
+              "copy": {}, "notes": []}
+    if parsed["doi"]:
+        record["submitted_doi_check"] = {"status": "not_checked"}
 
     def past_deadline():
         return deadline is not None and time.monotonic() >= deadline
@@ -1825,12 +1828,15 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
         return record
 
     key = identity_key(parsed)
-    _identity_key = f"v2|{key}" if key else ""
+    cache_version = "v3" if parsed["doi"] else "v2"
+    _identity_key = f"{cache_version}|{key}" if key else ""
     _cached_identity = cache_get("identity", _identity_key) if _identity_key else None
     if _cached_identity:
         record["identity"] = _cached_identity["identity"]
         record["doi"] = _cached_identity["doi"]
         record["record_title"] = _cached_identity["record_title"]
+        if "submitted_doi_check" in _cached_identity:
+            record["submitted_doi_check"] = _cached_identity["submitted_doi_check"]
         if "evidence" in _cached_identity:
             record["evidence"] = _cached_identity["evidence"]
         record["notes"].extend(_cached_identity["notes"])
@@ -1851,37 +1857,70 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
             verdict, evidence = match_record(parsed, candidate, kind)
             seen.append((candidate, verdict, evidence))
 
-        if parsed["doi"]:
+        submitted = parsed["doi"]
+        direct = None
+        if submitted:
+            check = record["submitted_doi_check"]
             try:
-                meta = crossref_by_doi_cached(parsed["doi"])
+                meta = crossref_by_doi_cached(submitted)
                 ran.append("crossref(doi)")
                 verdict, evidence = doi_verdict(parsed, meta, kind)
-                seen.append((meta, verdict, evidence))
+                mismatch = (evidence.get("author") is False
+                            or bool(meta.get("title")) and evidence.get("title", 1.0) < 0.6)
+                if mismatch and verdict != "title_conflict_at_coordinates":
+                    verdict = "bibliographic_conflict"
+                direct = (meta, verdict, evidence) if meta.get("title") else None
+                matched = direct is not None and not mismatch and verdict in (
+                    "confirmed", "same_work_other_edition", "bibliographic_conflict")
+                check.update(status="mismatched" if mismatch else
+                             "matched" if matched else "unconfirmed",
+                             record_title=meta.get("title") or "", evidence=evidence)
+                if matched:
+                    record["doi"] = submitted
+                    seen.append(direct)
             except Exception as exc:  # noqa: BLE001
-                failed.append(f"crossref(doi) {type(exc).__name__}")
-        else:
-            if "crossref" in routes and not stop_early() and not past_deadline():
-                try:
-                    for candidate in crossref_search(parsed, mailto)[:3]:
-                        consider(candidate)
-                    ran.append("crossref")
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(f"crossref {type(exc).__name__}")
-            if "openalex" in routes and not stop_early() and not past_deadline():
-                try:
-                    for candidate in openalex_search(parsed)[:3]:
-                        consider(candidate)
-                    ran.append("openalex")
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(f"openalex {type(exc).__name__}")
-            if "openlibrary" in routes and not stop_early() and not past_deadline():
-                try:
-                    for candidate in openlibrary_search(parsed)[:2]:
-                        consider(candidate)
-                    ran.append("openlibrary")
-                except Exception as exc:  # noqa: BLE001
-                    failed.append(f"openlibrary {type(exc).__name__}")
+                if isinstance(exc, urllib.error.HTTPError) and exc.code in (404, 410):
+                    check.update(status="not_found", http_status=exc.code)
+                    ran.append("crossref(doi)")
+                else:
+                    check.update(status="lookup_failed", reason=type(exc).__name__)
+                    failed.append(f"crossref(doi) {type(exc).__name__}")
+            record["notes"].append(f"submitted DOI {submitted}: {check['status']}")
 
+        if not record["doi"]:
+            searches = (("crossref", crossref_search, (parsed, mailto), 3),
+                        ("openalex", openalex_search, (parsed,), 3),
+                        ("openlibrary", openlibrary_search, (parsed,), 2))
+            for name, search, args, limit in searches:
+                if name not in routes or past_deadline() or (not submitted and stop_early()):
+                    continue
+                try:
+                    for candidate in search(*args)[:limit]:
+                        consider(candidate)
+                    ran.append(name)
+                except Exception as exc:  # noqa: BLE001
+                    failed.append(f"{name} {type(exc).__name__}")
+            if submitted:
+                replacements = {}
+                surname = _fold(parsed.get("surname"))
+                author_pattern = re.compile(rf"(?<!\w){re.escape(surname)}(?!\w)")
+                for candidate, verdict, evidence in seen:
+                    doi = candidate.get("doi") or ""
+                    if (DOI_RE.fullmatch(doi) and doi.casefold() != submitted.casefold()
+                            and verdict == "confirmed" and evidence["title"] >= 0.85
+                            and surname and any(author_pattern.search(_fold(author))
+                                                for author in candidate.get("authors") or [])
+                            and evidence["year_delta"] in (0, 1)):
+                        replacements.setdefault(doi.casefold(), (candidate, verdict, evidence))
+                if len(replacements) == 1:
+                    seen = list(replacements.values())
+                    record["notes"].append("different DOI confirmed by title, author and year")
+                else:
+                    if len(replacements) > 1:
+                        record["notes"].append("multiple matching replacement DOIs; left unresolved")
+                    seen = [direct] if direct and direct[1] != "unlocated_after_search" else []
+                    if len(replacements) > 1 and not direct:
+                        record["identity"] = "possible_match"
 
     order = ("confirmed", "same_work_other_edition", "bibliographic_conflict",
              "title_conflict_at_coordinates", "possible_match", "unlocated_after_search")
@@ -1891,6 +1930,7 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
         record["identity"] = verdict
         record["record_title"] = candidate.get("title") or ""
         if (candidate.get("doi") and not record["doi"]
+                and (not parsed["doi"] or verdict == "confirmed")
                 and verdict in ("confirmed", "same_work_other_edition",
                                 "bibliographic_conflict")):
             record["doi"] = candidate["doi"]
@@ -1912,9 +1952,9 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
                 "title: inspect the volume/issue contents before judging the entry")
 
     identity_notes = list(record["notes"])
-    if attempt and kind == "article" and parsed["doi"] and not past_deadline():
+    if attempt and kind == "article" and parsed["doi"] and record["doi"] and not past_deadline():
         try:
-            record["publisher"] = landing_metadata(parsed["doi"], mailto)
+            record["publisher"] = landing_metadata(record["doi"], mailto)
             if record["publisher"].get("toc_url"):
                 record["publisher"]["toc"] = toc_entries(record["publisher"]["toc_url"])
             if (not parsed.get("pages") and record["publisher"].get("first_page")
@@ -1943,9 +1983,11 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
     if (_identity_key and record["identity"] != "search_incomplete"
             and (record["identity"] in DECISIVE_IDENTITIES
                  or not (failed or budget_skipped))
+            and not (parsed["doi"] and (failed or budget_skipped))
             and not _cached_identity):
         cached = {field: record[field] for field in
-                  ("identity", "doi", "record_title", "evidence") if field in record}
+                  ("identity", "doi", "record_title", "evidence", "submitted_doi_check")
+                  if field in record}
         cached["notes"] = identity_notes
         cache_put("identity", _identity_key, cached)
 
@@ -1962,7 +2004,7 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
             if occupant_score >= 0.6 and record["identity"] not in (
                     "confirmed", "same_work_other_edition"):
                 record["identity"] = "confirmed"
-                if not record["doi"] and best.get("doi"):
+                if not parsed["doi"] and not record["doi"] and best.get("doi"):
                     record["doi"] = best["doi"]
             elif occupant_score < 0.3:
                 record["identity"] = "title_conflict_at_coordinates"
@@ -2008,7 +2050,7 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
 
 def markdown(records, source):
     lines = [f"# Accession record — {source}", "", f"Checked: {now()}", "",
-             "| # | Entry (short) | Identity | DOI | Copy | Contents | Note |",
+             "| # | Entry (short) | Identity | Submitted DOI | DOI check | Resolved DOI | Copy | Contents | Note |",
              "| --- | --- | --- | --- | --- | --- | --- |"]
     for number, record in enumerate(records, start=1):
         short = (record["parsed"]["authors"] or record["parsed"]["title"])[:42].replace("|", "/")
@@ -2033,6 +2075,8 @@ def markdown(records, source):
             shown = "—"
         note = (record.get("notes") or [""])[0]
         lines.append(f"| {number} | {short} | {record['identity'] or '-'} | "
+                     f"{record.get('submitted_doi') or '-'} | "
+                     f"{record.get('submitted_doi_check', {}).get('status', '-')} | "
                      f"{record.get('doi') or '-'} | {got} | {shown} | {note[:80]} |")
     counts = {}
     for record in records:

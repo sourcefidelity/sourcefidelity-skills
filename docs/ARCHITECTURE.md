@@ -29,7 +29,7 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `REVIEW_PROTOCOL.md` | Canonical method: source classes, finding categories, evidence states, report shape. |
 | `dossier.py` | One call for identity and link state: `dossier.md` and `dossier.json`, one row per reference. |
 | `hyperlink_audit.py` | Classifies every submitted link by state; joins split URLs; records transport and cache. |
-| `resolve_dois.py` | Reference identity: DOI check before landing fetch, title/author matching, archive routing. |
+| `resolve_dois.py` | Reference identity: submitted DOI check before bounded title/author fallback, separate submitted and resolved identifiers, archive routing. |
 | `sourcepack.py` | Proposes unique PDF mappings from first-page title and author evidence or a strong filename, honours explicit overrides, and indexes the extracts by printed page. |
 | `openfetch.py` | Best-effort open-access copies from OpenAlex and CORE, with attempted CORE queries and access outcomes in the index. |
 | `fetch.py` | One URL, curl then urllib on 401/403/429, with 24-hour host-state memory. |

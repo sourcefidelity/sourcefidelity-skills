@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
-| Test suites | 325 pipeline tests run on the development branch, one skipped. Style and PDF suites report no failures. |
+| Test suites | 329 pipeline tests run on the development branch, one skipped. Style and PDF suites report no failures. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,7 +21,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 324 passed, one skipped |
+| Pipeline regressions | `test_pipeline.py` | 328 passed, one skipped |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
@@ -36,6 +36,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
 | Development install | `install.sh --dev` and `--link` on temp targets | `--dev` copied the working tree and recorded channel `dev`; `--link` created symlinks; no version or `latest.json` change |
 | Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
+| Submitted DOI fallback | Dossier replay on a consent-paper reference, substituting a mismatched DOI and reusing recorded Crossref metadata for the intended work | Preserved the submitted link and mismatch while resolving a different DOI. Offline tests covered a missing DOI record, a wrong author, competing matches, failure handling and cache reuse. |
 | DOI open-access fallback | `resolve_copy` with a real 12-page public article PDF and replayed provider responses | An Unpaywall timeout advanced to OpenAlex; the saved PDF hash matched the input and later providers were skipped. Live provider coverage was not measured. |
 | Multi-source evidence binding | `make_task.py` on the Harlow consent DOCX; offline task and report regressions | All three explicit members at ¶P10 and both mixed-width members at ¶P16 reached the task. The fixtures retained same-page windows and a web companion, and rejected wrong-reference evidence. |
 | CORE adapter alignment | Live `openfetch.py --ref` for the O’Connell article, using CORE alone | The cleaned title query returned 10 results. A matched CORE output yielded 84,947 characters of text with the article title and author visible. The index records the attempted query and returned count. |

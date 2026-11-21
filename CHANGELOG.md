@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Submitted DOI fallback.** Try bounded title-and-author search when a
+  submitted DOI does not provide a matching record. Keep the submitted DOI
+  and its check separate from the resolved identifier.
+
 - **Open-access fallback.** Preserve distinct provider URLs, continue when an
   individual provider fails, and stop querying providers after saving a PDF.
 - **Multi-source citations.** Prepare evidence and coverage per reference and

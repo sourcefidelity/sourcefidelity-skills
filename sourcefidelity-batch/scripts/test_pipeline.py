@@ -3757,13 +3757,84 @@ class RetrievalEfficiencyTests(unittest.TestCase):
     def test_distinct_citations_of_same_doi_do_not_share_verdict(self):
         first = "Wallace, W. T. (1993). The role of actors in films. https://doi.org/10.1000/x"
         second = first.replace("1993", "2025")
-        with mock.patch.object(rd, "crossref_by_doi_cached", return_value={}), \
+        with mock.patch.object(rd, "crossref_by_doi_cached",
+                               return_value={"title": "The role of actors in films"}), \
                 mock.patch.object(rd, "doi_verdict", side_effect=[
                     ("confirmed", {}), ("bibliographic_conflict", {})]) as verdict:
             records = [rd.process(entry, self.root, False, "") for entry in (first, second)]
         self.assertEqual([record["identity"] for record in records],
                          ["confirmed", "bibliographic_conflict"])
         self.assertEqual(verdict.call_count, 2)
+
+    def test_submitted_doi_fallback_preserves_404_and_retrieves_only_replacement(self):
+        entry = ("Doe, J. (2020). Evidence travels across archives. "
+                 "Archive Journal, 12(1), 5-8. https://doi.org/10.1000/old")
+        replacement = {"doi": "10.1000/new", "title": "Evidence travels across archives",
+                       "authors": ["Doe"], "year": 2020}
+        error = urllib.error.HTTPError("https://example.test", 404, "Missing", {}, None)
+        with mock.patch.object(rd, "crossref_by_doi_cached", side_effect=error) as direct, \
+                mock.patch.object(rd, "crossref_search", return_value=[replacement]), \
+                mock.patch.object(rd, "openalex_search", return_value=[
+                    dict(replacement, doi="10.1000/NEW")]), \
+                mock.patch.object(rd, "landing_metadata", return_value={}) as landing, \
+                mock.patch.object(rd, "resolve_copy", return_value={}) as copy:
+            record = rd.process(entry, self.root, True, "")
+            warm = rd.process(entry, self.root, False, "")
+        self.assertEqual(record["submitted_doi"], "10.1000/old")
+        self.assertEqual(record["submitted_doi_check"], {"status": "not_found", "http_status": 404})
+        self.assertEqual(record["doi"], "10.1000/new")
+        self.assertEqual(record["identity"], "confirmed")
+        self.assertEqual(warm["submitted_doi_check"], record["submitted_doi_check"])
+        self.assertEqual(warm["doi"], record["doi"])
+        direct.assert_called_once_with("10.1000/old")
+        landing.assert_called_once_with("10.1000/new", "")
+        copy.assert_called_once_with("10.1000/new", self.root, "")
+
+    def test_same_title_with_wrong_author_triggers_doi_fallback(self):
+        entry = ("Doe, J. (2020). Evidence travels across archives. "
+                 "Archive Journal, 12(1), 5-8. https://doi.org/10.1000/old")
+        direct = {"doi": "10.1000/old", "title": "Evidence travels across archives",
+                  "authors": ["Other"], "year": 2020}
+        replacement = dict(direct, doi="10.1000/new", authors=["Doe"])
+        with mock.patch.object(rd, "crossref_by_doi_cached", return_value=direct), \
+                mock.patch.object(rd, "crossref_search", return_value=[replacement]), \
+                mock.patch.object(rd, "openalex_search", return_value=[]):
+            record = rd.process(entry, self.root, False, "")
+        self.assertEqual(record["identity"], "confirmed")
+        self.assertEqual(record["doi"], "10.1000/new")
+        self.assertEqual(record["submitted_doi_check"]["status"], "mismatched")
+        self.assertIs(record["submitted_doi_check"]["evidence"]["author"], False)
+
+    def test_competing_replacements_leave_wrong_submitted_doi_unresolved(self):
+        entry = ("Doe, J. (2020). Evidence travels across archives. "
+                 "Archive Journal, 12(1), 5-8. https://doi.org/10.1000/old")
+        wrong = {"doi": "10.1000/old", "title": "Transactions in horticulture",
+                 "authors": ["Other"], "year": 2020}
+        plausible = {"doi": "10.1000/first", "title": "Evidence travels across archives",
+                     "authors": ["Doe"], "year": 2020}
+        with mock.patch.object(rd, "crossref_by_doi_cached", return_value=wrong), \
+                mock.patch.object(rd, "crossref_search", return_value=[plausible]), \
+                mock.patch.object(rd, "openalex_search", return_value=[
+                    dict(plausible, doi="10.1000/second")]), \
+                mock.patch.object(rd, "landing_metadata") as landing, \
+                mock.patch.object(rd, "resolve_copy") as copy:
+            record = rd.process(entry, self.root, True, "")
+        self.assertEqual(record["identity"], "bibliographic_conflict")
+        self.assertEqual(record["doi"], "")
+        self.assertIn("multiple matching replacement DOIs", " ".join(record["notes"]))
+        landing.assert_not_called()
+        copy.assert_not_called()
+
+    def test_doi_transport_failure_with_no_match_is_incomplete(self):
+        entry = ("Doe, J. (2020). Evidence travels across archives. "
+                 "Archive Journal, 12(1), 5-8. https://doi.org/10.1000/old")
+        with mock.patch.object(rd, "crossref_by_doi_cached", side_effect=TimeoutError), \
+                mock.patch.object(rd, "crossref_search", return_value=[]), \
+                mock.patch.object(rd, "openalex_search", return_value=[]):
+            record = rd.process(entry, self.root, False, "")
+        self.assertEqual(record["submitted_doi_check"]["status"], "lookup_failed")
+        self.assertEqual(record["identity"], "search_incomplete")
+        self.assertEqual(record["doi"], "")
 
     def test_a_keyed_provider_429_is_recorded_without_a_retry_ladder(self):
         calls = []

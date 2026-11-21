@@ -45,12 +45,15 @@ def _row(number, entry, fetch=True, mailto=""):
     row = {"id": f"R{number}", "entry": text, "url": link,
            "link_class": ha.classify_media_link(text, link),
            "fetch": None, "host": None, "identity": "", "doi": "",
-           "kind": "", "notes": []}
+           "kind": "", "submitted_doi": dois[0] if dois else "", "notes": []}
     try:
         record = rd.process(text, os.path.dirname(os.path.abspath(__file__)),
                             attempt=False, mailto=mailto)
         row["identity"] = record.get("identity") or ""
         row["doi"] = record.get("doi") or ""
+        row["submitted_doi"] = record.get("submitted_doi") or row["submitted_doi"]
+        if record.get("submitted_doi_check"):
+            row["submitted_doi_check"] = record["submitted_doi_check"]
         row["kind"] = record.get("kind") or ""
         row["notes"] = list(record.get("notes") or [])
     except Exception as exc:  # noqa: BLE001
@@ -78,7 +81,7 @@ def markdown(rows, paper, cache):
              f"Checked: {ha.now()}",
              f"Cache: {cache}",
              "Transport: resolver adapters; link fetcher with curl fallback", "",
-             "| R | Entry | Kind | Identity | DOI | Link | Fetch | Host | Notes |",
+             "| R | Entry | Kind | Identity | Submitted DOI | DOI check | Resolved DOI | Link | Fetch | Host | Notes |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:
         notes = "; ".join(row.get("notes") or [])[:120].replace("|", "/")
@@ -87,6 +90,8 @@ def markdown(rows, paper, cache):
         lines.append(
             f"| {row['id']} | {row['entry'][:70].replace('|', '/')} | "
             f"{row['kind'] or '-'} | {row['identity'] or '-'} | "
+            f"{row.get('submitted_doi') or '-'} | "
+            f"{row.get('submitted_doi_check', {}).get('status', '-')} | "
             f"{row['doi'] or '-'} | {row['link_class']} | {_fetch_label(row)} | "
             f"{host_label} | {notes or '-'} |")
     identities = {}
