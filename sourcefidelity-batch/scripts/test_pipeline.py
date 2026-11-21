@@ -35,6 +35,7 @@ import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import docx_text as dt  # noqa: E402
+import source_scope as scope  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
@@ -215,13 +216,55 @@ class ScopeTests(unittest.TestCase):
         result = sr.assess_scope([75, 116], self.rows(range(75, 117)), 0.9)
         self.assertEqual(result["status"], "adequate")
 
-    def test_partial_scope(self):
+    def test_partial_scope_is_unresolved(self):
         result = sr.assess_scope([75, 116], self.rows(range(75, 81)), 0.9)
-        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["status"], "unresolved")
 
-    def test_absent_scope(self):
+    def test_pages_outside_the_span_do_not_establish_absence(self):
         result = sr.assess_scope([41, 65], self.rows(range(117, 140)), 0.9)
-        self.assertEqual(result["status"], "absent")
+        self.assertEqual(result["status"], "unresolved")
+        self.assertIn("missing", result["reason"])
+
+    def test_batch_attaches_copy_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "_sources", "R1")
+            os.makedirs(source)
+            with open(os.path.join(source, "pages.csv"), "w", encoding="utf-8") as handle:
+                handle.write("pdf_page,printed_folio,source,confidence,chars,words\n")
+                for page in range(57, 83):
+                    handle.write(f"{page},{page},native,1.0,10,2\n")
+            text = os.path.join(source, "text.txt")
+            with open(text, "w", encoding="utf-8") as handle:
+                handle.write("text\n")
+            book = os.path.join(tmp, "book.pdf")
+            with open(book, "wb") as handle:
+                handle.write(b"%PDF-1.4")
+            registry = {"R1": {"page_range": [57, 82], "extraction": text,
+                               "supplied_file": book,
+                               "work_kind": "chapter_edited_collection",
+                               "identity_status": "supplied_confirmed",
+                               "verified_by": "supplied copy: first-page title tokens",
+                               "match": {"author": True, "year": True,
+                                         "title_coverage": 1.0, "chapter_coverage": None,
+                                         "later_edition": False}}}
+            sr.apply_scope(registry, tmp)
+        self.assertEqual(registry["R1"]["scope"]["status"], "adequate")
+        self.assertTrue(registry["R1"]["copy_observation"]["sha256"])
+        self.assertIn("chapter membership not checked",
+                      registry["R1"]["copy_observation"]["unknowns"])
+
+    def test_copy_observation_records_unknowns_and_scope(self):
+        record = {"supplied_file": "/tmp/book.pdf", "work_kind": "chapter_edited_collection",
+                  "verified_by": "supplied copy: first-page title tokens",
+                  "identity_status": "supplied_confirmed",
+                  "match": {"author": True, "year": False, "title_coverage": 1.0,
+                            "chapter_coverage": None, "later_edition": False},
+                  "scope": {"status": "unresolved", "reason": "no printed page evidence"}}
+        observation = sr.copy_observation(record, "abc")
+        self.assertEqual(observation["sha256"], "abc")
+        self.assertIn("copy year not corroborated", observation["unknowns"])
+        self.assertIn("chapter membership not checked", observation["unknowns"])
+        self.assertEqual(observation["scope"]["status"], "unresolved")
 
     def test_unreliable_map_without_pages_is_unresolved(self):
         result = sr.assess_scope([41, 65], [], 0.125)
@@ -3335,6 +3378,26 @@ class ResolveDoisTests(unittest.TestCase):
         self.assertIn("no record count", detail)
 
 
+class CopyScopeObservationTests(unittest.TestCase):
+    def test_saved_pdf_gets_a_shared_scope_observation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = os.path.join(tmp, "article.pdf")
+            with open(pdf, "wb") as handle:
+                handle.write(b"%PDF-1.4")
+            record = {"entry": "Journal, 28(2), 501-510.", "kind": "article",
+                      "parsed": {"authors": "Author", "title": "Article"},
+                      "copy": {"pdf": pdf, "pages": 10}}
+            pages = [{"pdf_page": number, "printed": str(500 + number),
+                      "text": "text"} for number in range(1, 11)]
+            offset = {"arabic_offset": 0, "coverage": 1.0, "observed": 10,
+                      "corroborated": True, "method": "test", "deltas": {}}
+            with mock.patch.object(rd.page_map, "read_pages", return_value=pages), \
+                    mock.patch.object(rd.page_map, "infer_offset", return_value=offset), \
+                    mock.patch.object(rd.page_map, "assign_printed", return_value=None):
+                rd.observe_copy_scope(record)
+        self.assertEqual(record["copy"]["scope"]["status"], "adequate")
+
+
 class HyperlinkAuditTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -4389,6 +4452,65 @@ class DocxFormattingTests(unittest.TestCase):
             data = ec.build(self._write_docx(tmp, body), "sample")
         self.assertEqual([(row["paragraph_id"], row["signals"])
                           for row in data["uncited_candidates"]], [("P1", ["name"])])
+
+
+class SourcePackObservationTests(unittest.TestCase):
+    def test_observation_records_hash_mapping_and_unknowns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "_work", "sources", "R1")
+            os.makedirs(source)
+            with open(os.path.join(source, "meta.json"), "w", encoding="utf-8") as handle:
+                json.dump({"source_file": "/tmp/book.pdf", "sha256": "abc123",
+                           "first_page_head": "A Book 2018",
+                           "pdf_metadata": {"title": "A Book", "author": "A. Author"},
+                           "gaps": []}, handle)
+            with open(os.path.join(source, "text.txt"), "w", encoding="utf-8") as handle:
+                for page in range(57, 83):
+                    handle.write(f"=== PDF p{page} | printed p{page} | native | conf 1.0 ===\n")
+                    handle.write(f"text of page {page}\n")
+            observation = sp._observe(
+                {"text": "Author, A. (2018). A Book. In Collection (pp. 57-82)."},
+                {"dir": source}, "override")
+            self.assertEqual(observation["source_hash"], "abc123")
+            self.assertEqual(observation["mapping"], "override")
+            self.assertEqual(observation["status"], "adequate")
+            self.assertEqual(observation["observed"]["title"], "A Book")
+            self.assertTrue(os.path.exists(os.path.join(source, "observation.json")))
+
+
+class SourceScopeTests(unittest.TestCase):
+    def test_cited_page_range(self):
+        self.assertEqual(scope.cited_page_range("Journal, 28(2), 501-523."), (501, 523))
+        self.assertEqual(scope.cited_page_range("In Book (pp. 57–82)."), (57, 82))
+        self.assertIsNone(scope.cited_page_range("Published 1999–2003."))
+
+    def test_adequate_copy_covers_the_cited_range(self):
+        pages = [{"printed": str(number), "text": "text"} for number in range(501, 511)]
+        observation = scope.assess_reference_scope(
+            "Journal, 28(2), 501-510.", pages)
+        self.assertEqual(observation["status"], "adequate")
+        self.assertTrue(observation["absence_allowed"])
+
+    def test_preview_and_front_matter_do_not_support_absence(self):
+        pages = [{"printed": value, "text": "Preview sample"}
+                 for value in ("i", "ii", "iii", "iv")]
+        observation = scope.assess_reference_scope("In Book (pp. 57-82).", pages)
+        self.assertEqual(observation["status"], "inadequate")
+        self.assertFalse(observation["absence_allowed"])
+
+    def test_incomplete_scan_is_unresolved(self):
+        pages = [{"printed": str(number), "text": "text"}
+                 for number in [195, 196, 197, 198, 199, 200, 205, 206]]
+        observation = scope.assess_reference_scope("Journal, 195-211.", pages)
+        self.assertEqual(observation["status"], "unresolved")
+        self.assertFalse(observation["absence_allowed"])
+
+    def test_script_variant_is_unresolved(self):
+        pages = [{"printed": "1", "text": "Телевидение без границ " * 20}]
+        observation = scope.assess_reference_scope(
+            "Television without Frontiers, 1-10.", pages)
+        self.assertEqual(observation["status"], "unresolved")
+        self.assertIn("script", observation["reason"])
 
 
 class ReferenceSpeedupTests(unittest.TestCase):

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import os as _bootstrap_os
 import sys as _bootstrap_sys
@@ -42,6 +43,7 @@ sys.path.insert(0, REVIEW_SCRIPTS)
 
 import acquisition_list  # noqa: E402
 import detect_structure  # noqa: E402
+import source_scope  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -557,41 +559,75 @@ def extraction_index(root):
 
 
 def assess_scope(page_range, rows, map_coverage=None):
-    """Check whether an extraction reaches the cited page range.
-
-    `rows` are pages.csv records with `printed_folio` and `words`. A low map
-    coverage plus no observed page in range is unresolved, not absence: a
-    chapter offprint can be complete without visible folios.
-    """
+    """Shared scope observation for a batch record's cited page span."""
     expected = numeric_range(page_range)
     if not expected:
         return {"status": "not_required", "reason": "no_cited_page_range",
                 "expected": [], "covered": 0, "coverage": 0.0}
     start, end = expected
-    observed = set()
-    for row in rows:
+    pages = [{"printed": str(row.get("printed_folio") or ""), "text": ""}
+             for row in rows]
+    meta = {"offset": {"coverage": map_coverage}} if map_coverage is not None else {}
+    observation = source_scope.assess_page_span(start, end, pages, meta)
+    covered = sum(1 for row in rows
+                  if (str(row.get("words") or "").isdigit()
+                      and int(row["words"]) > 0
+                      and str(row.get("printed_folio") or "").isdigit()
+                      and start <= int(row["printed_folio"]) <= end))
+    return {"status": observation["status"], "reason": observation["reason"],
+            "expected": [start, end], "covered": covered,
+            "coverage": round(covered / (end - start + 1), 3)}
+
+
+def _digest(path, cache):
+    if path not in cache:
+        digest = hashlib.sha256()
         try:
-            page = int(row.get("printed_folio") or "")
-            words = int(row.get("words") or 0)
-        except ValueError:
-            continue
-        if start <= page <= end and words > 0:
-            observed.add(page)
-    coverage = len(observed) / (end - start + 1)
-    base = {"expected": expected, "covered": len(observed),
-            "coverage": round(coverage, 3)}
-    if map_coverage is not None and map_coverage < 0.5 and coverage < 0.5:
-        return {"status": "unresolved", "reason": "page_map_unreliable", **base}
-    if coverage >= 0.8:
-        return {"status": "adequate", "reason": "cited_pages_present", **base}
-    if observed:
-        return {"status": "partial", "reason": "some_cited_pages_missing", **base}
-    return {"status": "absent", "reason": "cited_pages_absent", **base}
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                cache[path] = digest.hexdigest()
+        except OSError:
+            cache[path] = ""
+    return cache[path]
+
+
+def copy_observation(record, digest=""):
+    """Small shared observation for one supplied copy."""
+    match = record.get("match") or {}
+    scope = record.get("scope") or {}
+    unknowns = []
+    if not match.get("author"):
+        unknowns.append("copy author not corroborated")
+    if not match.get("year"):
+        unknowns.append("copy year not corroborated")
+    if match.get("chapter_coverage") is None and str(
+            record.get("work_kind", "")).startswith("chapter"):
+        unknowns.append("chapter membership not checked")
+    if scope.get("status") in {"unresolved", "inadequate"}:
+        unknowns.append(scope.get("reason") or "copy coverage unresolved")
+    return {
+        "source_file": record.get("supplied_file", ""),
+        "sha256": digest,
+        "scope_kind": record.get("work_kind", ""),
+        "mapping": record.get("verified_by", ""),
+        "identity_status": record.get("identity_status", ""),
+        "observed": {
+            "author": bool(match.get("author")),
+            "year": bool(match.get("year")),
+            "title_coverage": match.get("title_coverage"),
+            "chapter_coverage": match.get("chapter_coverage"),
+            "edition": "later" if match.get("later_edition") else "unspecified",
+        },
+        "scope": scope,
+        "unknowns": unknowns,
+    }
 
 
 def apply_scope(registry, root):
     """Attach a cited-component scope status to every record with a range."""
     cache = {}
+    digests = {}
     for record in registry.values():
         extraction = record.get("extraction") or ""
         page_range = record.get("page_range") or []
@@ -612,6 +648,10 @@ def apply_scope(registry, root):
                 cache[directory] = []
         map_coverage = (record.get("page_map") or {}).get("coverage")
         record["scope"] = assess_scope(page_range, cache[directory], map_coverage)
+    for record in registry.values():
+        if record.get("supplied_file"):
+            record["copy_observation"] = copy_observation(
+                record, _digest(record["supplied_file"], digests))
 
 
 def structure_for(root, record):

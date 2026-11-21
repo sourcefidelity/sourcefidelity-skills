@@ -36,6 +36,7 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `public_fetch.py` | Shared transport for audits, downloads, batch retrieval and DOI acquisition. Pins a public address and verifies the connected peer before HTTP or TLS on each hop. Applies redirect, request and response limits. |
 | `hyperlink_audit.py` | Records submitted locator forms and fetch outcomes per reference. Stores archive locations separately. |
 | `docx_text.py`, `word_count.py` | Paragraph text and counts from the original DOCX. |
+| `source_scope.py` | Shared copy-scope observation: cited page range versus observed printed pages, previews, front matter, incomplete scans and script variants. |
 | `update_check.py` | Weekly release check; prints one line when an update is due. |
 
 Public-content fetches use direct connections with the original hostname for TLS.
@@ -69,7 +70,7 @@ fetch cache.
 
 ### Batch
 
-A source folder plus a folder of papers. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures.
+A source folder plus a folder of papers. Each supplied copy carries the shared `source_scope` observation, including its source hash, mapping decision, observed match evidence and unknowns. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures.
 
 ### Reappraisal
 
@@ -98,6 +99,7 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 - **Source states are distinct.** `verified`, `blocked`, `dead`, `record-only` and `absent` are different outcomes. A blocked or dead link is not a formatting defect; an unretrieved source is `not judged`, not "not supported".
 - **Findings.** Category A is a formatting/mechanical defect; Category B is a substantive use problem. Outcomes are `Supports`, `Qualified`, `Contradicts`, `Not Supported` and `Not Judged`. A claim the retrieved evidence cannot decide stays `Not Judged`.
 - **No absence without a completed route.** "Could not be found" is only sayable after the protocol's required routes ran; access restrictions and operational failures are `search_incomplete`.
+- **Copy coverage.** Identity does not prove that a copy contains the cited component. A preview, front-matter-only copy, incomplete scan or non-Latin script variant is a coverage limitation; only an `adequate` copy-scope observation permits an absence conclusion.
 - **Provider pacing.** Review discovery, open-access lookup and batch adapters share local per-provider request slots and Retry-After cooldowns. The pacing store holds only provider keys and timestamps. Waits occur outside its transactions.
 - **Identity request budget.** Each reference shares a cooperative elapsed budget across metadata pacing, socket timeouts and retry waits. Provider waits that exceed the remaining budget are skipped. Copy retrieval has its own timeouts.
 - **Identity cache.** Citation verdicts are keyed by normalized citation text. Completed misses use the same TTL as matches; incomplete searches are retried. Provider metadata keyed by DOI remains reusable across distinct citations.

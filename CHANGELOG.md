@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Reasoning levels in the plan.** `docs/PLAN.md` now shows the reasoning
+  level to set before starting each row, with the escalation rule; `AGENTS.md`
+  points to it.
+
+- **Shared copy-scope observation (R15).** `source_scope.py` compares the
+  cited page range with observed printed pages and flags previews, front-matter
+  samples, incomplete scans and script variants. The source pack index, batch
+  registry/task and resolver accession record it; only an `adequate` observation
+  permits an absence conclusion. Reappraisal consumption remains.
+
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer
   checks, request budgets and response caps across audits, downloads, DOI

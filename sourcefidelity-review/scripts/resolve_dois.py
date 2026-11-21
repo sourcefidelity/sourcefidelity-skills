@@ -40,8 +40,10 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import page_map  # noqa: E402
 import provider_pacing  # noqa: E402
 import public_fetch  # noqa: E402
+import source_scope  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -1788,6 +1790,27 @@ def doi_verdict(parsed, meta, kind, match=None):
     return verdict, evidence
 
 
+def observe_copy_scope(record):
+    """Attach a shared copy-scope observation to a saved PDF record."""
+    copy = record.get("copy")
+    if not isinstance(copy, dict):
+        return
+    pdf = copy.get("pdf")
+    if not pdf or not os.path.isfile(pdf):
+        return
+    try:
+        pages = page_map.read_pages(pdf)
+        offset = page_map.infer_offset(pages)
+        page_map.assign_printed(pages, offset)
+        copy["scope"] = source_scope.assess_reference_scope(
+            record.get("entry", ""),
+            [{"printed": page.get("printed", ""), "text": page.get("text", "")}
+             for page in pages],
+            {"offset": offset}, scope_kind=record.get("kind", ""))
+    except Exception as exc:  # noqa: BLE001 - an observation failure is a limitation
+        copy["scope_error"] = type(exc).__name__
+
+
 def process(entry, out_dir, attempt, mailto, check_contents=False):
     try:
         budget = _reference_budget()
@@ -1806,6 +1829,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["copy"] = resolve_copy(record["doi"], out_dir, mailto)
         except Exception as exc:  # noqa: BLE001
             record["copy"] = {"error": f"{type(exc).__name__}: {exc}"}
+        observe_copy_scope(record)
     return record
 
 
@@ -2060,6 +2084,11 @@ def markdown(records, source):
         copy = record.get("copy") or {}
         if copy.get("pdf"):
             got = f"PDF saved ({copy.get('pages') or '?'} pp., {copy.get('bytes')} B)"
+            scope = copy.get("scope") or {}
+            if scope.get("status"):
+                got += f"; scope {scope['status']}"
+                if scope.get("reason"):
+                    got += f" ({scope['reason']})"
         elif copy.get("status"):
             got = f"HTTP {copy['status']}, {copy.get('content_type') or 'no PDF'}"
         else:

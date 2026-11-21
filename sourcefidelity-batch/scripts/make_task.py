@@ -394,6 +394,8 @@ def main():
             "scope_status": (rec.get("scope") or {}).get("status", ""),
             "scope_coverage": (rec.get("scope") or {}).get("coverage", 0.0),
             "scope_reason": (rec.get("scope") or {}).get("reason", ""),
+            "copy_observation": (obj.get("copy_observation")
+                                 or rec.get("copy_observation") or {}),
             "restrict_pages": bool(rec.get("restrict_pages")),
             "structure_page_conflict": rec.get("structure_page_conflict", ""),
             "structure_correction": rec.get("structure_correction", ""),

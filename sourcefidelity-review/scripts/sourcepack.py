@@ -31,6 +31,7 @@ sys.path.insert(0, HERE)
 import hyperlink_audit as ha  # noqa: E402
 import pdf_quality  # noqa: E402
 import resolve_dois as rd  # noqa: E402
+import source_scope  # noqa: E402
 
 PREPARE = os.path.join(HERE, "prepare_source.py")
 DOC_TYPES = (".pdf",)
@@ -145,7 +146,55 @@ def _printed_range(source_dir):
     return f"{min(printed)}-{max(printed)}"
 
 
-def index_rows(refs, mapping, results):
+def _observe(entry, result, why=""):
+    """Copy observation from prepare_source's text, pages and meta."""
+    source_dir = (result or {}).get("dir")
+    if not source_dir:
+        return None
+    meta = {}
+    try:
+        with open(os.path.join(source_dir, "meta.json"), encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, ValueError):
+        pass
+    pages = [{"printed": printed, "text": text}
+             for _number, printed, text in pages_of(os.path.join(source_dir, "text.txt"))]
+    parsed = rd.parse_reference(entry["text"])
+    observation = source_scope.assess_reference_scope(
+        entry["text"], pages, meta, scope_kind=rd.entry_kind(entry["text"], parsed))
+    head = str(meta.get("first_page_head") or "")
+    metadata = meta.get("pdf_metadata") or {}
+    year = re.search(r"\b((?:19|20)\d{2})\b", head)
+    edition = re.search(r"\b(\d+)(?:st|nd|rd|th)?\s+edition\b|\bedition\b",
+                        head, re.IGNORECASE)
+    observed = {
+        "title": str(metadata.get("title") or "").strip(),
+        "author": str(metadata.get("author") or "").strip(),
+        "year": year.group(1) if year else "",
+        "edition": edition.group(0) if edition else "",
+    }
+    unknowns = [f"{field} not observed in the copy" for field, value in observed.items()
+                if not value]
+    if observation.get("status") in {"unresolved", "inadequate"}:
+        unknowns.append(observation.get("reason") or "copy coverage unresolved")
+    observation.update({
+        "source_file": meta.get("source_file", ""),
+        "source_hash": meta.get("sha256", ""),
+        "mapping": why,
+        "observed": observed,
+        "unknowns": unknowns,
+    })
+    try:
+        with open(os.path.join(source_dir, "observation.json"), "w",
+                  encoding="utf-8", newline="\n") as handle:
+            json.dump(observation, handle, ensure_ascii=False, indent=1)
+    except OSError:
+        pass
+    return observation
+
+
+def index_rows(refs, mapping, results, observations=None):
+    observations = observations or {}
     rows = []
     for number, entry in enumerate(refs, start=1):
         ref_id = f"R{number}"
@@ -155,11 +204,16 @@ def index_rows(refs, mapping, results):
                          "path": "", "status": "unmapped", "printed": ""})
             continue
         result = results.get(ref_id, {})
+        observation = observations.get(ref_id) or {}
         rows.append({"ref": ref_id, "entry": entry["text"][:90],
                      "path": item["path"], "why": item.get("why", ""),
                      "score": item.get("score"), "status": result.get("status", ""),
                      "dir": result.get("dir", ""),
-                     "printed": _printed_range(result.get("dir", ""))})
+                     "printed": _printed_range(result.get("dir", "")),
+                     "scope": observation.get("status", ""),
+                     "scope_reason": observation.get("reason", ""),
+                     "absence_allowed": observation.get("absence_allowed", False),
+                     "copy_observation": observation})
     return rows
 
 
@@ -167,15 +221,16 @@ def write_index(out, rows, unmapped_files=()):
     base = os.path.join(out, "_work", "sourcepack")
     os.makedirs(base, exist_ok=True)
     lines = ["# Source pack", "",
-             "| Ref | Entry | File | Match | Status | Printed | Text |",
-             "| --- | --- | --- | --- | --- | --- | --- |"]
+             "| Ref | Entry | File | Match | Status | Printed | Scope | Text |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:
         text = os.path.join(row.get("dir") or "", "text.txt")
         link = os.path.relpath(text, out) if row.get("dir") else "-"
         lines.append(f"| {row['ref']} | {row['entry']} | "
                      f"{os.path.basename(row['path']) or '-'} | "
                      f"{row.get('why') or '-'} | {row['status'] or '-'} | "
-                     f"{row.get('printed') or '-'} | {link} |")
+                     f"{row.get('printed') or '-'} | "
+                     f"{row.get('scope') or '-'} | {link} |")
     if unmapped_files:
         lines.extend(["", "## Unmapped PDFs", ""])
         lines.extend(f"- {path}" for path in unmapped_files)
@@ -283,7 +338,12 @@ def main(argv=None):
     if not args.no_extract:
         for ref_id, item in mapping.items():
             results[ref_id] = extract(ref_id, item["path"], args.out, args.ocr_pages)
-    rows = index_rows(refs, mapping, results)
+    observations = {ref_id: observation
+                    for ref_id, item in mapping.items()
+                    if (observation := _observe(refs[int(ref_id[1:]) - 1],
+                                                results.get(ref_id),
+                                                mapping[ref_id].get("why", "")))}
+    rows = index_rows(refs, mapping, results, observations)
     mapped_paths = {os.path.abspath(item["path"]) for item in mapping.values()}
     unmapped_files = [path for path in files if os.path.abspath(path) not in mapped_paths]
     write_index(args.out, rows, unmapped_files)
@@ -292,7 +352,8 @@ def main(argv=None):
     for row in rows:
         print(f"  {row['ref']}: {os.path.basename(row['path']) or '-'} "
               f"[{row['status'] or row.get('why', '')}] "
-              f"printed {row.get('printed') or '—'}")
+              f"printed {row.get('printed') or '—'} "
+              f"scope {row.get('scope') or '—'}")
     return 0
 
 

@@ -67,7 +67,7 @@ The default is a development install, not a release:
 
 `--dev` copies the current checkout and records `channel: dev`; `--link` points the installed skill folders at the checkout so edits are live (add `--force` to replace existing folders; this removes their venv). Neither bumps `VERSION`, tags, or touches `latest.json`.
 
-Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Unreleased`. During development `VERSION` may stay at the last release or use the next version with `-dev` (for example `1.1.3-dev`); the base must be ahead of `latest.json`. Release only a batch: strip `-dev`, close `## Unreleased`, then follow **Verification and release**.
+Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Unreleased`. During development `VERSION` may stay at the last release or use the next version with `-dev` (for example `1.1.3-dev`); the base must be ahead of `latest.json`. Release only a batch: strip `-dev`, close `## Unreleased`, then follow **Verification and release**. Before starting a row, set the reasoning level shown in `docs/PLAN.md`; escalate to Max only for that row's decisions, not its mechanical implementation.
 
 ## Documentation maintenance
 
