@@ -435,11 +435,18 @@ def _policy_reason(url, mode):
             else public_fetch.refusal(url, public_fetch.resolve))
 
 
+def _redirected_home(url, final):
+    original_path = urllib.parse.urlsplit(url).path.rstrip("/")
+    final_path = urllib.parse.urlsplit(final or "").path.rstrip("/")
+    return bool(original_path and not final_path)
+
+
 def _cached_state(url, mode="strict"):
     if http_cache is None:
         return None
     hit = http_cache.cache_get("public-fetch-v2:" + url)
-    if not hit or _policy_reason(hit["final"], mode):
+    if (not hit or _policy_reason(hit["final"], mode)
+            or _redirected_home(url, hit["final"])):
         return None
     body = hit["body"]
     saved = _save_body(body, hit["content_type"], hit["final"])
@@ -483,6 +490,10 @@ def fetch_state(url, timeout=10):
     text = body[:20000].decode("utf-8", "replace").lower()
     if "sign in" in text or "log in" in text or "captcha" in text:
         return {**detail, "state": "login-page", "detail": final[:160],
+                "environment": False}
+    if status == 200 and _redirected_home(url, final):
+        return {**detail, "state": "dead",
+                "detail": f"redirected to site home: {final[:160]}",
                 "environment": False}
     if http_cache is not None and not fetched["truncated"]:
         http_cache.cache_put("public-fetch-v2:" + url, "ok", status, final, content_type, body)

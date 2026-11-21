@@ -1702,7 +1702,7 @@ class AutoFetchTests(unittest.TestCase):
         self.assertEqual(result["limitation"], "private_host")
 
     def test_auto_link_audit_records_a_verified_state(self):
-        fake = {"status": 200, "final_url": "https://example.org/",
+        fake = {"status": 200, "final_url": "https://example.org/x",
                 "redirects": [], "truncated": False, "limitation": "",
                 "content_type": "text/html", "bytes": 10, "body": b"<html>ok</html>"}
         with mock.patch.dict(os.environ, {"SOURCEFIDELITY_FETCH_MODE": "auto"}), \
@@ -3802,6 +3802,16 @@ class HyperlinkAuditTests(unittest.TestCase):
                                side_effect=urllib.error.HTTPError("u", 404, "no", {}, None)):
             self.assertFalse(ha.fetch_state("https://example.org/x")["environment"])
 
+    def test_redirect_to_site_home_is_not_a_verified_article(self):
+        response = FetchPolicyTests.Response(
+            200, {"Content-Type": "text/html"}, b"<html>home</html>",
+            "https://example.org/")
+        with mock.patch.object(ha.public_fetch, "transport", return_value=response):
+            state = ha.fetch_state("https://example.org/article")
+        self.assertEqual(state["state"], "dead")
+        self.assertIn("site home", state["detail"])
+        self.assertFalse(state["environment"])
+
     def test_login_page_is_not_counted_as_working(self):
         response = FetchPolicyTests.Response(200, {"Content-Type": "text/html"},
                                              b"<html>please sign in</html>",
@@ -4920,6 +4930,19 @@ class FindingCountsTests(unittest.TestCase):
     def test_counts_fall_back_when_no_finding_ids_carry_categories(self):
         findings = {"summary": {"category_a": ["one", "two"], "category_b": ["three"]}}
         self.assertEqual(fc.render_counts(findings), {"A": 2, "B": 1, "HL": 0})
+
+    def test_review_protocol_judgment_rules_are_aligned(self):
+        root = Path(__file__).resolve().parents[2]
+        for skill in ("sourcefidelity-review", "sourcefidelity-batch",
+                      "sourcefidelity-reappraise"):
+            text = (root / skill / "REVIEW_PROTOCOL.md").read_text(encoding="utf-8")
+            self.assertIn("Running-head renditions", text)
+            self.assertIn("Reported viewpoints", text)
+            self.assertIn("redirect to a site home", text)
+
+    def test_home_redirect_is_not_a_verified_page(self):
+        self.assertTrue(ha._redirected_home("https://example.org/a", "https://example.org/"))
+        self.assertFalse(ha._redirected_home("https://example.org/a", "https://example.org/a"))
 
     def test_hyperlink_rules_are_aligned_across_protocols(self):
         root = Path(__file__).resolve().parents[2]
