@@ -24,6 +24,9 @@ def fetch(url, provider, accept="text"):
         return {"status": 0, "limitation": "provider_cooldown", "final_url": url}
     result = safe_fetch.fetch(url)
     pacing.observe(pace_key, result.get("status"), result.get("retry_after"))
+    if result.get("truncated"):
+        result["limitation"] = "response_limit"
+        result["text"] = ""
     if accept == "json" and result.get("text"):
         try:
             result["json"] = json.loads(result["text"])

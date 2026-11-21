@@ -32,9 +32,17 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `resolve_dois.py` | Reference identity: submitted DOI check before bounded title/author fallback, separate submitted and resolved identifiers, archive routing. |
 | `sourcepack.py` | Proposes unique PDF mappings from first-page title and author evidence or a strong filename, honours explicit overrides, and indexes the extracts by printed page. |
 | `openfetch.py` | Best-effort open-access copies from OpenAlex and CORE, with attempted CORE queries and access outcomes in the index. |
-| `fetch.py` | One URL, curl then urllib on 401/403/429, with 24-hour host-state memory. |
+| `fetch.py` | One public URL download with 24-hour host-state memory. |
+| `public_fetch.py` | Shared transport for audits, downloads, batch retrieval and DOI acquisition. Pins a public address and verifies the connected peer before HTTP or TLS on each hop. Applies redirect, request and response limits. |
+| `hyperlink_audit.py` | Records submitted locator forms and fetch outcomes per reference. Stores archive locations separately. |
 | `docx_text.py`, `word_count.py` | Paragraph text and counts from the original DOCX. |
 | `update_check.py` | Weekly release check; prints one line when an update is due. |
+
+Public-content fetches use direct connections with the original hostname for TLS.
+Proxy settings and synthetic DNS addresses cannot establish the origin peer for
+this policy. DNS uses the system resolver. Fixed provider metadata APIs keep
+their own pacing and transport. Only complete DOI downloads enter the new
+fetch cache.
 
 ### batch
 

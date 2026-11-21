@@ -221,6 +221,8 @@ def text_store(root, url, result):
              "truncated", "limitation", "error")}
     meta["requested_url"] = meta.get("requested_url") or url
     meta["classification"] = result.get("classification") or classify_text(body)
+    if meta["truncated"]:
+        meta.update(classification="unreadable", limitation="response_limit")
     meta["text_chars"] = len(body)
     meta["stored_at"] = time.time()
     with open(os.path.join(folder, "meta.json"), "w", encoding="utf-8") as handle:

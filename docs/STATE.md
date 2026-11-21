@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
-| Test suites | 339 pipeline tests run on the development branch, one skipped. Style and PDF suites report no failures. |
+| Test suites | 349 pipeline tests, one skipped. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,14 +21,14 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 338 passed, one skipped |
+| Pipeline regressions | `test_pipeline.py` | 348 passed, one skipped |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
 | Source pack | Television run's supplied folder (`wilkins1991.pdf`) | Mapped, extracted in ~1 s, printed range 195–211; phrase search returned p. 201 |
-| Dual-client fetch | Middleton landing page (curl 403, urllib 200) and a remembered blocked host | Saved through urllib; blocked host refused without retry |
+| Submitted links and fetch policy | Fixtures, five local DOCXs, public probes | 54 locators across 97 references. Peer checks passed. Crossref capped at 2,048 bytes. DOI landing returned HTTP 200. |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
 | Windows installer component checks | Downloaded the published v1.1.2 asset, checked SHA-256 against `latest.json`, extracted it with macOS `tar --strip-components=1`, and ran the archive’s Python checker against local release metadata and UTF-8 BOM install records | The archive digest matched, the bundle extracted, an installed 1.1.1 produced the update notice, and 1.1.2 read back as stable with stamp `sourcefidelity-review v1.1.2`. These checks used macOS tools. |

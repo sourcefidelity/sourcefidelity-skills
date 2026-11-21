@@ -40,17 +40,22 @@ def _cache_label():
 def _row(number, entry, fetch=True, mailto=""):
     """Identity and link state for one reference entry."""
     text = entry.get("text") or ""
-    urls, dois = ha.entry_links(entry)
-    link = urls[0] if urls else (f"https://doi.org/{dois[0]}" if dois else "")
+    _, dois = ha.entry_links(entry)
+    locators = ha.submitted_locators(entry)
+    link = locators[0]["url"] if locators else ""
     row = {"id": f"R{number}", "entry": text, "url": link,
            "link_class": ha.classify_media_link(text, link),
            "fetch": None, "host": None, "identity": "", "doi": "",
-           "kind": "", "submitted_doi": dois[0] if dois else "", "notes": []}
+           "kind": "", "submitted_doi": dois[0] if dois else "", "notes": [],
+           "submitted_locators": locators, "alternative_locations": []}
     try:
         record = rd.process(text, os.path.dirname(os.path.abspath(__file__)),
                             attempt=False, mailto=mailto)
         row["identity"] = record.get("identity") or ""
         row["doi"] = record.get("doi") or ""
+        if row["doi"] and row["doi"].casefold() != (record.get("submitted_doi") or "").casefold():
+            row["alternative_locations"].append({
+                "url": f"https://doi.org/{row['doi']}", "origin": "resolved_doi"})
         row["submitted_doi"] = record.get("submitted_doi") or row["submitted_doi"]
         if record.get("submitted_doi_check"):
             row["submitted_doi_check"] = record["submitted_doi_check"]
@@ -59,9 +64,13 @@ def _row(number, entry, fetch=True, mailto=""):
     except Exception as exc:  # noqa: BLE001
         row["notes"].append(f"resolver error: {type(exc).__name__}")
     if fetch and link and row["link_class"] != "not-linkable":
-        row["fetch"] = ha.fetch_state(link, timeout=8)
+        for locator in locators:
+            if ha.classify_media_link(text, locator["url"]) != "non-permanent" or ha.is_course_platform(locator["url"]):
+                locator["fetch"] = ha.fetch_state(locator["url"], timeout=8)
+        row["fetch"] = locators[0]["fetch"]
         if http_cache is not None:
-            http_cache.host_note(link, (row["fetch"] or {}).get("state"))
+            if row["fetch"]:
+                http_cache.host_note(link, row["fetch"].get("state"))
             row["host"] = http_cache.host_known(link)
     return row
 
@@ -80,7 +89,7 @@ def markdown(rows, paper, cache):
     lines = [f"# Source dossier — {paper}", "",
              f"Checked: {ha.now()}",
              f"Cache: {cache}",
-             "Transport: resolver adapters; link fetcher with curl fallback", "",
+             "Transport: resolver adapters; public URL fetch policy", "",
              "| R | Entry | Kind | Identity | Submitted DOI | DOI check | Resolved DOI | Link | Fetch | Host | Notes |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:

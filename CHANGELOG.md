@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Submitted links.** Record original locator forms and outcomes separately
+  from alternative copies. Share redirect and connected-peer
+  checks, request budgets and response caps across audits, downloads, DOI
+  acquisition and batch retrieval.
+
 - **Provider pacing and DOI prefetch.** Share request spacing and Retry-After
   cooldowns across discovery commands. Skip cached DOIs and use a single
   OpenAlex DOI filter for each group.

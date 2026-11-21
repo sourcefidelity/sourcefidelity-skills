@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Fetch one URL once, trying two clients, and remember what the host did.
-
-The Television review spent two 60-second loops re-fetching repository PDF
-endpoints that had already returned 403, then fell back to CORE. Some hosts
-block curl and serve the same page to urllib, and some do the reverse; this
-helper tries curl first and urllib on a 401/403/429, records the outcome in the
-host-state cache, and can extract a PDF through `prepare_source.py`.
+"""Fetch one URL under the shared public URL policy and record host state.
 
     python -I scripts/fetch.py --url URL --out DIR [--name NAME] [--extract]
     python -I scripts/fetch.py --url URL --out DIR --force
 
-A host that answered 401/403/429 or 404 to both clients is not retried for 24
+A host that answered 401/403/429 or 404 is not retried for 24
 hours unless `--force` is given. The JSON result is an access record, not
 evidence.
 """
@@ -21,18 +15,17 @@ import os
 import re
 import subprocess
 import sys
-import urllib.error
-import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import http_cache  # noqa: E402
+import public_fetch  # noqa: E402
 
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 PREPARE = os.path.join(HERE, "prepare_source.py")
-MAX_BYTES = 40 * 1024 * 1024
+MAX_BYTES = public_fetch.MAX_DOWNLOAD_BYTES
 
 
 def _slug(value):
@@ -46,62 +39,18 @@ def _name_for(url, given):
     return _slug(path.rsplit(".", 1)[0]) or "fetch"
 
 
-def _save_temp(temporary, target, content_type):
-    """Move a completed download into place when it looks like a document."""
-    try:
-        with open(temporary, "rb") as handle:
-            magic = handle.read(5)
-    except OSError:
-        return ""
-    if magic == b"%PDF":
-        saved = target + ".pdf"
-    elif "html" in (content_type or "").lower():
-        saved = target + ".html"
-    else:
-        saved = target + ".bin"
-    try:
-        os.replace(temporary, saved)
-    except OSError:
-        return ""
-    return saved
-
-
 def download(url, target, timeout=40):
-    """(state, status, content_type, file) using curl, then urllib on a block."""
-    temporary = target + ".part"
-    try:
-        proc = subprocess.run(
-            ["curl", "-s", "-L", "-A", UA, "--max-time", str(timeout),
-             "-o", temporary, "-w", "%{http_code} %{content_type}", url],
-            capture_output=True, text=True, timeout=timeout + 15)
-        code, _, content_type = (proc.stdout or "").partition(" ")
-        content_type = content_type.strip()
-        status = int(code) if code.isdigit() else 0
-    except (OSError, subprocess.SubprocessError):
-        status, content_type = 0, ""
-    if status == 200:
-        saved = _save_temp(temporary, target, content_type)
-        if saved:
-            return "saved", status, content_type, saved
-    _remove(temporary)
-    if status not in (401, 403, 429, 0):
-        return ("blocked" if status in (401, 403, 429)
-                else "dead" if status in (404, 410) else "failed"), status, content_type, ""
-    # curl was refused or failed; one urllib attempt (different TLS fingerprint).
-    request = urllib.request.Request(url, headers={
-        "User-Agent": UA, "Accept": "application/pdf,text/html;q=0.9"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            status2 = response.status
-            content_type2 = (response.headers.get("Content-Type") or "").lower()
-            body = response.read(MAX_BYTES)
-    except urllib.error.HTTPError as error:
-        return ("blocked" if error.code in (401, 403, 429)
-                else "dead" if error.code in (404, 410) else "failed"), error.code, content_type, ""
-    except Exception:  # noqa: BLE001
-        return "unreachable", 0, "", ""
-    if status2 != 200:
-        return "failed", status2, content_type2, ""
+    """Save a bounded public HTTP response."""
+    result = public_fetch.fetch(
+        url, timeout=timeout, max_bytes=MAX_BYTES, include_body=True,
+        headers={"User-Agent": UA, "Accept": "application/pdf,text/html;q=0.9"})
+    status2, content_type2 = result["status"], result["content_type"]
+    if status2 != 200 or result["limitation"] or result["truncated"]:
+        state = ("blocked" if status2 in (401, 403, 429) else
+                 "dead" if status2 in (404, 410) else
+                 "unreachable" if not status2 else "failed")
+        return state, status2, content_type2, ""
+    body = result["body"]
     if body[:4] == b"%PDF":
         saved, suffix = target + ".pdf", ".pdf"
     elif "html" in content_type2:
@@ -159,13 +108,6 @@ def main(argv=None):
             result["extraction"] = _extract(saved, base, _name_for(args.url, args.name))
     print(json.dumps(result, ensure_ascii=False))
     return 0 if saved or state == "blocked" else 1
-
-
-def _remove(path):
-    try:
-        os.remove(path)
-    except OSError:
-        pass
 
 
 if __name__ == "__main__":

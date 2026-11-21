@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import provider_pacing  # noqa: E402
+import public_fetch  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -409,8 +410,8 @@ def _keyed_provider(url):
 
 
 def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
-             extra_headers=None):
-    """One request, with a short backoff for a transient status.
+             extra_headers=None, max_bytes=None):
+    """Request provider metadata, or use shared public fetch for bounded acquisition.
 
     The public APIs rate-limit: a 429 is a "try later", not an absence.
     """
@@ -422,9 +423,24 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
     last = None
     for attempt in range(attempts):
         _throttle(url)
-        request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=_within_budget(timeout)) as response:
+            remaining = _within_budget(timeout)
+            if max_bytes is not None:
+                result = public_fetch.fetch(url, timeout=remaining, max_bytes=max_bytes,
+                                            include_body=True, headers=headers)
+                status = result["status"]
+                final = result["final_url"]
+                if status >= 400:
+                    retry_after = result.get("retry_after", "")
+                    raise urllib.error.HTTPError(final, status, "HTTP error",
+                                                 {"Retry-After": retry_after}, None)
+                if result["limitation"] == "timeout":
+                    raise TimeoutError("public fetch timed out")
+                if result["limitation"] or result["truncated"]:
+                    raise OSError(result["limitation"] or "response_limit")
+                return status, final, {"Content-Type": result["content_type"]}, result["body"]
+            request = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(request, timeout=remaining) as response:
                 return response.status, response.geturl(), response.headers, response.read()
         except urllib.error.HTTPError as error:
             last = error
@@ -524,6 +540,9 @@ def cache_put(kind, key, value, ttl=None):
 
 
 FETCH_DIR = "_fetched"
+LANDING_MAX_BYTES = 2_000_000
+PDF_MAX_BYTES = public_fetch.MAX_DOWNLOAD_BYTES
+PDF_CACHE_KIND = "fetch-public-peer"
 
 
 def identity_key(parsed):
@@ -1480,8 +1499,8 @@ def _resolve_copy(doi, out_dir, mailto=""):
     """Try the DOI resolver first, then public open-access locations."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
-    cached = cache_get("fetch", (doi or "").lower()) if doi else None
-    if cached and os.path.exists(cached.get("pdf", "")):
+    cached = cache_get(PDF_CACHE_KIND, (doi or "").lower()) if doi else None
+    if cached and os.path.isfile(cached.get("pdf", "")):
         record.update({"resolver": "cache", "status": 200,
                        "final_url": cached.get("final_url", ""),
                        "content_type": cached.get("content_type", ""),
@@ -1492,7 +1511,8 @@ def _resolve_copy(doi, out_dir, mailto=""):
         return record
     try:
         status, final, headers, body = _request("https://doi.org/" + doi,
-                                                accept="text/html,application/pdf", timeout=15)
+                                                accept="text/html,application/pdf", timeout=15,
+                                                max_bytes=PDF_MAX_BYTES)
         record.update({"resolver": "doi.org", "status": status, "final_url": final,
                        "content_type": headers.get("Content-Type", ""), "bytes": len(body)})
         if body[:4] == b"%PDF":
@@ -1505,14 +1525,19 @@ def _resolve_copy(doi, out_dir, mailto=""):
             links += re.findall(r'href="([^"]+\.pdf[^"]*)"', html, flags=re.I)
             if links:
                 target = urllib.parse.urljoin(final, links[0])
-                status2, final2, headers2, body2 = _request(target, accept="application/pdf",
-                                                            timeout=60, referer=final)
-                if body2[:4] == b"%PDF":
-                    record.update({"status": status2, "final_url": final2,
-                                   "content_type": headers2.get("Content-Type", ""),
-                                   "bytes": len(body2)})
-                    return _keep_pdf(record, body2, doi, out_dir)
-                record["pdf"] = f"link returned {status2}, not a PDF"
+                try:
+                    status2, final2, headers2, body2 = _request(
+                        target, accept="application/pdf", timeout=60,
+                        referer=final, max_bytes=PDF_MAX_BYTES)
+                except OSError as exc:
+                    record["pdf"] = f"publisher PDF link failed: {type(exc).__name__}"
+                else:
+                    if body2[:4] == b"%PDF":
+                        record.update({"status": status2, "final_url": final2,
+                                       "content_type": headers2.get("Content-Type", ""),
+                                       "bytes": len(body2)})
+                        return _keep_pdf(record, body2, doi, out_dir)
+                    record["pdf"] = f"link returned {status2}, not a PDF"
             # Some publishers' landing pages hide the PDF link behind a cookie
             # wall; their PDF endpoint is still predictable from the DOI.
             host = urllib.parse.urlparse(final).netloc.lower()
@@ -1521,7 +1546,7 @@ def _resolve_copy(doi, out_dir, mailto=""):
                 try:
                     status3, final3, headers3, body3 = _request(
                         template.format(doi=doi), accept="application/pdf",
-                        timeout=60, referer=final)
+                        timeout=60, referer=final, max_bytes=PDF_MAX_BYTES)
                     if body3[:4] == b"%PDF":
                         record.update({"status": status3, "final_url": final3,
                                        "content_type": headers3.get("Content-Type", ""),
@@ -1540,7 +1565,7 @@ def _resolve_copy(doi, out_dir, mailto=""):
     for provider, candidate in _oa_pdf_candidates(doi, mailto, per_provider=2):
         try:
             status4, final4, headers4, body4 = _request(candidate, accept="application/pdf",
-                                                        timeout=30)
+                                                        timeout=30, max_bytes=PDF_MAX_BYTES)
         except Exception:  # noqa: BLE001
             continue
         if body4[:4] == b"%PDF":
@@ -1556,7 +1581,7 @@ def _keep_pdf(record, body, doi, out_dir):
     result = _keep_pdf_impl(record, body, doi, out_dir)
     if result.get("pdf") and doi:
         owned = _cache_fetch_pdf(result["pdf"])
-        cache_put("fetch", doi.lower(), {"pdf": owned or result["pdf"],
+        cache_put(PDF_CACHE_KIND, doi.lower(), {"pdf": owned or result["pdf"],
                                          "local": result["pdf"],
                                          "bytes": result.get("bytes", 0),
                                          "final_url": result.get("final_url", ""),
@@ -1593,7 +1618,7 @@ def landing_metadata(doi, mailto=""):
               "volume": "", "issue": "", "journal": "", "toc_url": ""}
     try:
         status, final, headers, body = _request("https://doi.org/" + doi,
-                                                accept="text/html", timeout=15)
+                                                accept="text/html", timeout=15, max_bytes=LANDING_MAX_BYTES)
     except Exception:  # noqa: BLE001
         return record
     record["page"] = final
@@ -1624,7 +1649,7 @@ def toc_entries(url, limit=15):
     if not url:
         return []
     try:
-        status, final, headers, body = _request(url, accept="text/html", timeout=15)
+        status, final, headers, body = _request(url, accept="text/html", timeout=15, max_bytes=LANDING_MAX_BYTES)
     except Exception:  # noqa: BLE001
         return []
     if body[:4] == b"%PDF":

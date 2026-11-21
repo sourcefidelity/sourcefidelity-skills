@@ -1047,6 +1047,23 @@ class WebFetchTests(unittest.TestCase):
         self.assertEqual(blocked_text, "")
         self.assertEqual(blocked_meta["limitation"], "private_host")
 
+    def test_truncated_text_is_kept_out_of_evidence_windows(self):
+        url = "https://example.com/article"
+        body = "the cited phrase appears in this article " * 80
+        with tempfile.TemporaryDirectory() as tmp:
+            web_cache.store(tmp, url, {"text": body, "truncated": True})
+            hits = mt.web_windows(tmp, [{"r_id": "R1", "url": url}],
+                                  ["cited phrase appears"], 120)
+            _, meta = web_cache.text_for(tmp, url)
+        self.assertEqual(hits, [])
+        self.assertEqual(meta["limitation"], "response_limit")
+        with mock.patch.object(fos.transport.pacing, "wait"), \
+                mock.patch.object(fos.transport.pacing, "observe"), \
+                mock.patch.object(sf, "fetch", return_value={"text": body, "truncated": True}):
+            attempt = fos.try_text("example", url)
+        self.assertEqual(attempt["limitation"], "response_limit")
+        self.assertNotIn("text", attempt)
+
     def test_page_classification_separates_blocks_from_evidence(self):
         body = "Hollywood stars and their images. " * 120
         self.assertEqual(web_cache.classify_text("Subscribe to continue reading. " * 20),
@@ -1615,6 +1632,78 @@ class FetchPolicyTests(unittest.TestCase):
             return self.Response(status, headers, body, url)
         return transport
 
+    def test_default_urllib_opener_does_not_follow_unchecked_redirect(self):
+        peer = mock.Mock()
+        peer.getpeername.return_value = ("93.184.216.34", 80)
+        peer.makefile.return_value = io.BytesIO(
+            b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1/unavailable\r\n"
+            b"Content-Length: 0\r\n\r\n")
+        with mock.patch.object(ha.public_fetch.socket, "create_connection",
+                               return_value=peer) as connect, \
+                mock.patch.dict(os.environ, {"http_proxy": "http://proxy.test:9090"}):
+            result = sf.fetch("http://example.test/start",
+                              resolver=lambda _: {"93.184.216.34"})
+        connect.assert_called_once()
+        self.assertEqual(connect.call_args.args[0], ("93.184.216.34", 80))
+        self.assertIn(b"Host: example.test", peer.sendall.call_args.args[0])
+        self.assertEqual(result["limitation"], "private_host")
+        self.assertEqual(result["redirects"], [{"status": 302, "url": "http://127.0.0.1/unavailable"}])
+
+    def test_changed_peer_on_a_redirect_is_closed_before_http_bytes(self):
+        first = mock.Mock()
+        first.getpeername.return_value = ("93.184.216.34", 80)
+        first.makefile.return_value = io.BytesIO(
+            b"HTTP/1.1 302 Found\r\nLocation: http://second.test/\r\n"
+            b"Content-Length: 0\r\n\r\n")
+        second = mock.Mock()
+        second.getpeername.return_value = ("10.0.0.9", 80)
+        resolver = mock.Mock(side_effect=[{"93.184.216.34"}, {"1.1.1.1"}])
+        with mock.patch.object(ha.public_fetch.socket, "create_connection",
+                               side_effect=[first, second]) as connect:
+            result = sf.fetch("http://first.test/", resolver=resolver)
+        self.assertEqual(result["limitation"], "peer_refused")
+        self.assertEqual(connect.call_args.args[0], ("1.1.1.1", 80))
+        self.assertEqual(resolver.call_args_list, [mock.call("first.test"), mock.call("second.test")])
+        second.close.assert_called_once()
+        second.sendall.assert_not_called()
+
+    def test_https_peer_is_verified_before_tls_and_retains_hostname(self):
+        import ssl
+
+        peer = mock.Mock()
+        peer.getpeername.return_value = ("1.1.1.1", 443)
+        context = mock.Mock()
+        with mock.patch.object(ha.public_fetch.socket, "create_connection", return_value=peer), \
+                mock.patch.object(ssl, "_create_default_https_context", return_value=context):
+            rejected = sf.fetch("https://example.test/", resolver=lambda _: {"8.8.8.8"})
+            self.assertEqual(rejected["limitation"], "peer_refused")
+            context.wrap_socket.assert_not_called()
+            context.wrap_socket.return_value = peer
+            peer.makefile.return_value = io.BytesIO(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nok")
+            accepted = sf.fetch("https://example.test/", resolver=lambda _: {"1.1.1.1"})
+        context.wrap_socket.assert_called_once_with(peer, server_hostname="example.test")
+        self.assertEqual(accepted["text"], "ok")
+
+    def test_redirect_hops_share_timeout_and_close_each_response(self):
+        first = self.Response(302, {"Location": "/next"}, b"", "https://example.test/start")
+        second = self.Response(200, {"Content-Type": "text/plain"}, b"abcdef",
+                               "https://example.test/next")
+        first.close = mock.Mock()
+        second.close = mock.Mock()
+        transport = mock.Mock(side_effect=[first, second])
+        with mock.patch.object(ha.public_fetch.time, "monotonic",
+                               side_effect=[10.0, 10.0, 12.0, 12.0]):
+            result = sf.fetch("https://example.test/start", network=transport,
+                              resolver=lambda _: {"93.184.216.34"}, timeout=5, max_bytes=3)
+        self.assertEqual(transport.call_args_list, [
+            mock.call("https://example.test/start", 5.0),
+            mock.call("https://example.test/next", 3.0)])
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["text"], "abc")
+        first.close.assert_called_once()
+        second.close.assert_called_once()
+
     def test_refuses_a_non_http_scheme(self):
         calls = []
         out = sf.fetch("file:///etc/passwd",
@@ -1636,10 +1725,10 @@ class FetchPolicyTests(unittest.TestCase):
                        resolver=lambda h: {"10.0.0.5"})
         self.assertEqual(out["limitation"], "private_host")
 
-    def test_a_proxy_fake_ip_is_not_a_private_host(self):
+    def test_a_proxy_fake_ip_is_refused(self):
         out = sf.fetch("https://example.com/x", network=self._transport({}, []),
                        resolver=lambda h: {"198.18.0.7"})
-        self.assertNotEqual(out["limitation"], "private_host")
+        self.assertEqual(out["limitation"], "private_host")
 
     def test_a_real_private_address_is_still_refused(self):
         out = sf.fetch("https://example.com/x", network=self._transport({}),
@@ -3179,6 +3268,58 @@ class ResolveDoisTests(unittest.TestCase):
         self.assertEqual(result["resolver"], "unpaywall")
         later.assert_not_called()
 
+    def test_doi_acquisition_uses_shared_policy_and_rejects_a_partial_pdf(self):
+        doi_url = "https://doi.org/10.1000/x"
+        candidate = "https://example.test/copy.pdf"
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(rd, "cache_get", return_value=None), \
+                mock.patch.object(rd, "_throttle"), \
+                mock.patch.object(rd, "_oa_pdf_candidates",
+                                  return_value=[("openalex", candidate)]), \
+                mock.patch.object(rd.public_fetch, "fetch", side_effect=[
+                    {"status": 0, "limitation": "peer_refused", "final_url": doi_url},
+                    {"status": 200, "limitation": "", "final_url": candidate,
+                     "truncated": True, "body": b"%PDF-1.4"}]) as fetch, \
+                mock.patch.object(rd, "_keep_pdf") as keep_pdf:
+            rd._resolve_copy("10.1000/x", tmp)
+        self.assertEqual([call.args[0] for call in fetch.call_args_list], [doi_url, candidate])
+        for call in fetch.call_args_list:
+            self.assertTrue(call.kwargs["include_body"])
+            self.assertEqual(call.kwargs["max_bytes"], rd.PDF_MAX_BYTES)
+        keep_pdf.assert_not_called()
+
+    def test_publisher_pdf_hint_uses_shared_policy_after_link_refusal(self):
+        landing = "https://publisher.test/article"
+        hint = "https://publisher.test/download/10.1000/x"
+        def result(url, body, content_type):
+            return {"status": 200, "limitation": "", "final_url": url,
+                    "truncated": False, "content_type": content_type, "body": body}
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(rd, "cache_get", return_value=None), \
+                mock.patch.object(rd, "_throttle"), \
+                mock.patch.dict(rd.PDF_HINTS, {"publisher.test": "https://publisher.test/download/{doi}"}), \
+                mock.patch.object(rd.public_fetch, "fetch", side_effect=[
+                    result(landing, b'<a href="/broken.pdf">PDF</a>', "text/html"),
+                    {"status": 0, "limitation": "peer_refused", "final_url": landing},
+                    result(hint, b"%PDF-1.4", "application/octet-stream")]) as fetch, \
+                mock.patch.object(rd, "_keep_pdf", side_effect=lambda record, *_: record):
+            copy = rd._resolve_copy("10.1000/x", tmp)
+        self.assertEqual([call.args[0] for call in fetch.call_args_list],
+                         ["https://doi.org/10.1000/x", "https://publisher.test/broken.pdf", hint])
+        self.assertEqual(copy["final_url"], hint)
+
+    def test_publisher_toc_uses_shared_policy(self):
+        url = "https://example.test/issue/2"
+        with mock.patch.object(rd, "_throttle"), \
+                mock.patch.object(rd.public_fetch, "fetch", return_value={
+                    "status": 200, "limitation": "", "final_url": url,
+                    "truncated": False, "content_type": "text/html",
+                    "body": b'<a href="/article">A research article about film</a>'}) as fetch:
+            self.assertEqual(rd.toc_entries(url), [
+                {"title": "A research article about film", "url": "https://example.test/article"}])
+        self.assertEqual(fetch.call_args.kwargs["max_bytes"], rd.LANDING_MAX_BYTES)
+
     def test_resolve_copy_still_exists(self):
         self.assertTrue(callable(rd.resolve_copy))
 
@@ -3198,6 +3339,9 @@ class HyperlinkAuditTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = self._tmp.name
+        patcher = mock.patch.object(ha.public_fetch, "resolve", return_value={"93.184.216.34"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -3299,33 +3443,29 @@ class HyperlinkAuditTests(unittest.TestCase):
         self.assertIn("Hyperlink findings (HL): 2", lines)
 
     def test_fetch_state_names_the_failure_kind(self):
-        with mock.patch.object(ha.urllib.request, "urlopen",
+        with mock.patch.object(ha.public_fetch, "transport",
                                side_effect=urllib.error.HTTPError("u", 404, "no", {}, None)):
             self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "dead")
-        with mock.patch.object(ha.urllib.request, "urlopen",
+        with mock.patch.object(ha.public_fetch, "transport",
                                side_effect=urllib.error.URLError("timed out")):
             self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "timeout")
-        with mock.patch.object(ha.urllib.request, "urlopen",
+        with mock.patch.object(ha.public_fetch, "transport",
                                side_effect=urllib.error.URLError(
                                    "certificate verify failed: CERTIFICATE_VERIFY_FAILED")):
             self.assertEqual(ha.fetch_state("https://example.org/x")["state"], "tls")
     def test_environment_failures_are_flagged(self):
-        with mock.patch.object(ha.urllib.request, "urlopen",
+        with mock.patch.object(ha.public_fetch, "transport",
                                side_effect=urllib.error.URLError("connection reset")):
             self.assertTrue(ha.fetch_state("https://example.org/x")["environment"])
-        with mock.patch.object(ha.urllib.request, "urlopen",
+        with mock.patch.object(ha.public_fetch, "transport",
                                side_effect=urllib.error.HTTPError("u", 404, "no", {}, None)):
             self.assertFalse(ha.fetch_state("https://example.org/x")["environment"])
 
     def test_login_page_is_not_counted_as_working(self):
-        response = mock.MagicMock()
-        response.status = 200
-        response.geturl.return_value = "https://example.org/login"
-        response.headers = {"Content-Type": "text/html"}
-        response.read.return_value = b"<html>please sign in</html>"
-        response.__enter__ = lambda self: self
-        response.__exit__ = lambda self, *args: False
-        with mock.patch.object(ha.urllib.request, "urlopen", return_value=response):
+        response = FetchPolicyTests.Response(200, {"Content-Type": "text/html"},
+                                             b"<html>please sign in</html>",
+                                             "https://example.org/login")
+        with mock.patch.object(ha.public_fetch, "transport", return_value=response):
             state = ha.fetch_state("https://example.org/x")
         self.assertEqual(state["state"], "login-page")
 
@@ -3597,7 +3737,8 @@ class SourceCacheTests(unittest.TestCase):
         cached = {"state": "ok", "status": 200, "detail": "text/html 20 B (cache)",
                   "saved": "", "environment": False}
         with mock.patch.object(ha, "_cached_state", return_value=cached), \
-                mock.patch.object(ha, "_request",
+                mock.patch.object(ha.public_fetch, "resolve", return_value={"93.184.216.34"}), \
+                mock.patch.object(ha.public_fetch, "fetch",
                                   side_effect=AssertionError("network used")):
             state = ha.fetch_state("https://x/page")
         self.assertEqual(state["state"], "ok")
@@ -3612,7 +3753,7 @@ class SourceCacheTests(unittest.TestCase):
         pdf = os.path.join(self.root, "copy.pdf")
         with open(pdf, "wb") as handle:
             handle.write(b"%PDF-1.4 test")
-        rd.cache_put("fetch", "10.1000/x",
+        rd.cache_put(rd.PDF_CACHE_KIND, "10.1000/x",
                      {"pdf": pdf, "bytes": 12, "final_url": "https://x",
                       "content_type": "application/pdf"})
         with mock.patch.object(rd, "_request",
@@ -4404,6 +4545,35 @@ class ReviewPipelineRegressionTests(unittest.TestCase):
         entries = ha.reference_entries(records)
         self.assertEqual(len(entries), 1)
         self.assertIn("https://www.pishu.com.cn/x?contentId=8448721", entries[0]["text"])
+
+    def test_reconstructed_locator_keeps_raw_fragments_and_native_field(self):
+        records = [{"text": "References"},
+                   {"text": "Cui, B. (2017). A chapter. https://example.test/item?",
+                    "links": ["https://example.test/item?id=1"]},
+                   {"text": "id=1"}]
+        entry, = ha.reference_entries(records)
+        locator, = ha.submitted_locators(entry)
+        self.assertEqual(locator["url"], "https://example.test/item?id=1")
+        self.assertEqual(locator["observations"], [
+            {"origin": "reconstructed", "raw": ["https://example.test/item?", "id=1"]},
+            {"origin": "hyperlink", "raw": ["https://example.test/item?id=1"]},
+        ])
+
+    def test_archive_does_not_replace_submitted_link_failure(self):
+        entry = {"text": "Cui, B. (2017). A chapter. https://example.test/item",
+                 "links": ["https://example.test/companion"]}
+        with mock.patch.object(ha, "paragraph_records", return_value=[]), \
+                mock.patch.object(ha, "reference_entries", return_value=[entry]), \
+                mock.patch.object(ha, "fetch_state", side_effect=[
+                    {"state": "dead"}, {"state": "ok"}, {"state": "ok"}]), \
+                mock.patch.object(ha, "wayback_url", return_value="https://example.test/archive"), \
+                mock.patch.object(ha, "http_cache", None):
+            result = ha.audit("paper.docx", wayback=True, jobs=1)
+        row, = result["rows"]
+        self.assertEqual(row["fetch"]["state"], "dead")
+        self.assertEqual([link["fetch"]["state"] for link in row["submitted_locators"]],
+                         ["dead", "ok"])
+        self.assertEqual(row["alternative_locations"][0]["fetch"]["state"], "ok")
 
     def test_doi_work_mismatch_compares_the_record_title(self):
         with mock.patch.object(ha, "_doi_record",

@@ -1,6 +1,6 @@
 # Retrieval port plan: coverage for batch reviews
 
-> **Status:** superseded by [docs/PLAN.md](../PLAN.md) R4. Retained for detail.
+> **Status:** superseded by [docs/PLAN.md](../PLAN.md) R4. Retained for detail. R14 supersedes the historical proxy fake-IP exception.
 
 Historical status: proposed 2026-11-18. Source under assessment: the public
 `sourcefidelity/sourcefidelity-api` repository at `06fa131` (2026-10-21),

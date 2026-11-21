@@ -17,8 +17,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
 import time
 import urllib.error
@@ -30,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import public_fetch
 try:
     import http_cache
 except ImportError:  # pragma: no cover
@@ -171,7 +170,7 @@ def _is_url_continuation(previous, text):
     fragment = (text or "").strip()
     if not previous or not fragment or " " in fragment:
         return False
-    if not previous.endswith(("?", "&", "=", "/")):
+    if not URL_RE.search(previous) or not previous.endswith(("?", "&", "=", "/")):
         return False
     return bool(URL_FRAGMENT.match(fragment)) and ("=" in fragment or "/" in fragment)
 
@@ -208,7 +207,13 @@ def reference_entries(paragraphs):
         elif entries:
             previous = entries[-1]["lines"][-1] if entries[-1]["lines"] else ""
             if _is_url_continuation(previous, text):
-                entries[-1]["lines"][-1] = previous + text.strip()
+                joined = previous + text.strip()
+                repairs = entries[-1].setdefault("locator_repairs", {})
+                old_url = URL_RE.findall(previous)[-1]
+                new_url = URL_RE.findall(joined)[-1]
+                fragments = repairs.pop(old_url, [old_url])
+                repairs[new_url] = [*fragments, text.strip()]
+                entries[-1]["lines"][-1] = joined
             else:
                 entries[-1]["lines"].append(text.strip())
             entries[-1]["links"].extend(links)
@@ -227,6 +232,29 @@ def entry_links(entry):
     urls, dois = entry_urls(entry["text"])
     urls = list(urls) + [link for link in entry.get("links", []) if link not in urls]
     return urls, dois
+
+
+def submitted_locators(entry):
+    """Preserve submitted spellings and origins separately from request URLs."""
+    urls, dois = entry_urls(entry["text"])
+    repairs = entry.get("locator_repairs", {})
+    field_links = entry.get("links", [])
+    locators = {}
+
+    def add(url, origin, raw):
+        item = locators.setdefault(url, {"url": url, "observations": [], "fetch": None})
+        observation = {"origin": origin, "raw": raw}
+        if observation not in item["observations"]:
+            item["observations"].append(observation)
+
+    for url in urls:
+        fragments = repairs.get(url)
+        add(url, "reconstructed" if fragments else "visible", fragments or [url])
+    for url in field_links:
+        add(url, "hyperlink", [url])
+    for doi in dois:
+        add(f"https://doi.org/{doi}", "doi", [doi])
+    return list(locators.values())
 
 
 
@@ -392,89 +420,55 @@ def _request(url, accept="text/html", timeout=20):
 def _cached_state(url):
     if http_cache is None:
         return None
-    hit = http_cache.cache_get(url)
-    if not hit:
+    hit = http_cache.cache_get("public-fetch-v2:" + url)
+    if not hit or public_fetch.refusal(hit["final"], public_fetch.resolve):
         return None
     body = hit["body"]
     saved = _save_body(body, hit["content_type"], hit["final"])
     return {"state": hit["state"], "status": hit["status"],
             "detail": f"{hit['content_type'] or 'unknown'} {len(body)} B (cache)",
-            "saved": saved, "environment": False}
-
-
-def _curl_status(url, timeout=8):
-    """A second client's view of a link that returned 401/403/429 to urllib."""
-    curl = shutil.which("curl")
-    if not curl:
-        return None
-    try:
-        proc = subprocess.run(
-            [curl, "-s", "-o", os.devnull, "-L", "-m", str(max(3, int(timeout))),
-             "-A", UA, "-w", "%{http_code}", url],
-            capture_output=True, text=True, timeout=timeout + 3)
-        code = (proc.stdout or "").strip()
-        return int(code) if code.isdigit() else None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+            "saved": saved, "environment": False, "final_url": hit["final"],
+            "cache_hit": True}
 
 
 def fetch_state(url, timeout=10):
-    """Fetch outcome: ok, blocked, dead, unreachable, tls, timeout, login-page.
-
-    `unreachable`, `tls` and `timeout` are properties of the review machine, not
-    of the link, and carry `environment: True` so no report turns them into a
-    link finding.
-    """
-    cached = _cached_state(url)
-    if cached:
-        return cached
-    request = urllib.request.Request(url, headers={"User-Agent": UA,
-                                                   "Accept": "text/html,application/pdf"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            status = response.status
-            final = response.geturl()
-            content_type = (response.headers.get("Content-Type") or "").lower()
-            body = response.read(300000)
-    except urllib.error.HTTPError as error:
-        if error.code in (404, 410):
-            return {"state": "dead", "status": error.code, "detail": "HTTP 404/410",
-                "environment": False}
-        if error.code in (401, 403, 429):
-            alternative = _curl_status(url, timeout=timeout)
-            if alternative == 200:
-                return {"state": "ok", "status": 200,
-                        "detail": f"HTTP 200 via curl (HTTP {error.code} to urllib)",
-                        "client_specific": True, "environment": False}
-        return {"state": "blocked", "status": error.code, "detail": f"HTTP {error.code}",
-                "environment": False}
-    except urllib.error.URLError as error:
-        reason = str(error.reason)
-        if "CERTIFICATE" in reason.upper() or "SSL" in reason.upper():
-            return {"state": "tls", "status": None, "detail": reason[:120],
-                "environment": True}
-        if "timed out" in reason.lower():
-            return {"state": "timeout", "status": None, "detail": reason[:120],
-                "environment": True}
-        return {"state": "unreachable", "status": None, "detail": reason[:120],
-                "environment": True}
-    except Exception as error:  # noqa: BLE001
-        return {"state": "unreachable", "status": None,
-                "detail": type(error).__name__, "environment": True}
+    """Fetch a submitted link under the shared public URL policy."""
+    if not public_fetch.refusal(url, public_fetch.resolve):
+        cached = _cached_state(url)
+        if cached:
+            return cached
+    fetched = public_fetch.fetch(
+        url, timeout=timeout, max_bytes=300000, include_body=True,
+        headers={"User-Agent": UA, "Accept": "text/html,application/pdf"})
+    status = fetched["status"]
+    final = fetched["final_url"]
+    detail = {"status": status or None, "final_url": final,
+              "redirects": fetched["redirects"], "checked_at": now(),
+              "truncated": fetched["truncated"]}
+    limitation = fetched["limitation"]
+    if status in (404, 410):
+        return {**detail, "state": "dead", "detail": f"HTTP {status}", "environment": False}
+    if status in (401, 403, 429):
+        return {**detail, "state": "blocked", "detail": f"HTTP {status}", "environment": False}
+    if limitation:
+        state = limitation if limitation in ("tls", "timeout") else "unreachable"
+        return {**detail, "state": state, "detail": limitation, "environment": True}
+    content_type = fetched["content_type"]
+    body = fetched.get("body", b"")
 
     lowered = (final or "").lower()
     if any(word in lowered for word in ("login", "signin", "sign-in", "consent", "captcha")):
-        return {"state": "login-page", "status": status, "detail": final[:160],
+        return {**detail, "state": "login-page", "detail": final[:160],
                 "environment": False}
     text = body[:20000].decode("utf-8", "replace").lower()
     if "sign in" in text or "log in" in text or "captcha" in text:
-        return {"state": "login-page", "status": status, "detail": final[:160],
+        return {**detail, "state": "login-page", "detail": final[:160],
                 "environment": False}
-    if http_cache is not None:
-        http_cache.cache_put(url, "ok", status, final, content_type, body)
-    return {"state": "ok", "status": status,
+    if http_cache is not None and not fetched["truncated"]:
+        http_cache.cache_put("public-fetch-v2:" + url, "ok", status, final, content_type, body)
+    return {**detail, "state": "ok",
             "detail": f"{content_type or 'unknown'} {len(body)} B",
-            "saved": _save_body(body, content_type, final),
+            "saved": _save_body(body, content_type, final) if not fetched["truncated"] else "",
             "environment": False}
 
 
@@ -482,12 +476,14 @@ def audit(path, fetch=True, timeout=8, delay=0.0, wayback=False, jobs=6):
     entries = reference_entries(paragraph_records(path))
     rows = []
     for number, entry in enumerate(entries, start=1):
-        urls, dois = entry_links(entry)
-        link = urls[0] if urls else (f"https://doi.org/{dois[0]}" if dois else "")
+        locators = submitted_locators(entry)
+        _, dois = entry_links(entry)
+        link = locators[0]["url"] if locators else ""
         state = classify_media_link(entry["text"], link)
         rows.append({"id": f"R{number}", "entry": entry["text"][:110], "url": link,
                      "media": media_type(entry["text"]), "link_class": state,
-                     "fetch": None, "_entry_text": entry["text"], "_dois": dois})
+                     "fetch": None, "submitted_locators": locators,
+                     "alternative_locations": [], "_entry_text": entry["text"], "_dois": dois})
 
     def run(row):
         if row["link_class"] == "not-linkable":
@@ -496,13 +492,16 @@ def audit(path, fetch=True, timeout=8, delay=0.0, wayback=False, jobs=6):
             return row
         if not row["url"]:
             return row
-        if row["link_class"] == "non-permanent" and not is_course_platform(row["url"]):
-            row["fetch"] = {"state": "not attempted", "status": None,
-                            "detail": "cloud-share link: not permanent, contents unverifiable"}
-            return row
-        if delay:
-            time.sleep(delay)
-        result = fetch_state(row["url"], timeout=timeout)
+        for locator in row["submitted_locators"]:
+            url = locator["url"]
+            if classify_media_link(row["_entry_text"], url) == "non-permanent" and not is_course_platform(url):
+                locator["fetch"] = {"state": "not attempted", "status": None,
+                                    "detail": "cloud-share link: not permanent, contents unverifiable"}
+                continue
+            if delay:
+                time.sleep(delay)
+            locator["fetch"] = fetch_state(url, timeout=timeout)
+        result = row["submitted_locators"][0]["fetch"]
         row["fetch"] = result
         if http_cache is not None:
             http_cache.host_note(row["url"], result.get("state"))
@@ -512,14 +511,15 @@ def audit(path, fetch=True, timeout=8, delay=0.0, wayback=False, jobs=6):
             archived_url = wayback_url(row["url"], timeout=min(timeout, 6))
             if archived_url:
                 archived = fetch_state(archived_url, timeout=timeout)
-                if archived.get("state") == "ok":
-                    archived["archive_of"] = row["url"]
-                    row["fetch"] = archived
-        if row["_dois"] and doi_work_mismatch(row["_dois"][0], row["_entry_text"],
-                                              timeout=timeout):
+                row["alternative_locations"].append({
+                    "url": archived_url, "origin": "archive", "fetch": archived})
+        primary_doi = next((doi for doi in row["_dois"]
+                            if row["url"].casefold() == f"https://doi.org/{doi}".casefold()), "")
+        if primary_doi and doi_work_mismatch(primary_doi, row["_entry_text"], timeout=timeout):
             row["link_class"] = "wrong-work"
             row["fetch"] = dict(result, wrong_work=True,
                                 detail="DOI record is a different work")
+            row["submitted_locators"][0]["fetch"] = row["fetch"]
         return row
 
     if fetch:
@@ -541,7 +541,7 @@ def audit(path, fetch=True, timeout=8, delay=0.0, wayback=False, jobs=6):
         cache = http_cache.cache_dir() or "unavailable"
     return {"paper": os.path.basename(path), "checked": now(), "rows": rows,
             "cache": cache,
-            "transport": "urllib.request with browser UA; curl fallback on 401/403/429"}
+            "transport": "Shared public URL policy with manual redirects"}
 
 
 def totals(report):
