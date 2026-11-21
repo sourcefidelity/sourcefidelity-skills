@@ -35,6 +35,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -369,16 +370,42 @@ _THROTTLE_LOCK = threading.Lock()
 _LAST_CALL = {}
 
 
+_IDENTITY_DEADLINE = ContextVar("identity_deadline", default=None)
+
+
+class IdentityBudgetExhausted(Exception):
+    """The next operation cannot fit within the reference budget."""
+
+
+def _within_budget(timeout=0.0, *, waiting=False):
+    deadline = _IDENTITY_DEADLINE.get()
+    if deadline is None:
+        return timeout
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or (waiting and timeout >= remaining):
+        raise IdentityBudgetExhausted("reference deadline")
+    return min(timeout, remaining)
+
+
 def _throttle(url):
     host = urllib.parse.urlparse(url).netloc
     interval = next((value for suffix, value in PROVIDER_INTERVALS
                      if host.endswith(suffix)), 0.1)
-    with _THROTTLE_LOCK:
+    if _IDENTITY_DEADLINE.get() is None:
+        _THROTTLE_LOCK.acquire()
+    elif not _THROTTLE_LOCK.acquire(timeout=_within_budget(threading.TIMEOUT_MAX)):
+        raise IdentityBudgetExhausted("reference deadline")
+    try:
         last = _LAST_CALL.get(host, 0.0)
         wait = interval - (time.time() - last)
+        _within_budget(max(0.0, wait), waiting=True)
         if wait > 0:
             time.sleep(wait)
         _LAST_CALL[host] = time.time()
+    finally:
+        _THROTTLE_LOCK.release()
+
+
 DECISIVE_IDENTITIES = frozenset({"confirmed", "same_work_other_edition",
                                  "bibliographic_conflict",
                                  "title_conflict_at_coordinates"})
@@ -423,7 +450,7 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
         _throttle(url)
         request = urllib.request.Request(url, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with urllib.request.urlopen(request, timeout=_within_budget(timeout)) as response:
                 return response.status, response.geturl(), response.headers, response.read()
         except urllib.error.HTTPError as error:
             last = error
@@ -436,7 +463,9 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
             if error.code == 429 and _keyed_provider(url):
                 raise  # record the quota answer now; retry on the next reference
             if error.code in RETRY_STATUS and attempt < attempts - 1:
-                time.sleep(min(retry_after or 2 * (attempt + 1), 30))
+                delay = min(retry_after or 2 * (attempt + 1), 30)
+                _within_budget(delay, waiting=True)
+                time.sleep(delay)
                 continue
             raise
     raise last
@@ -524,13 +553,9 @@ FETCH_DIR = "_fetched"
 
 
 def identity_key(parsed):
-    """One cache key per cited work: DOI, else title plus surname."""
-    doi = (parsed.get("doi") or "").strip().lower()
-    if doi:
-        return "doi:" + doi
-    title = (parsed.get("title") or "").strip().lower()
-    surname = (parsed.get("surname") or "").strip().lower()
-    return ("work:" + title + "|" + surname) if title else ""
+    """Key citation verdicts by the fields being assessed, including edition."""
+    entry = " ".join((parsed.get("entry") or "").split())
+    return hashlib.sha256(entry.encode("utf-8")).hexdigest() if entry else ""
 
 
 def default_cache_root(out_dir):
@@ -646,15 +671,16 @@ def cache_prune(max_fetch_bytes=None):
 
 
 def contents_check_cached(parsed):
-    """Contents verdict once per batch, keyed by DOI or title."""
-    key = (parsed.get("doi") or parsed.get("title") or "").strip().lower()
+    """Reuse a completed contents check for the same cited fields."""
+    key = identity_key(parsed)
     if not key:
         return contents_check(parsed)
     cached = cache_get("contents", key)
-    if cached:
+    if cached and cached.get("status") != "search_incomplete":
         return cached
     result = contents_check(parsed)
-    cache_put("contents", key, result)
+    if result["status"] != "search_incomplete":
+        cache_put("contents", key, result)
     return result
 
 
@@ -794,7 +820,9 @@ def openalex_search(parsed):
     data = _json("https://api.openalex.org/works?per-page=3&search="
                  + urllib.parse.quote(parsed["title"]), timeout=10)
     candidates = []
-    for item in data.get("results", []):
+    if not isinstance(data.get("results"), list):
+        raise ValueError("OpenAlex response has no result list")
+    for item in data["results"]:
         title = item.get("title") or ""
         doi = (item.get("doi") or "").replace("https://doi.org/", "")
         biblio = item.get("biblio") or {}
@@ -819,7 +847,9 @@ def openlibrary_search(parsed):
            + "&author=" + urllib.parse.quote(parsed["authors"]))
     data = _json(url)
     candidates = []
-    for item in data.get("docs", []):
+    if not isinstance(data.get("docs"), list):
+        raise ValueError("Open Library response has no result list")
+    for item in data["docs"]:
         title = item.get("title") or ""
         candidates.append({"title": title, "score": title_score(parsed["title"], title),
                            "authors": item.get("author_name") or [],
@@ -1189,12 +1219,12 @@ def _host_unavailable(name):
 
 def _catalogue_record(name, probe_name, parsed, key):
     """One catalogue answer, from cache where possible; None when unavailable."""
-    reason = _host_unavailable(name)
-    if reason:
-        return None, f"host unavailable ({reason})"
     cached = cache_get("catalogue", f"v2|{key}|{name}") if key else None
     if isinstance(cached, dict):
         return cached, "cache"
+    reason = _host_unavailable(name)
+    if reason:
+        return None, f"host unavailable ({reason})"
     record, detail = globals()[probe_name](parsed)
     if record is None:
         if detail in HOST_FAILURE_REASONS or str(detail).startswith("HTTP"):
@@ -1223,7 +1253,7 @@ def book_affirmative(parsed, deadline=None):
               "first_title": "", "score": 0.0}
     key = identity_key(parsed)
     if key:
-        cached = cache_get("catalogue", f"v2|{key}|verdict")
+        cached = cache_get("catalogue", f"v3|{key}|verdict")
         if isinstance(cached, dict) and cached.get("status"):
             cached = dict(cached)
             cached["note"] = (cached.get("note") or "") + " (cached)"
@@ -1292,8 +1322,10 @@ def book_affirmative(parsed, deadline=None):
                        "note": (f"{first['catalogue']} returns {first['count']} "
                                 f"record(s) but none matches this title; nearest: "
                                 f"{(first.get('detail') or '')[:90]}")})
-    if key:
-        cache_put("catalogue", f"v2|{key}|verdict", result)
+    if key and result["status"] != "search_incomplete" and (
+            result["status"] in ("present", "absent")
+            or all(route["count"] is not None for route in routes)):
+        cache_put("catalogue", f"v3|{key}|verdict", result)
     return result
 
 
@@ -1737,18 +1769,35 @@ def doi_verdict(parsed, meta, kind, match=None):
 
 
 def process(entry, out_dir, attempt, mailto, check_contents=False):
-    parsed = parse_reference(entry)
-    kind = entry_kind(parsed["entry"], parsed)
-    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
-              "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
     try:
         budget = _reference_budget()
     except Exception:  # noqa: BLE001
         budget = REFERENCE_IDENTITY_SECONDS
     deadline = (time.monotonic() + budget) if budget and budget > 0 else None
 
+    token = _IDENTITY_DEADLINE.set(deadline)
+    try:
+        record = _resolve_identity(entry, mailto, attempt, check_contents, deadline)
+    finally:
+        _IDENTITY_DEADLINE.reset(token)
+    if attempt and record["doi"] and record["identity"] in (
+            "confirmed", "same_work_other_edition", "bibliographic_conflict"):
+        try:
+            record["copy"] = resolve_copy(record["doi"], out_dir, mailto)
+        except Exception as exc:  # noqa: BLE001
+            record["copy"] = {"error": f"{type(exc).__name__}: {exc}"}
+    return record
+
+
+def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
+    parsed = parse_reference(entry)
+    kind = entry_kind(parsed["entry"], parsed)
+    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
+              "doi": parsed["doi"], "record_title": "", "copy": {}, "notes": []}
+
     def past_deadline():
         return deadline is not None and time.monotonic() >= deadline
+
     if kind == "film":
         record["identity"] = "web_only"
         record["notes"].append("film entry: bibliographic adapters do not apply")
@@ -1758,14 +1807,17 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
         record["notes"].append("no title found in the entry")
         return record
 
-    _identity_key = identity_key(parsed)
-    if _identity_key:
-        _cached_identity = cache_get("identity", _identity_key)
-        if _cached_identity and _cached_identity.get("identity"):
-            record["identity"] = _cached_identity["identity"]
-            record["doi"] = _cached_identity.get("doi") or record["doi"]
-            record["record_title"] = _cached_identity.get("record_title") or ""
-            record["notes"].append("identity: cache hit")
+    key = identity_key(parsed)
+    _identity_key = f"v2|{key}" if key else ""
+    _cached_identity = cache_get("identity", _identity_key) if _identity_key else None
+    if _cached_identity:
+        record["identity"] = _cached_identity["identity"]
+        record["doi"] = _cached_identity["doi"]
+        record["record_title"] = _cached_identity["record_title"]
+        if "evidence" in _cached_identity:
+            record["evidence"] = _cached_identity["evidence"]
+        record["notes"].extend(_cached_identity["notes"])
+        record["notes"].append("identity: cache hit")
     if _web_only_entry(parsed):
         record["identity"] = "web_only"
         record["notes"].append("web-only entry: bibliographic adapters skipped")
@@ -1778,9 +1830,6 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
         return any(verdict in DECISIVE_IDENTITIES for _, verdict, _ in seen)
 
     if not record["identity"]:
-        routes = KIND_ROUTES[kind]
-        ran, failed, seen = [], [], []
-
         def consider(candidate):
             verdict, evidence = match_record(parsed, candidate, kind)
             seen.append((candidate, verdict, evidence))
@@ -1845,6 +1894,7 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
                 "author and coordinates point at a real record, but no record carries this "
                 "title: inspect the volume/issue contents before judging the entry")
 
+    identity_notes = list(record["notes"])
     if attempt and kind == "article" and parsed["doi"] and not past_deadline():
         try:
             record["publisher"] = landing_metadata(parsed["doi"], mailto)
@@ -1857,23 +1907,30 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
                     + "-" + record["publisher"]["last_page"])
         except Exception:  # noqa: BLE001
             record["notes"].append("publisher landing page unavailable")
-    if past_deadline():
+    budget_skipped = past_deadline() or any(
+        item.endswith(" IdentityBudgetExhausted") for item in failed)
+    if budget_skipped:
         record["notes"].append("reference deadline: remaining routes skipped")
+    failed = [item for item in failed if not item.endswith(" IdentityBudgetExhausted")]
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
     if failed:
         record["notes"].append("route failures: " + "; ".join(failed))
     if not record["identity"]:
-        if failed:
+        if failed or budget_skipped:
             record["identity"] = "search_incomplete"
         elif kind == "unclassified":
             record["identity"] = "not_indexed"
         else:
             record["identity"] = "unlocated_after_search"
 
-    if _identity_key and record["identity"]:
-        cache_put("identity", _identity_key, {
-            "identity": record["identity"], "doi": record["doi"],
-            "record_title": record.get("record_title", "")})
+    if (_identity_key and record["identity"] != "search_incomplete"
+            and (record["identity"] in DECISIVE_IDENTITIES
+                 or not (failed or budget_skipped))
+            and not _cached_identity):
+        cached = {field: record[field] for field in
+                  ("identity", "doi", "record_title", "evidence") if field in record}
+        cached["notes"] = identity_notes
+        cache_put("identity", _identity_key, cached)
 
     if (check_contents and kind == "article" and not stop_early()
             and not past_deadline()
@@ -1922,12 +1979,13 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
             record["notes"].append("catalogue check: "
                                    + (check.get("note") or check["status"]))
 
-    if attempt and record["doi"] and record["identity"] in (
-            "confirmed", "same_work_other_edition", "bibliographic_conflict"):
-        try:
-            record["copy"] = resolve_copy(record["doi"], out_dir, mailto)
-        except Exception as exc:  # noqa: BLE001
-            record["copy"] = {"error": f"{type(exc).__name__}: {exc}"}
+    if (record["identity"] in ("unlocated_after_search", "not_indexed")
+            and check_contents and kind in ("article", "book")
+            and record.get("contents", {}).get("status", "search_incomplete")
+            == "search_incomplete"):
+        record["identity"] = "search_incomplete"
+    if past_deadline() and not budget_skipped:
+        record["notes"].append("reference deadline: remaining routes skipped")
     return record
 
 

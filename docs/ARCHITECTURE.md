@@ -90,6 +90,8 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 - **Source states are distinct.** `verified`, `blocked`, `dead`, `record-only` and `absent` are different outcomes. A blocked or dead link is not a formatting defect; an unretrieved source is `not judged`, not "not supported".
 - **Findings.** Category A is a formatting/mechanical defect; Category B is a substantive use problem. Outcomes are `Supports`, `Qualified`, `Contradicts`, `Not Supported` and `Not Judged`. A claim the retrieved evidence cannot decide stays `Not Judged`.
 - **No absence without a completed route.** "Could not be found" is only sayable after the protocol's required routes ran; access restrictions and operational failures are `search_incomplete`.
+- **Identity request budget.** Each reference shares a cooperative elapsed budget across metadata pacing, socket timeouts and retry waits. Provider waits that exceed the remaining budget are skipped. Copy retrieval has its own timeouts.
+- **Identity cache.** Citation verdicts are keyed by normalized citation text. Completed misses use the same TTL as matches; incomplete searches are retried. Provider metadata keyed by DOI remains reusable across distinct citations.
 - **Cache and host state.** Page cache success 7 days, failure 1 hour; host block/dead state 24 hours. `--cache-dir` and `--no-cache` are explicit. A remembered blocked host is not retried without `--force`.
 - **No Wayback probing by default.** A snapshot is not the submitted link and is not required for an audit.
 - **One metrics write.** `record_metrics.py --review` replaces the scope line; a second run creates a duplicate sidecar.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Identity resolution.** Share the reference deadline across metadata requests,
+  pacing and retry waits. Retry incomplete searches and reuse completed verdicts
+  for the same citation, including completed misses.
+
 - **README sync.** The stable version, the `--version` example, the CORE key
   requirement, the opt-in Wayback behaviour and the CI docs check now match the
   current installer and release.

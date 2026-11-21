@@ -3238,9 +3238,10 @@ class SourceCacheTests(unittest.TestCase):
     def test_identity_cache_skips_provider_routes(self):
         entry = ("Wallace, W. T. (1993). The role of actors in films. "
                  "https://doi.org/10.1000/x")
-        rd.cache_put("identity", "doi:10.1000/x",
-                     {"identity": "confirmed", "doi": "10.1000/x",
-                      "record_title": "Cached title"})
+        with mock.patch.object(rd, "crossref_by_doi_cached",
+                               return_value={"title": "The role of actors in films"}), \
+                mock.patch.object(rd, "match_record", return_value=("confirmed", {})):
+            rd.process(entry, self.root, False, "")
         with mock.patch.object(rd, "crossref_by_doi_cached",
                                side_effect=AssertionError("network used")), \
                 mock.patch.object(rd, "crossref_search",
@@ -3570,6 +3571,54 @@ class RetrievalEfficiencyTests(unittest.TestCase):
                                   side_effect=AssertionError("catalogue used")):
             record = rd.process(entry, self._tmp.name, False, "", check_contents=True)
         self.assertIn("reference deadline", " ".join(record.get("notes", [])))
+
+    def test_transport_timeout_and_retry_share_the_reference_budget(self):
+        url = "https://example.test/works"
+        error = urllib.error.HTTPError(url, 503, "Busy", {}, None)
+        token = rd._IDENTITY_DEADLINE.set(101.0)
+        try:
+            with mock.patch.object(rd.time, "monotonic", return_value=100.0), \
+                    mock.patch.object(rd, "_throttle"), \
+                    mock.patch.object(rd.urllib.request, "urlopen", side_effect=error) as request, \
+                    mock.patch.object(rd.time, "sleep") as sleep:
+                with self.assertRaises(rd.IdentityBudgetExhausted):
+                    rd._request(url, timeout=10)
+                request.assert_called_once()
+                self.assertEqual(request.call_args.kwargs["timeout"], 1.0)
+                sleep.assert_not_called()
+        finally:
+            rd._IDENTITY_DEADLINE.reset(token)
+
+    def test_incomplete_identity_retries_but_completed_miss_is_cached(self):
+        entry = "Wallace, W. T. (1993). The role of actors in films. Journal, 17(1), 1-27."
+        with mock.patch.object(rd, "crossref_search",
+                               side_effect=[TimeoutError, []]) as search, \
+                mock.patch.object(rd, "openalex_search", return_value=[]):
+            results = [rd.process(entry, self.root, False, "") for _ in range(3)]
+        self.assertEqual([result["identity"] for result in results],
+                         ["search_incomplete", "unlocated_after_search",
+                          "unlocated_after_search"])
+        self.assertEqual(search.call_count, 2)
+
+    def test_catalogue_deadline_does_not_cache_the_verdict(self):
+        parsed = self._book()
+        first = rd.book_affirmative(parsed, deadline=time.monotonic() - 1)
+        held = {"count": 1, "title": parsed["title"], "score": 1.0}
+        with mock.patch.object(rd, "_probe_k10plus", return_value=(held, "")):
+            second = rd.book_affirmative(parsed)
+        self.assertEqual(first["status"], "search_incomplete")
+        self.assertEqual(second["status"], "present")
+
+    def test_distinct_citations_of_same_doi_do_not_share_verdict(self):
+        first = "Wallace, W. T. (1993). The role of actors in films. https://doi.org/10.1000/x"
+        second = first.replace("1993", "2025")
+        with mock.patch.object(rd, "crossref_by_doi_cached", return_value={}), \
+                mock.patch.object(rd, "doi_verdict", side_effect=[
+                    ("confirmed", {}), ("bibliographic_conflict", {})]) as verdict:
+            records = [rd.process(entry, self.root, False, "") for entry in (first, second)]
+        self.assertEqual([record["identity"] for record in records],
+                         ["confirmed", "bibliographic_conflict"])
+        self.assertEqual(verdict.call_count, 2)
 
     def test_a_keyed_provider_429_is_recorded_without_a_retry_ladder(self):
         calls = []
