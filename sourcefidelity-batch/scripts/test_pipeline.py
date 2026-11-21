@@ -2854,13 +2854,85 @@ class RetrievalPortTests(unittest.TestCase):
 
     def test_provider_pacing_enforces_the_interval(self):
         slept, now = [], [1000.0]
-        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": tempfile.mkdtemp()}):
-            with mock.patch.dict(pacing.MIN_INTERVAL, {"openalex": 2.0}):
-                pacing.wait("openalex", clock=lambda: now[0], sleep=slept.append)
-                now[0] += 0.5
-                pacing.wait("openalex", clock=lambda: now[0], sleep=slept.append)
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": tmp}), \
+                mock.patch.dict(pacing.MIN_INTERVAL, {"openalex": 2.0}):
+            pacing.wait("openalex", clock=lambda: now[0], sleep=sleep)
+            now[0] += 0.5
+            pacing.wait("openalex", clock=lambda: now[0], sleep=sleep)
         self.assertEqual(len(slept), 1)
         self.assertAlmostEqual(slept[0], 1.5, places=1)
+
+
+class SharedPacingTests(unittest.TestCase):
+    def test_cooldown_written_in_subprocess_is_seen_within_deadline(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": tmp}):
+            command = ("import sys; sys.path.insert(0, sys.argv[1]); "
+                       "import provider_pacing as p; p.observe('openalex', 429, '60')")
+            subprocess.run([sys.executable, "-IB", "-c", command, REVIEW], check=True)
+            with self.assertRaises(pacing.PacingTimeout):
+                pacing.wait("openalex", deadline=time.monotonic() + 0.25)
+            self.assertEqual(pacing.wait("crossref", deadline=time.monotonic() + 1), 0)
+
+    def test_curl_publishes_final_retry_after_without_exporting_payload(self):
+        def curl(command, **kwargs):
+            Path(command[2]).write_text("HTTP/1.1 302 Found\nRetry-After: 120\n\n"
+                                        "HTTP/2 429 Too Many Requests\nRetry-After: 6\n\n")
+            return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+        shared = rd.provider_pacing
+        with mock.patch.object(shared, "wait") as wait, \
+                mock.patch.object(shared.subprocess, "run", side_effect=curl), \
+                mock.patch.object(shared, "observe") as observe:
+            shared.curl_request("https://api.crossref.org/works", ["-L"])
+        wait.assert_called_once_with("crossref")
+        observe.assert_called_once_with("crossref", 429, "6")
+
+
+class DoiPrefetchTests(unittest.TestCase):
+    def test_openalex_batches_one_filter_and_only_keeps_requested_records(self):
+        first, second = "10.1000/first", "10.1000/second"
+        payload = {"results": [
+            {"doi": f"https://doi.org/{first}", "title": "First"},
+            {"doi": "https://doi.org/10.1000/other", "title": "Unrequested"},
+        ]}
+        with mock.patch.object(rd, "_json", return_value=payload) as request, \
+                mock.patch.object(rd, "_key", return_value=""):
+            found = rd.openalex_batch([first, second])
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(request.call_args.args[0]).query)
+        self.assertEqual(query["filter"], [f"doi:https://doi.org/{first}|https://doi.org/{second}"])
+        self.assertEqual(query["per_page"], ["2"])
+        self.assertEqual(list(found), [first])
+
+    def test_prefetch_skips_warm_and_leaves_unreturned_doi_for_individual_lookup(self):
+        first, second, third = ("10.1000/first", "10.1000/second", "10.1000/third")
+        entries = [f"https://doi.org/{doi.upper()}." for doi in (first, second, third, first)]
+        first_meta = {"doi": first, "title": "First"}
+        second_meta = {"doi": second, "title": "Second"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(rd, "CACHE_ROOT", tmp):
+            rd.cache_put("metadata", first, first_meta)
+            with mock.patch.object(rd, "crossref_batch", return_value={second: second_meta}) as cr, \
+                    mock.patch.object(rd, "openalex_batch", return_value={}) as oa:
+                result = rd.batch_metadata(entries)
+            self.assertEqual(result, {"crossref": 1, "openalex": 0, "warm": 1})
+            cr.assert_called_once_with([second, third], "")
+            oa.assert_called_once_with([third])
+            self.assertEqual(rd.cache_get("metadata", first), first_meta)
+            with mock.patch.object(rd, "crossref_by_doi", return_value={"doi": third}) as individual:
+                rd.crossref_by_doi_cached(second)
+                rd.crossref_by_doi_cached(third)
+            individual.assert_called_once_with(third)
+            with mock.patch.object(rd, "crossref_batch") as cr, \
+                    mock.patch.object(rd, "openalex_batch") as oa:
+                self.assertEqual(rd.batch_metadata(entries)["warm"], 3)
+            cr.assert_not_called()
+            oa.assert_not_called()
 
 
 class ResolveDoisTests(unittest.TestCase):
@@ -3760,16 +3832,21 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             self.assertIsNone(rd.cache_get("host", "HTTPFlaky", ttl=900))
             self.assertEqual(rd.cache_get("host", "DeadHost", ttl=900)["reason"], "URLError")
 
-    def test_provider_calls_are_spaced_within_one_process(self):
-        slept = []
-        rd._LAST_CALL.clear()
-        with mock.patch.object(rd.time, "sleep", side_effect=slept.append), \
-                mock.patch.object(rd.time, "time", return_value=1000.0):
-            rd._throttle("https://www.googleapis.com/books/v1/volumes?q=x")
-            rd._throttle("https://www.googleapis.com/books/v1/volumes?q=y")
-        rd._LAST_CALL.clear()
-        self.assertEqual(len(slept), 1)
-        self.assertAlmostEqual(slept[0], 1.0, places=1)
+    def test_legacy_batch_and_resolver_share_same_provider_slot(self):
+        now, slept = [1000.0], []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.dict(os.environ, {"SOURCEFIDELITY_CACHE": tmp}), \
+                mock.patch.object(rd.time, "time", side_effect=lambda: now[0]), \
+                mock.patch.object(rd.time, "sleep", side_effect=sleep):
+            rd._throttle("https://api.openalex.org/works?search=x")
+            pacing.wait("crossref")  # an unrelated provider has no OpenAlex wait
+            pacing.wait("openalex")
+        self.assertEqual(slept, [1.0])
 
     def test_a_discovery_route_holds_on_a_partial_title_match(self):
         parsed = rd.parse_reference(
@@ -3947,11 +4024,14 @@ class RetrievalEfficiencyTests(unittest.TestCase):
 
         url = "https://www.googleapis.com/books/v1/volumes?q=x"
         with mock.patch.object(rd.urllib.request, "urlopen", side_effect=boom), \
+                mock.patch.object(rd, "_throttle"), \
+                mock.patch.object(rd.provider_pacing, "observe") as observe, \
                 mock.patch.object(rd, "google_books_key", return_value="key"), \
                 mock.patch.object(rd.time, "sleep"):
             with self.assertRaises(urllib.error.HTTPError):
                 rd._request(url)
         self.assertEqual(len(calls), 1)
+        observe.assert_called_once_with("google_books", 429, "")
 
     def test_an_unkeyed_provider_still_retries_a_transient_429(self):
         calls = []
@@ -3963,10 +4043,13 @@ class RetrievalEfficiencyTests(unittest.TestCase):
 
         url = "https://api.crossref.org/works?query=x"
         with mock.patch.object(rd.urllib.request, "urlopen", side_effect=boom), \
+                mock.patch.object(rd, "_throttle"), \
+                mock.patch.object(rd.provider_pacing, "observe") as observe, \
                 mock.patch.object(rd.time, "sleep"):
             with self.assertRaises(urllib.error.HTTPError):
                 rd._request(url)
         self.assertEqual(len(calls), 3)
+        self.assertEqual(observe.call_count, 3)
 
     def test_crossref_search_sends_only_valid_select_fields(self):
         captured = {}
@@ -4204,7 +4287,7 @@ class ReferenceSpeedupTests(unittest.TestCase):
                 mock.patch.object(of.user_settings, "get",
                                   side_effect=lambda key: "fake" if key == "core_api_key" else ""), \
                 mock.patch.object(of, "_curl_json", side_effect=[{}, {"results": []}, {"results": []}]), \
-                mock.patch.object(of.time, "sleep"), redirect_stdout(io.StringIO()):
+                redirect_stdout(io.StringIO()):
             of.main(["--ref", "Dyer, R. (2004). Stardom. Routledge.",
                      "--no-openalex", "--out", tmp])
             base = os.path.join(tmp, "_work", "open")

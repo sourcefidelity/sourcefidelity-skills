@@ -39,6 +39,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import provider_pacing  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -351,25 +353,6 @@ def match_record(parsed, candidate, kind):
 
 
 RETRY_STATUS = (429, 500, 502, 503, 504)
-# Per-provider spacing shared by the reference threads. The app's provider_gate
-# does this properly; this is the same idea at the scale one review needs: no
-# burst at a single API when four references are resolved in parallel.
-PROVIDER_INTERVALS = (
-    ("googleapis.com", 1.0),
-    ("api.openalex.org", 0.25),
-    ("api.crossref.org", 0.2),
-    ("api.semanticscholar.org", 1.1),
-    ("core.ac.uk", 1.0),
-    ("archive.org", 0.6),
-    ("catalogue.bnf.fr", 0.6),
-    ("sru.k10plus.de", 0.6),
-    ("services.dnb.de", 0.6),
-    ("ci.nii.ac.jp", 0.4),
-)
-_THROTTLE_LOCK = threading.Lock()
-_LAST_CALL = {}
-
-
 _IDENTITY_DEADLINE = ContextVar("identity_deadline", default=None)
 
 
@@ -388,22 +371,13 @@ def _within_budget(timeout=0.0, *, waiting=False):
 
 
 def _throttle(url):
-    host = urllib.parse.urlparse(url).netloc
-    interval = next((value for suffix, value in PROVIDER_INTERVALS
-                     if host.endswith(suffix)), 0.1)
-    if _IDENTITY_DEADLINE.get() is None:
-        _THROTTLE_LOCK.acquire()
-    elif not _THROTTLE_LOCK.acquire(timeout=_within_budget(threading.TIMEOUT_MAX)):
-        raise IdentityBudgetExhausted("reference deadline")
+    deadline = _IDENTITY_DEADLINE.get()
     try:
-        last = _LAST_CALL.get(host, 0.0)
-        wait = interval - (time.time() - last)
-        _within_budget(max(0.0, wait), waiting=True)
-        if wait > 0:
-            time.sleep(wait)
-        _LAST_CALL[host] = time.time()
-    finally:
-        _THROTTLE_LOCK.release()
+        return provider_pacing.wait(provider_pacing.provider_for(url), deadline=deadline)
+    except provider_pacing.PacingTimeout as exc:
+        if deadline is not None:
+            raise IdentityBudgetExhausted("reference deadline") from exc
+        raise RateLimited("provider cooldown exceeds wait budget") from exc
 
 
 DECISIVE_IDENTITIES = frozenset({"confirmed", "same_work_other_edition",
@@ -454,18 +428,18 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
                 return response.status, response.geturl(), response.headers, response.read()
         except urllib.error.HTTPError as error:
             last = error
-            try:
-                retry_after = int(error.headers.get("Retry-After") or 0)
-            except (TypeError, ValueError):
-                retry_after = 0
-            if error.code == 429 and retry_after > 60:
-                raise RateLimited(f"rate limited: Retry-After {retry_after}s") from error
+            retry_after = error.headers.get("Retry-After") if error.headers else ""
+            provider_pacing.observe(provider_pacing.provider_for(url), error.code, retry_after)
+            delay = provider_pacing.retry_after_seconds(retry_after)
+            if error.code == 429 and delay > 60:
+                raise RateLimited(f"rate limited: Retry-After {delay:g}s") from error
             if error.code == 429 and _keyed_provider(url):
-                raise  # record the quota answer now; retry on the next reference
+                raise
             if error.code in RETRY_STATUS and attempt < attempts - 1:
-                delay = min(retry_after or 2 * (attempt + 1), 30)
-                _within_budget(delay, waiting=True)
-                time.sleep(delay)
+                if error.code != 429 and not (error.code == 503 and delay):
+                    backoff = min(delay or 2 * (attempt + 1), 30)
+                    _within_budget(backoff, waiting=True)
+                    time.sleep(backoff)
                 continue
             raise
     raise last
@@ -697,7 +671,7 @@ def _meta_from_crossref_item(item, doi):
 def crossref_batch(dois, mailto=""):
     found = {}
     for start in range(0, len(dois), 12):
-        chunk = dois[start:start + 12]
+        chunk = [doi.lower() for doi in dois[start:start + 12]]
         query = "filter=" + ",".join("doi:" + urllib.parse.quote(doi.lower())
                                      for doi in chunk)
         query += f"&rows={len(chunk)}"
@@ -707,9 +681,12 @@ def crossref_batch(dois, mailto=""):
             data = _json("https://api.crossref.org/works?" + query)
         except Exception:  # noqa: BLE001
             continue
-        for item in (data.get("message") or {}).get("items") or []:
+        items = (data.get("message") or {}).get("items") if isinstance(data, dict) else None
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
             doi = (item.get("DOI") or "").lower()
-            if doi:
+            if doi in chunk and item.get("title"):
                 found[doi] = _meta_from_crossref_item(item, doi)
     return found
 
@@ -717,20 +694,23 @@ def crossref_batch(dois, mailto=""):
 def openalex_batch(dois):
     found = {}
     for start in range(0, len(dois), 25):
-        chunk = dois[start:start + 25]
-        query = "filter=" + "|".join(
-            "doi:https://doi.org/" + urllib.parse.quote(doi.lower()) for doi in chunk)
-        query += f"&per-page={len(chunk)}"
+        chunk = [doi.lower() for doi in dois[start:start + 25]]
+        params = {"filter": "doi:" + "|".join(f"https://doi.org/{doi}" for doi in chunk),
+                  "per_page": len(chunk)}
         key = _key("openalex_api_key")
         if key:
-            query += "&api_key=" + urllib.parse.quote(key)
+            params["api_key"] = key
+        query = urllib.parse.urlencode(params)
         try:
             data = _json("https://api.openalex.org/works?" + query)
         except Exception:  # noqa: BLE001
             continue
-        for item in data.get("results") or []:
-            doi = ((item.get("doi") or "").replace("https://doi.org/", "")).lower()
-            if not doi:
+        items = data.get("results") if isinstance(data, dict) else None
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            doi = (item.get("doi") or "").lower().removeprefix("https://doi.org/")
+            if doi not in chunk or not item.get("title"):
                 continue
             biblio = item.get("biblio") or {}
             found[doi] = {
@@ -747,22 +727,20 @@ def openalex_batch(dois):
 
 
 def batch_metadata(entries, mailto=""):
-    dois = []
-    for entry in entries:
-        for doi in DOI_RE.findall(entry):
-            if doi.lower() not in dois:
-                dois.append(doi.lower())
-    if not dois or not CACHE_ROOT:
-        return {"crossref": 0, "openalex": 0}
-    found = crossref_batch(dois, mailto)
+    dois = list(dict.fromkeys(
+        doi.rstrip(".").lower() for entry in entries for doi in DOI_RE.findall(entry)))
+    if not CACHE_ROOT:
+        return {"crossref": 0, "openalex": 0, "warm": 0}
+    pending = [doi for doi in dois if not cache_get("metadata", doi)]
+    found = crossref_batch(pending, mailto) if pending else {}
     for doi, meta in found.items():
         cache_put("metadata", doi, meta)
-    missing = [doi for doi in dois if doi not in found]
+    missing = [doi for doi in pending if doi not in found]
     extra = openalex_batch(missing) if missing else {}
     for doi, meta in extra.items():
         if not cache_get("metadata", doi):
             cache_put("metadata", doi, meta)
-    return {"crossref": len(found), "openalex": len(extra)}
+    return {"crossref": len(found), "openalex": len(extra), "warm": len(dois) - len(pending)}
 
 
 def crossref_by_doi_cached(doi, mailto=""):
@@ -2130,7 +2108,7 @@ def main(argv=None):
     os.makedirs(out_dir, exist_ok=True)
     if args.batch_metadata:
         batch = batch_metadata(entries, args.mailto or email_for_requests())
-        if batch.get("crossref") or batch.get("openalex"):
+        if any(batch.values()):
             print(json.dumps({"batch_metadata": batch}), flush=True)
     records = []
     jobs = max(1, int(args.jobs or 1))

@@ -22,7 +22,6 @@ import os
 import re
 import subprocess
 import sys
-import time
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -59,8 +58,9 @@ def _curl_json(url, headers=None, timeout=25):
         config += 'header = "%s: %s"\n' % (key, value.replace('"', '\\"'))
     config += 'url = "%s"\n' % url.replace('"', '\\"')
     try:
-        proc = subprocess.run(["curl", "-K", "-", "-L", "--max-time", str(timeout)],
-                              input=config, capture_output=True, text=True)
+        proc = rd.provider_pacing.curl_request(
+            url, ["-K", "-", "-L", "--max-time", str(timeout)],
+            input=config, capture_output=True, text=True)
         return json.loads(proc.stdout) if proc.stdout.strip() else {}
     except (OSError, ValueError, subprocess.SubprocessError):
         return {}
@@ -164,7 +164,6 @@ def _core(parsed, key, attempts):
             if authors and not rd.author_match(parsed, authors):
                 continue
             found.setdefault(item.get("id") or item.get("title"), item)
-        time.sleep(0.4)
         if any(len(_core_unescape(item.get("fullText") or "")) > 500
                for item in found.values()):
             break
@@ -295,11 +294,9 @@ def main(argv=None):
         core_attempts = []
         if not args.no_openalex:
             candidates += _candidate_urls(_openalex(parsed), [])
-            time.sleep(0.3)
         if key and not args.no_core:
             core_items = _core(parsed, key, core_attempts)
             candidates += _candidate_urls([], core_items)
-            time.sleep(1.2)
         status = "search_incomplete" if any(
             attempt["returned"] is None for attempt in core_attempts) else "no_candidate"
         row = {"ref": ref_id, "title": (parsed.get("title") or "")[:100],

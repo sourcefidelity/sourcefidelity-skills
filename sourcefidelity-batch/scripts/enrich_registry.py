@@ -34,6 +34,9 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import source_registry as sr  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                                "sourcefidelity-review", "scripts"))
+import provider_pacing  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -87,10 +90,9 @@ def fetch(url, timeout=20):
 
     One bounded retry on 429/5xx, honouring nolong sleeps; a 4xx is final.
     """
-    import subprocess
     for attempt in (1, 2):
-        proc = subprocess.run(
-            ["curl", "-sS", "-L", "--max-time", str(timeout), "-H", f"User-Agent: {UA}",
+        proc = provider_pacing.curl_request(
+            url, ["-sS", "-L", "--max-time", str(timeout), "-H", f"User-Agent: {UA}",
              "-w", "\n%{http_code}", url],
             capture_output=True, text=True)
         body = proc.stdout.rsplit("\n", 1)[0] if proc.stdout else ""
@@ -98,7 +100,8 @@ def fetch(url, timeout=20):
         if code == "200":
             return json.loads(body)
         if attempt == 1 and (code in {"429", "500", "502", "503", "504"} or proc.returncode != 0):
-            time.sleep(2)
+            if code != "429":
+                time.sleep(2)
             continue
         raise RuntimeError(f"HTTP {code or proc.returncode}: {proc.stderr[:160]}")
 

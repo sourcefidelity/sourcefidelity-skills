@@ -17,8 +17,13 @@ CONTACT = os.environ.get("CONTACT_EMAIL", "")
 
 def fetch(url, provider, accept="text"):
     """Fetch a URL for a provider after its pacing slot; return the safe_fetch dict."""
-    pacing.wait(provider)
+    pace_key = pacing.provider_for(url)
+    try:
+        pacing.wait(pace_key)
+    except pacing.PacingTimeout:
+        return {"status": 0, "limitation": "provider_cooldown", "final_url": url}
     result = safe_fetch.fetch(url)
+    pacing.observe(pace_key, result.get("status"), result.get("retry_after"))
     if accept == "json" and result.get("text"):
         try:
             result["json"] = json.loads(result["text"])

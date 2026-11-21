@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Provider pacing and DOI prefetch.** Share request spacing and Retry-After
+  cooldowns across discovery commands. Skip cached DOIs and use a single
+  OpenAlex DOI filter for each group.
+
 - **Batch discovery.** Record provider attempts, distinguish empty searches
   from rejected candidates and failures, and retry incomplete searches.
   Cache completed results per citation so conflicting uses of a DOI are

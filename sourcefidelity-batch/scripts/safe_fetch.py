@@ -127,6 +127,8 @@ def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000):
             response = network(current, timeout)
         except urllib.error.HTTPError as exc:  # provider answered with an error
             result["status"] = exc.code
+            if exc.code in (429, 503):
+                result["retry_after"] = header(exc.headers, "Retry-After")
             if exc.code == 429:
                 result["limitation"] = "rate_limited"
             elif exc.code in (401, 403):
@@ -145,6 +147,8 @@ def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000):
             return result
         status = getattr(response, "status", None) or response.getcode()
         headers = getattr(response, "headers", {}) or {}
+        if status in (429, 503):
+            result["retry_after"] = header(headers, "Retry-After")
         if status in (301, 302, 303, 307, 308):
             location = header(headers, "Location")
             if not location:
