@@ -12,6 +12,10 @@ locators stay paragraph-based.
 import argparse, json, os, re, sys, zipfile
 from xml.etree import ElementTree as ET
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from word_count import _text  # noqa: E402
+
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -31,7 +35,7 @@ def build(path):
     tables = len(list(document.iter(W + "tbl")))
     paragraphs = []
     for para in document.iter(W + "p"):
-        text = "".join(node.text or "" for node in para.iter(W + "t"))
+        text = _text(para)
         if not text.strip() and not para.findall(".//" + W + "hyperlink"):
             continue
         props = para.find(W + "pPr")
@@ -51,7 +55,7 @@ def build(path):
             align = jc.get(W + "val") if jc is not None else ""
         runs, links = [], []
         for run in para.iter(W + "r"):
-            body = "".join(node.text or "" for node in run.iter(W + "t"))
+            body = _text(run)
             fmt = run.find(W + "rPr")
             italic = fmt is not None and fmt.find(W + "i") is not None and \
                 (fmt.find(W + "i").get(W + "val") or "true") not in ("0", "false")

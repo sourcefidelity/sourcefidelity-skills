@@ -30,8 +30,8 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `dossier.py` | One call for identity and link state: `dossier.md` and `dossier.json`, one row per reference. |
 | `hyperlink_audit.py` | Classifies every submitted link by state; joins split URLs; records transport and cache. |
 | `resolve_dois.py` | Reference identity: DOI check before landing fetch, title/author matching, archive routing. |
-| `sourcepack.py` | Maps supplied PDFs to references, extracts each once, indexes printed pages, searches phrases. |
-| `openfetch.py` | Best-effort open-access copies from OpenAlex and CORE; records blocked/no-copy outcomes. |
+| `sourcepack.py` | Proposes unique PDF mappings from first-page title and author evidence or a strong filename, honours explicit overrides, and indexes the extracts by printed page. |
+| `openfetch.py` | Best-effort open-access copies from OpenAlex and CORE, with attempted CORE queries and access outcomes in the index. |
 | `fetch.py` | One URL, curl then urllib on 401/403/429, with 24-hour host-state memory. |
 | `docx_text.py`, `word_count.py` | Paragraph text and counts from the original DOCX. |
 | `update_check.py` | Weekly release check; prints one line when an update is due. |

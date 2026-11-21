@@ -332,7 +332,10 @@ def build(path, paper_id):
         has_claim = bool(re.search(r"\b(?:argues?|shows?|reveals?|demonstrates?"
                                r"|suggests?|states?|claims?|explains?)\b",
                                p["text"], re.I))
-        if (has_fact or has_quote or has_name or has_claim) and p["words"] >= 12:
+        short_assertion = has_name and bool(re.search(
+            r"\b(?:is|are|was|were)\b", p["text"], re.I))
+        if ((p["words"] >= 10 and short_assertion)
+                or (p["words"] >= 12 and (has_fact or has_quote or has_name or has_claim))):
             signals = [name for name, ok in
                        (("fact", has_fact), ("quote", has_quote),
                         ("name", has_name), ("claim", has_claim)) if ok]
@@ -340,7 +343,7 @@ def build(path, paper_id):
                 "id": f"U{len(uncited) + 1}",
                 "paragraph_id": p["id"],
                 "text": p["text"],
-                  "signals": signals,
+                "signals": signals,
             })
 
     final_order = {p["id"]: index for index, p in enumerate(paragraphs)}

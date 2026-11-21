@@ -33,6 +33,7 @@ import authorship_signals as ats  # noqa: E402
 import batch_paths as bp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
+import docx_text as dt  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
@@ -3788,14 +3789,108 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertIn("v2.3.4 (commit abc1234)", buf.getvalue())
 
 
+class DocxFormattingTests(unittest.TestCase):
+    def _write_docx(self, directory, body, relationships=""):
+        path = os.path.join(directory, "paper.docx")
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml",
+                             f'<w:document xmlns:w="{dt.W[1:-1]}" xmlns:r="{dt.R[1:-1]}">'
+                             f"<w:body>{body}</w:body></w:document>")
+            if relationships:
+                archive.writestr("word/_rels/document.xml.rels", relationships)
+        return path
+
+    def test_docx_dump_preserves_formatting_separators_tables_and_links(self):
+        body = (
+            '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:ind w:hanging="720"/>'
+            '<w:jc w:val="center"/></w:pPr>'
+            '<w:r><w:rPr><w:i/><w:b w:val="0"/></w:rPr><w:t>Journal</w:t><w:tab/></w:r>'
+            '<w:r><w:rPr><w:b/></w:rPr><w:t>Title</w:t><w:br/></w:r>'
+            '<w:hyperlink r:id="rId1"><w:r><w:t>Link</w:t></w:r></w:hyperlink></w:p>'
+            '<w:p/><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p>'
+            '</w:tc></w:tr></w:tbl>')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_docx(tmp, body,
+                                    '<Relationships><Relationship Id="rId1" '
+                                    'Target="https://example.test/article" '
+                                    'TargetMode="External"/></Relationships>')
+            data = dt.build(path)
+        self.assertEqual(data["tables"], 1)
+        first, second = data["paragraphs"]
+        self.assertEqual((first["id"], second["id"], second["text"]), ("P1", "P2", "Cell"))
+        self.assertEqual(first["text"], "Journal\tTitle\nLink")
+        self.assertEqual(first["words"], 3)
+        self.assertEqual(first["links"], ["https://example.test/article"])
+        self.assertEqual((first["style"], first["align"], first["indent"]),
+                         ("Heading1", "center", {"hanging": "720"}))
+        self.assertEqual(first["runs"][:2], [
+            {"text": "Journal\t", "italic": True, "bold": False},
+            {"text": "Title\n", "italic": False, "bold": True},
+        ])
+        self.assertIn("_Journal", dt.markdown(data))
+
+    def test_short_named_assertion_is_an_uncited_candidate(self):
+        body = ("<w:p><w:r><w:t>Quiet authority is the central feature of Dana Hart's "
+                "screen persona.</w:t></w:r></w:p>"
+                "<w:p><w:r><w:t>Early publications about Dana Hart and American film "
+                "practice.</w:t></w:r></w:p>")
+        with tempfile.TemporaryDirectory() as tmp:
+            data = ec.build(self._write_docx(tmp, body), "sample")
+        self.assertEqual([(row["paragraph_id"], row["signals"])
+                          for row in data["uncited_candidates"]], [("P1", ["name"])])
+
+
 class ReferenceSpeedupTests(unittest.TestCase):
-    def test_sourcepack_maps_a_filename(self):
-        refs = [{"text": "O'Connell, S. P. (1996). Television without Frontiers: The "
-                         "European Union's Continuing Struggle for Cultural Survival. "
-                         "Case Western Reserve Journal of International Law, 28(2), 501-523."}]
-        mapping = sp.map_refs(refs, ["/tmp/oconnell1996.pdf"], {})
-        self.assertIn("R1", mapping)
-        self.assertTrue(mapping["R1"]["path"].endswith("oconnell1996.pdf"))
+    def test_sourcepack_needs_title_evidence_for_filename_fallback(self):
+        refs = [{"text": "Dyer, R. (2004). Heavenly bodies. Routledge."}]
+        strong = "/tmp/dyer-2004-heavenly-bodies.pdf"
+        weak = "/tmp/dyer-2004.pdf"
+        with mock.patch.object(sp, "_first_page", return_value=""):
+            self.assertEqual(sp.map_refs(refs, [weak], {}), {})
+            self.assertEqual(sp.map_refs(refs, [strong], {})["R1"]["why"], "filename")
+
+    def test_sourcepack_maps_opaque_file_and_rejects_misleading_filename(self):
+        refs = [{"text": "Dyer, R. (2004). Heavenly bodies. Routledge."}]
+        opaque = "/tmp/8.pdf"
+        wrong = "/tmp/dyer-2004-heavenly-bodies.pdf"
+        with mock.patch.object(sp.pdf_quality, "native_pages", side_effect=[
+                {"pages": [{"text": "Only Entertainment\nRichard Dyer"}]},
+                {"pages": [{"text": "Heavenly Bodies\nRichard Dyer"}]}]) as read:
+            mapping = sp.map_refs(refs, [wrong, opaque], {})
+        self.assertEqual(mapping["R1"]["path"], opaque)
+        self.assertEqual(mapping["R1"]["why"], "first page")
+        self.assertEqual(read.call_args_list, [mock.call(wrong, only_pages=[1]),
+                                               mock.call(opaque, only_pages=[1])])
+
+    def test_sourcepack_leaves_ambiguous_files_unmapped_unless_overridden(self):
+        refs = [{"text": "Dyer, R. (2004). Heavenly bodies. Routledge."}]
+        paths = ["/tmp/8.pdf", "/tmp/archive.pdf"]
+        with mock.patch.object(sp, "_first_page",
+                               return_value="heavenly bodies richard dyer"):
+            self.assertEqual(sp.index_rows(refs, sp.map_refs(refs, paths, {}), {})
+                             [0]["status"], "unmapped")
+            self.assertEqual(sp.map_refs(refs, paths, {"R1": paths[1]})
+                             ["R1"]["why"], "override")
+
+    def test_openfetch_index_records_core_queries_and_unavailable_response(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(of.user_settings, "get",
+                                  side_effect=lambda key: "fake" if key == "core_api_key" else ""), \
+                mock.patch.object(of, "_curl_json", side_effect=[{}, {"results": []}, {"results": []}]), \
+                mock.patch.object(of.time, "sleep"), redirect_stdout(io.StringIO()):
+            of.main(["--ref", "Dyer, R. (2004). Stardom. Routledge.",
+                     "--no-openalex", "--out", tmp])
+            base = os.path.join(tmp, "_work", "open")
+            with open(os.path.join(base, "index.json"), encoding="utf-8") as handle:
+                row = json.load(handle)[0]
+            self.assertEqual(row["core_queries"], [
+                {"query": 'title:"Stardom"', "returned": None},
+                {"query": 'title:"Stardom" AND authors:Dyer', "returned": 0},
+                {"query": 'title:Stardom AND authors:Dyer', "returned": 0},
+            ])
+            self.assertEqual(row["status"], "search_incomplete")
+            with open(os.path.join(base, "index.md"), encoding="utf-8") as handle:
+                self.assertIn("response unavailable", handle.read())
 
     def test_sourcepack_search_reports_printed_page(self):
         with tempfile.TemporaryDirectory() as tmp:

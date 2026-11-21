@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
-| Test suites | 304 pipeline tests; style and PDF suites report no failures |
+| Test suites | 318 pipeline tests run on the development branch, one skipped. Style and PDF suites report no failures. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -35,7 +35,9 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
 | Development install | `install.sh --dev` and `--link` on temp targets | `--dev` copied the working tree and recorded channel `dev`; `--link` created symlinks; no version or `latest.json` change |
 | Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
-| CORE adapter alignment | `openfetch.py --paper` on the Television references | Outputs search, cleaned phrase, author clause, DOI-first and word fallback saved R2, R4, R6, R7, R8 and R9; time 2m35s for all ten references |
+| CORE adapter alignment | Live `openfetch.py --ref` for the O’Connell article, using CORE alone | The cleaned title query returned 10 results. A matched CORE output yielded 84,947 characters of text with the article title and author visible. The index records the attempted query and returned count. |
+| Source-pack mapping | `sourcepack.py` on the Television consent paper with the wrong supplied book and a separate extraction using a real article PDF renamed `8.pdf` | Television R3 stayed unmapped and the unused PDF appeared in the index. The opaque article mapped from first-page title and author evidence and extracted with printed pages 9–20. |
+| DOCX extraction and uncited candidates | `docx_text.py` and `extract_candidates.py` on the Harlow consent paper, plus offline regressions | The formatting dump read 53 paragraphs. The 11-word named assertion at ¶P6 now appears as an uncited candidate and ¶P24 still appears. The formatting and short-assertion tests fail on the previous code. |
 | Third Television review | `reviews/sf-20261120-television-rerun-1.1.1` | 16/20 occurrences judged (12 Supports, 4 Qualified, 4 Not Judged); Category A 12, B 7; R10 landing only, R3 supplied file was the wrong work |
 | Delegated review run | provider content filter | Interrupted after retrieval and analysis; the report was assembled from the run's recorded judgments and texts, so its time and cost are not comparable |
 | CI | GitHub Actions run 44668057309 on `main` | success on Ubuntu, macOS and Windows, including the docs check |
@@ -48,10 +50,9 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Release archive has no git commit | An install updated from a release archive records an empty `commit`; the version and channel remain correct | Treat `installed.json` version as authoritative; use a checkout for commit-level reproducibility |
 | A provider content filter can interrupt a long delegated run | One review run failed twice with "Content Exists Risk" after reading the source texts; its artifacts were still usable | Keep source reads targeted; if a run fails, complete from the retrieved artifacts rather than re-reading |
 | The third Television run's time and cost are not clean | The report was completed outside the interrupted run | Compare its coverage, not its duration or cost, with earlier runs |
-| `sourcepack.py` heuristic can map the wrong book | R3 mapped to *The Cultural Industries* rather than *The media and social theory*; C6 is Not Judged | Adjudicate every mapping; use `--map R3=PATH` when the filename is ambiguous |
 | PowerShell installer paths unexecuted here | `install.ps1 -Check/-Update` reviewed but not runtime-tested (no PowerShell on this machine) | Run on Windows before announcing the release |
-| `openfetch.py` is best-effort | CORE's title search did not return the O'Connell article; a missed work is recorded as `no_candidate`, not absence | Treat it as a first pass; use the dossier and manual retrieval for gaps |
-| `sourcepack.py` maps by filename heuristic | Opaque names (`8.pdf`, `Archive.pdf`) do not map | Use `--map R3=PATH`; adjudicate the mapping |
+| `openfetch.py` is best-effort | An empty CORE search or an incomplete response limits coverage. The index records each CORE query and whether its result count was available. | Use the dossier and manual retrieval to resolve gaps. |
+| `sourcepack.py` automatic matches need adjudication | Scans without usable first-page text and ambiguous matches can remain unmapped. First-page evidence may leave the edition unresolved. | Inspect the unmapped PDFs and record a confirmed match using `--map`. |
 | Review artifacts are snapshots | Earlier reviews (for example the Television review) are not retroactively corrected | Correct only with an explicit logged edit or a reappraisal |
 | Review method is long | `REVIEW_PROTOCOL.md` is ~10.7k words and is read on every review | Keep it canonical; do not duplicate it in `ARCHITECTURE.md` |
 | Docs check is mechanical | It catches links, budgets and version drift, not stale truth | Review `STATE.md` and `PLAN.md` at release and after structural changes |

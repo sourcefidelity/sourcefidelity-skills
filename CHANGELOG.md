@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Source coverage and extraction.** Match supplied PDFs using first-page
+  title and author evidence, list unmapped copies, and record attempted CORE
+  queries. Preserve DOCX tabs and line breaks and surface short named
+  assertions for uncited-passage review.
+
 - **Identity resolution.** Share the reference deadline across metadata requests,
   pacing and retry waits. Retry incomplete searches and reuse completed verdicts
   for the same citation, including completed misses.

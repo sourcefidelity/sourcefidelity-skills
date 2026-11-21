@@ -12,8 +12,8 @@ paper's reference entries, extracts each mapped PDF once through
     python -I scripts/sourcepack.py --out REVIEW_ROOT --search "freedom of reception"
     python -I scripts/sourcepack.py --out REVIEW_ROOT --ref R3
 
-Mapping is a filename heuristic; the review still adjudicates it. Override any
-mapping with `--map`. Extraction output lives under `_work/sources/<R>/`;
+Mapping uses first-page title and author evidence where available. The review
+still adjudicates each match. Override a mapping with `--map`. Extraction output lives under `_work/sources/<R>/`;
 `index.md` and `index.json` record what was mapped, extracted and skipped.
 """
 
@@ -23,52 +23,28 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import hyperlink_audit as ha  # noqa: E402
+import pdf_quality  # noqa: E402
+import resolve_dois as rd  # noqa: E402
 
 PREPARE = os.path.join(HERE, "prepare_source.py")
 DOC_TYPES = (".pdf",)
-STOP = {"about", "after", "again", "against", "among", "between", "broadcast",
-        "broadcasting", "cultural", "culture", "during", "european", "first",
-        "from", "global", "their", "there", "these", "television", "under",
-        "which", "while", "with", "within", "without", "would"}
 
 
 def _norm(text):
-    text = (text or "").lower().replace("'", "").replace("\u2019", "")
-    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+    folded = unicodedata.normalize("NFKD", (text or "").casefold())
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    return " ".join(re.findall(r"[^\W_]+", re.sub(r"['’]", "", folded)))
 
 
-def _surname(entry):
-    match = re.match(r"^\s*([A-Z][A-Za-z'’\-]{2,})", entry or "")
-    return _norm(match.group(1)) if match else ""
-
-
-def _year(entry):
-    match = re.search(r"\((n\.d\.|(?:19|20)\d{2})", entry or "")
-    return match.group(1) if match else ""
-
-
-def _tokens(entry):
-    words = re.findall(r"[a-z]{5,}", (entry or "").lower())
-    return {word for word in words if word not in STOP}
-
-
-def _score(entry, path):
-    stem = _norm(os.path.basename(path))
-    surname = _surname(entry)
-    year = _year(entry)
-    score = 0
-    if surname and surname in stem:
-        score += 4
-    if year and year in stem:
-        score += 2
-    title_hits = sum(1 for token in _tokens(entry) if token in stem)
-    score += min(title_hits, 4)
-    return score
+def _first_page(path):
+    pages = pdf_quality.native_pages(path, only_pages=[1]).get("pages", [])
+    return _norm(pages[0].get("text")) if pages else ""
 
 
 def _files(root):
@@ -84,28 +60,43 @@ def _files(root):
 
 
 def map_refs(refs, files, overrides):
-    """Best filename match per reference, with an explicit override winning."""
-    mapping = {}
-    used = set()
-    for ref_id, path in overrides.items():
-        mapping[ref_id] = {"path": path, "why": "override", "score": None}
-        used.add(os.path.abspath(path))
+    """Map an unambiguous first-page match or a strong filename lead."""
+    mapping = {ref_id: {"path": path, "why": "override", "score": None}
+               for ref_id, path in overrides.items()}
+    used = {os.path.abspath(path) for path in overrides.values()}
+    first_pages = {path: _first_page(path) for path in files
+                   if os.path.abspath(path) not in used}
+    matches = {}
     for number, entry in enumerate(refs, start=1):
         ref_id = f"R{number}"
         if ref_id in mapping:
             continue
-        best, best_score, second = "", 0, 0
-        for path in files:
-            if os.path.abspath(path) in used:
+        parsed = rd.parse_reference(entry["text"])
+        title, surname = _norm(parsed["title"]), _norm(parsed["surname"])
+        if not surname or not title:
+            continue
+        candidates = []
+        for path, page in first_pages.items():
+            if page:
+                if f" {title} " in f" {page} " and f" {surname} " in f" {page} ":
+                    candidates.append((path, "first page"))
                 continue
-            score = _score(entry["text"], path)
-            if score > best_score:
-                best, best_score, second = path, score, best_score
-            elif score > second:
-                second = score
-        if best and best_score >= 4 and best_score - second >= 1:
-            mapping[ref_id] = {"path": best, "why": "filename", "score": best_score}
-            used.add(os.path.abspath(best))
+            stem = _norm(os.path.splitext(os.path.basename(path))[0])
+            if (parsed["year"] and f" {surname} " in f" {stem} "
+                    and f" {parsed['year']} " in f" {stem} "
+                    and f" {title} " in f" {stem} "):
+                candidates.append((path, "filename"))
+        matches[ref_id] = candidates
+    claimed = {}
+    for candidates in matches.values():
+        for path, _ in candidates:
+            key = os.path.abspath(path)
+            claimed[key] = claimed.get(key, 0) + 1
+    for ref_id, candidates in matches.items():
+        if len(candidates) == 1:
+            path, why = candidates[0]
+            if claimed[os.path.abspath(path)] == 1:
+                mapping[ref_id] = {"path": path, "why": why, "score": None}
     return mapping
 
 
@@ -172,7 +163,7 @@ def index_rows(refs, mapping, results):
     return rows
 
 
-def write_index(out, rows):
+def write_index(out, rows, unmapped_files=()):
     base = os.path.join(out, "_work", "sourcepack")
     os.makedirs(base, exist_ok=True)
     lines = ["# Source pack", "",
@@ -185,6 +176,9 @@ def write_index(out, rows):
                      f"{os.path.basename(row['path']) or '-'} | "
                      f"{row.get('why') or '-'} | {row['status'] or '-'} | "
                      f"{row.get('printed') or '-'} | {link} |")
+    if unmapped_files:
+        lines.extend(["", "## Unmapped PDFs", ""])
+        lines.extend(f"- {path}" for path in unmapped_files)
     with open(os.path.join(base, "index.md"), "w", encoding="utf-8",
               newline="\n") as handle:
         handle.write("\n".join(lines) + "\n")
@@ -278,14 +272,21 @@ def main(argv=None):
         if "=" not in item:
             parser.error(f"--map needs R#=PATH, got {item!r}")
         key, path = item.split("=", 1)
-        overrides[key.strip()] = os.path.abspath(path)
+        ref_id = key.strip()
+        if not re.fullmatch(r"R[1-9][0-9]*", ref_id) or int(ref_id[1:]) > len(refs):
+            parser.error(f"unknown reference in --map: {ref_id!r}")
+        if not os.path.isfile(path) or not path.lower().endswith(".pdf"):
+            parser.error(f"--map requires an existing PDF: {path!r}")
+        overrides[ref_id] = os.path.abspath(path)
     mapping = map_refs(refs, files, overrides)
     results = {}
     if not args.no_extract:
         for ref_id, item in mapping.items():
             results[ref_id] = extract(ref_id, item["path"], args.out, args.ocr_pages)
     rows = index_rows(refs, mapping, results)
-    write_index(args.out, rows)
+    mapped_paths = {os.path.abspath(item["path"]) for item in mapping.values()}
+    unmapped_files = [path for path in files if os.path.abspath(path) not in mapped_paths]
+    write_index(args.out, rows, unmapped_files)
     print(f"Source pack: {len(refs)} references; {len(mapping)} mapped; "
           f"{len(files)} candidate files")
     for row in rows:

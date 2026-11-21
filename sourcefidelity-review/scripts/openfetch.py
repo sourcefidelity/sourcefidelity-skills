@@ -128,7 +128,7 @@ def _core_queries(parsed):
             queries.append(f'title:"{phrase}" AND {author}')
     words = [word for word in re.findall(r"\w+", title)
              if len(word) >= 4 and not word.isdigit()][:_MAX_TITLE_WORDS]
-    if len(words) >= 2:
+    if len(words) >= 2 or (words and author):
         queries.append(" AND ".join(
             [f"title:{word}" for word in words] + ([author] if author else [])))
     return list(dict.fromkeys(queries))[:4]
@@ -141,7 +141,7 @@ def _core_unescape(value):
                   lambda match: chr(int(match.group(1), 16)), value)
 
 
-def _core(parsed, key):
+def _core(parsed, key, attempts):
     """CORE works matched by title and author, from several title queries."""
     if not key:
         return []
@@ -152,7 +152,10 @@ def _core(parsed, key):
         data = _curl_json(
             f"{CORE_OUTPUT_SEARCH}?q={urllib.parse.quote(query)}&limit=10",
             headers={"Authorization": "Bearer " + key})
-        for item in data.get("results") or []:
+        items = data.get("results") if isinstance(data, dict) else None
+        attempts.append({"query": query,
+                         "returned": len(items) if isinstance(items, list) else None})
+        for item in items if isinstance(items, list) else []:
             item["title"] = _core_unescape(item.get("title"))
             if not _title_ok(parsed, item["title"]):
                 continue
@@ -289,20 +292,23 @@ def main(argv=None):
         os.makedirs(os.path.dirname(target), exist_ok=True)
         candidates = []
         core_items = []
+        core_attempts = []
         if not args.no_openalex:
             candidates += _candidate_urls(_openalex(parsed), [])
             time.sleep(0.3)
         if key and not args.no_core:
-            core_items = _core(parsed, key)
+            core_items = _core(parsed, key, core_attempts)
             candidates += _candidate_urls([], core_items)
             time.sleep(1.2)
+        status = "search_incomplete" if any(
+            attempt["returned"] is None for attempt in core_attempts) else "no_candidate"
         row = {"ref": ref_id, "title": (parsed.get("title") or "")[:100],
-               "doi": parsed.get("doi") or "", "status": "no_candidate",
-               "url": "", "file": "", "source": ""}
+               "doi": parsed.get("doi") or "", "status": status,
+               "url": "", "file": "", "source": "", "core_queries": core_attempts}
         if args.dry_run:
             row["candidates"] = [{"url": url, "kind": kind, "source": source}
                                  for url, kind, source in candidates[:4]]
-            row["status"] = "dry_run" if candidates else "no_candidate"
+            row["status"] = "dry_run" if candidates else status
             rows.append(row)
             print(f"{ref_id}: {len(candidates)} candidate(s)")
             for item in row["candidates"]:
@@ -346,6 +352,13 @@ def main(argv=None):
         lines.append(f"| {row['ref']} | {row['title']} | {row['doi'] or '-'} | "
                      f"{row['status']} | {row.get('source') or '-'} | "
                      f"{os.path.basename(row.get('file') or '') or '-'} |")
+    if any(row["core_queries"] for row in rows):
+        lines.extend(["", "## CORE queries", ""])
+        for row in rows:
+            for attempt in row["core_queries"]:
+                count = attempt["returned"]
+                result = f"{count} returned" if count is not None else "response unavailable"
+                lines.append(f"- {row['ref']} · `{attempt['query']}` · {result}")
     with open(os.path.join(base, "index.md"), "w", encoding="utf-8",
               newline="\n") as handle:
         handle.write("\n".join(lines) + "\n")
