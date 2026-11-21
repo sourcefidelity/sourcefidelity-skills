@@ -19,6 +19,7 @@ _BOOTSTRAP_HERE = _bootstrap_os.path.dirname(_bootstrap_os.path.abspath(__file__
 if _BOOTSTRAP_HERE not in _bootstrap_sys.path:
     _bootstrap_sys.path.insert(0, _BOOTSTRAP_HERE)
 import paper_index  # noqa: E402
+import render_review  # noqa: E402
 import json
 import os
 import sys
@@ -123,16 +124,15 @@ def check_findings(root, pid):
         f = json.load(open(path, encoding="utf-8"))
     except ValueError as exc:
         return [f"{pid} findings unparseable: {exc}"], []
-    errs = []
-    for occ in f.get("occurrences", []):
-        if occ.get("judgment") in ("Supports", "Contradicts"):
-            if not occ.get("sources") or not all(
-                    s.get("evidence") and s.get("locator") for s in occ["sources"]):
-                errs.append(f"{pid} {occ.get('id')}: judgment without evidence/locator")
-    for ref in f.get("references", []):
-        if not ref.get("verbatim"):
-            errs.append(f"{pid} {ref.get('id')}: no verbatim reference text")
-    return errs, []
+    if isinstance(f.get("findings"), dict) and "occurrences" not in f:
+        f = f["findings"]
+    folder = os.path.dirname(path)
+    try:
+        render_review.validate(f, render_review.load(os.path.join(folder, "inventory.json")),
+                               render_review.load(os.path.join(folder, "task.json")))
+    except SystemExit as exc:
+        return [f"{pid} {exc}"], []
+    return [], []
 
 
 def main():

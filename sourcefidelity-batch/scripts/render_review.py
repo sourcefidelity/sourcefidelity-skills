@@ -54,7 +54,7 @@ def fail(msg):
     raise SystemExit(f"findings invalid: {msg}")
 
 
-def validate(findings):
+def validate(findings, inventory=None, task=None):
     """Reject findings that are internally inconsistent or silently empty."""
     occurrences = findings.get("occurrences", [])
     references = findings.get("references", [])
@@ -67,11 +67,55 @@ def validate(findings):
     duplicates = sorted({i for i in ids if ids.count(i) > 1})
     if duplicates:
         fail(f"duplicate IDs: {duplicates}")
-    ref_ids = {r.get("id") for r in references}
+    refs_by_id = {ref["id"]: ref for ref in references}
+    inventory_occurrences = {occ["id"]: occ for occ in (inventory or {}).get("occurrences", [])}
+    task = task or {}
+    task_citations = {cite["id"]: cite for cite in task.get("candidates", {}).get("citations", [])}
+    task_refs = {ref["id"]: ref["verbatim"] for ref in task.get("candidates", {}).get("references", [])}
+    dispositions = (inventory or {}).get("dispositions", {})
+    task_windows = {window["window_id"]: (candidate_id, window)
+                    for candidate_id, windows in task.get("windows", {}).items()
+                    for window in windows if window.get("window_id")}
     for occ in occurrences:
-        for rid in occ.get("cited_r_ids", []) or []:
-            if rid not in ref_ids:
-                fail(f"{occ.get('id')}: cited reference {rid} not in the findings")
+        oid = occ["id"]
+        original = inventory_occurrences.get(oid, {})
+        cited = set(occ.get("cited_r_ids") or [])
+        if "cited_r_ids" in original:
+            expected = set(original["cited_r_ids"] or [])
+            if "cited_r_ids" in occ and cited != expected:
+                fail(f"{oid}: cited references differ from the validated inventory")
+            cited = expected
+        for rid in cited:
+            if rid not in refs_by_id:
+                fail(f"{oid}: cited reference {rid} not in the findings")
+        for src in occ.get("sources", []):
+            rid = src.get("r_id")
+            ref = refs_by_id.get(rid)
+            if ref is None:
+                fail(f"{oid}: contribution reference {rid!r} not in the findings")
+            if ("cited_r_ids" in occ or "cited_r_ids" in original) and rid not in cited:
+                fail(f"{oid}: contribution reference {rid} is not cited here")
+            if ref.get("source_key") and src.get("source_key") != ref["source_key"]:
+                fail(f"{oid}: contribution source key differs from {rid}")
+            if src.get("window_id"):
+                candidate_id, window = task_windows.get(src["window_id"], ("", {}))
+                candidate = task_citations.get(candidate_id, {})
+                marker = original.get("marker") or occ.get("marker")
+                paragraph = original.get("paragraph_id") or occ.get("paragraph_id")
+                disposition = dispositions.get(candidate_id, "confirmed")
+                if disposition.startswith(("confirmed_as:", "merged_into:")):
+                    occurrence_matches = disposition.split(":", 1)[1] == oid
+                else:
+                    occurrence_matches = disposition == "confirmed"
+                if (not window or not occurrence_matches
+                        or task_refs.get(window["r_id"]) != ref.get("verbatim")
+                        or window["source_key"] != src.get("source_key")
+                        or candidate.get("marker") != marker
+                        or candidate.get("paragraph_id") != paragraph):
+                    fail(f"{oid}: window {src['window_id']} does not match this occurrence and source")
+                evidence = " ".join((src.get("evidence") or "").split())
+                if not evidence or evidence not in " ".join(window["text"].split()):
+                    fail(f"{oid}: evidence is not in window {src['window_id']}")
     if not ids:
         # A genuinely empty inventory is allowed, but only when stated.
         if findings.get("inventory_empty") is not True or "status" not in findings:
@@ -311,7 +355,10 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append(f"**Overall judgment: {occ['judgment']}.**")
         lines.append("")
         for src in occ.get("sources", []):
-            lines.append(f"- **{src.get('source_key', 'source')} — {src.get('contribution', '')}.** "
+            source = src.get("source_key", "source")
+            if src.get("r_id"):
+                source = f"{src['r_id']} ({source})"
+            lines.append(f"- **{source} — {src.get('contribution', '')}.** "
                          f"{src.get('evidence', '')} Locator: {src.get('locator', '')}.")
         if occ.get("no_evidence"):
             lines.append("**No supporting evidence found for:** " + "; ".join(occ["no_evidence"]) + ".")
@@ -614,9 +661,16 @@ def main():
     if (isinstance(findings.get("findings"), dict)
             and "occurrences" not in findings):
         findings = findings["findings"]
-    validate(findings)
+    inventory = load(args.inventory, {}) if args.inventory else None
+    task = load(os.path.join(work, "task.json"), {})
+    validate(findings, inventory, task)
     if args.inventory:
-        reconcile(findings, load(args.inventory, {}))
+        reconcile(findings, inventory)
+        cited = {occ["id"]: occ["cited_r_ids"] for occ in inventory.get("occurrences", [])
+                 if "cited_r_ids" in occ}
+        for occ in findings.get("occurrences", []):
+            if occ["id"] in cited:
+                occ.setdefault("cited_r_ids", cited[occ["id"]])
     registry = load(os.path.join(root, "source_registry.json"), {}).get("works", {})
     profile = paper_profile_for(root, paper)
     occ_counts = counts(findings)

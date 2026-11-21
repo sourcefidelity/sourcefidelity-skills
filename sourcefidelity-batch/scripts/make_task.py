@@ -15,6 +15,7 @@ Writes ROOT/_work/<paper-id>/task.json.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -41,6 +42,7 @@ _utf8_streams()
 
 PAGE_BLOCK = re.compile(r"^=== PDF p(\d+) \| printed p([^|]*)\|", re.M)
 WORD_RE = re.compile(r"[A-Za-z][A-Za-z'’\-]{3,}")
+CITATION_DATE = re.compile(r"(?<!\w)(?:(?:19|20)\d{2}[a-z]?\b|n\.d\.(?:-[a-z])?)", re.I)
 QUOTED = re.compile(r"[“\"]([^”\"]{20,600})[”\"]")
 
 
@@ -68,7 +70,8 @@ def load(path, default=None):
 
 def page_index(text_file):
     """Return (text, marks, pages) for page blocks and the pages.csv fallback."""
-    text = open(text_file, encoding="utf-8").read()
+    with open(text_file, encoding="utf-8") as handle:
+        text = handle.read()
     marks = []
     for m in PAGE_BLOCK.finditer(text):
         marks.append((m.start(), int(m.group(1)), m.group(2).strip()))
@@ -164,7 +167,10 @@ def web_windows(root, url_entries, phrases, width, limit=2):
         if meta.get("classification", "full_text") != "full_text":
             continue  # a block, paywall, abstract or lending page is not evidence
         hits = windows(text, [], {}, phrases, width, None, limit=limit)
+        text_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         for hit in hits:
+            hit["text_sha256"] = text_sha256
+            hit["r_id"] = entry.get("r_id", "")
             hit["locator"] = f"web: {meta.get('final_url') or url}"
             hit["source_url"] = meta.get("final_url") or url
         out.extend(hits)
@@ -213,6 +219,8 @@ def windows(text, marks, pages, phrases, width, page_range=None,
             "query": phrase[:120],
             "printed_page": printed,
             "pdf_page": pdf,
+            "start": start,
+            "end": end,
             "text": re.sub(r"\s+", " ", text[start:end]).strip(),
         })
         if len(out) >= limit:
@@ -234,36 +242,87 @@ def title_phrases(title, limit=10):
     return out[:limit]
 
 
+def reference_members(citation, refs):
+    """Resolve each explicit author-date member, leaving ambiguous matches open."""
+    parsed = [(ref["id"], source_registry.parse_source({"source": ref["verbatim"]}))
+              for ref in refs]
+    members = []
+    parts = citation.get("parts") or re.split(r"[;；]", citation.get("marker") or "")
+    for part in parts:
+        date = CITATION_DATE.search(part)
+        exact, approximate = [], []
+        if date:
+            name = source_registry.norm(part[:date.start()])
+            words = set(name.split())
+            for rid, ref in parsed:
+                ref_date = CITATION_DATE.search(ref["verbatim"][len(ref["author"]):])
+                if not ref_date or ref_date.group().casefold() != date.group().casefold():
+                    continue
+                surname = source_registry.surname_of(ref["author"])
+                author = source_registry.norm(ref["author"])
+                if author and f" {author} " in f" {name} ":
+                    exact.append((2, rid))
+                elif surname and f" {surname} " in f" {name} ":
+                    exact.append((1, rid))
+                elif any(source_registry.close_surname(word, surname) for word in words):
+                    approximate.append(rid)
+        best = max((score for score, _ in exact), default=0)
+        candidates = [rid for score, rid in exact if score == best] if exact else approximate
+        member = {"marker": part.strip(), "candidate_r_ids": candidates}
+        if len(candidates) == 1:
+            member["r_id"] = candidates[0]
+        members.append(member)
+    return members
+
+
 def match_refs(citation, refs):
-    marker = (citation.get("marker") or "") + " " + (citation.get("sentence") or "")
-    normalized_marker = source_registry.norm(marker)
-    marker_words = re.findall(r"[^\W\d_]{5,}", marker, re.UNICODE)
-    year = citation.get("year") or ""
-    scored = []
-    for ref in refs:
-        parsed = source_registry.parse_source({"source": ref.get("verbatim", "")})
-        source = ref.get("verbatim", "")
-        surname = source_registry.surname_of(parsed["author"])
-        score = 0
-        named = False
-        if surname and surname in normalized_marker:
-            score += 2
-            named = True
-        elif surname and any(source_registry.close_surname(word, surname)
-                             for word in marker_words):
-            score += 1
-            named = True
-        if year and year == parsed["year"]:
-            score += 2
-        if source_registry.norm(source)[:40] and source_registry.norm(source)[:40] in normalized_marker:
-            score += 1
-            named = True
-        # A shared year alone must not bind a citation to a work: two works
-        # from one year would otherwise lend each other's text as evidence.
-        if named and score >= 2:
-            scored.append((score, ref.get("id")))
-    scored.sort(reverse=True)
-    return [rid for _, rid in scored[:2]]
+    return list(dict.fromkeys(member["r_id"] for member in reference_members(citation, refs)
+                              if "r_id" in member))
+
+
+def source_windows(root, rid, source, phrases, width, limit, cache):
+    """Prepare windows and coverage for exactly one cited reference."""
+    extraction = source.get("extraction")
+    path = extraction or source.get("open_text")
+    page_range = source.get("page_range") if source.get("restrict_pages") else None
+    status = {"r_id": rid, "page_range": page_range or []}
+    hits = []
+    if path and os.path.exists(path):
+        if path not in cache:
+            text, marks, pages = page_index(path)
+            meta = load(os.path.join(os.path.dirname(path), "meta.json"), {}) or {}
+            cache[path] = (text, marks, pages, hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                           meta.get("sha256"))
+        text, marks, pages, text_sha256, source_sha256 = cache[path]
+        hits = windows(text, marks, pages, phrases, width, page_range, limit=limit)
+        if not hits and extraction:
+            identity = source.get("identity") or {}
+            terms = (title_phrases(identity.get("title", "")) +
+                     title_phrases(source.get("container_title", "")))
+            hits = windows(text, marks, pages, terms, width, page_range, limit=limit,
+                           body_only=True, allow_single=True)
+            for hit in hits:
+                hit["fallback"] = "title_terms"
+        status.update(status="found" if hits else "no_window")
+        if not hits:
+            status["phrases_tried"] = phrases[:4]
+        for hit in hits:
+            hit["text_sha256"] = text_sha256
+            if extraction and source_sha256:
+                hit["source_sha256"] = source_sha256
+            if not extraction:
+                provider = source.get("open_provider", "open")
+                url = source.get("open_url", "")
+                hit.update(locator=f"{provider}: {url}", source_url=url)
+    elif source.get("work_kind") == "web" and source.get("url"):
+        urls = [{"r_id": rid, "url": source["url"]}]
+        hits = web_windows(root, urls, phrases, width, limit)
+        status.update(status="found" if hits else "web_url")
+        if not hits:
+            status["urls"] = urls
+    else:
+        status.update(status="no_extraction")
+    return hits, status
 
 
 def main():
@@ -274,6 +333,8 @@ def main():
     ap.add_argument("--max-hits", type=int, default=3)
     ap.add_argument("--window", type=int, default=240)
     args = ap.parse_args()
+    if args.max_hits < 1:
+        ap.error("--max-hits must be at least 1")
 
     root = os.path.abspath(args.batch)
     work = os.path.join(root, "_work", args.paper)
@@ -352,127 +413,37 @@ def main():
     window_status = {}
     cache = {}
     for cit in cand.get("citations", []):
-        likely = match_refs(cit, refs)
+        members = reference_members(cit, refs)
+        cit["reference_members"] = members
+        likely = list(dict.fromkeys(member["r_id"] for member in members if "r_id" in member))
         cit["likely_r_ids"] = likely
         cit["search_terms"] = search_terms(cit)
-        if not likely:
-            window_status[cit["id"]] = {
-                "status": "no_reference",
-                "reason": "no reference entry matched the citation marker",
-            }
-            continue
-        found = []
-        tried = []
-        ranges = []
-        extraction_seen = False
+        phrases = phrases_for(cit)
+        found, per_ref = [], {}
         for rid in likely:
-            src = sources.get(rid, {})
-            extraction_path = src.get("extraction")
-            open_path = src.get("open_text")
-            path = extraction_path or open_path
-            if not path or not os.path.exists(path):
-                continue
-            is_open = not extraction_path and bool(open_path)
-            extraction_seen = True
-            if path not in cache:
-                cache[path] = page_index(path)
-            text, marks, pages = cache[path]
-            page_range = src.get("page_range") if src.get("restrict_pages") else None
-            if page_range:
-                ranges.append(page_range)
-            phrases = phrases_for(cit)
-            tried.extend(phrases[:4])
-            before = len(found)
-            found.extend(windows(text, marks, pages, phrases, args.window,
-                                 page_range, limit=args.max_hits))
-            if is_open:
-                for hit in found[before:]:
-                    hit.setdefault("locator", f"{src.get('open_provider', 'open')}: "
-                                              f"{src.get('open_url', '')}")
-            if len(found) >= args.max_hits:
-                break
-        fallbacks = set()
-        if not found:
-            # Last resort: the work's own title terms, restricted to body pages.
-            for rid in likely:
-                src = sources.get(rid, {})
-                path = src.get("extraction")
-                if not path or not os.path.exists(path):
-                    continue
-                if path not in cache:
-                    cache[path] = page_index(path)
-                text, marks, pages = cache[path]
-                page_range = src.get("page_range") if src.get("restrict_pages") else None
-                identity = src.get("identity") or {}
-                phrases = (title_phrases(identity.get("title", "")) +
-                           title_phrases(src.get("container_title", "")))
-                hits = windows(text, marks, pages, phrases, args.window,
-                               page_range, limit=args.max_hits, body_only=True,
-                               allow_single=True)
-                if hits:
-                    for hit in hits:
-                        hit["fallback"] = "title_terms"
-                    found.extend(hits)
-                    fallbacks.add("title_terms")
-                    break
-        unique = []
-        seen = set()
-        for hit in found:
-            key = (hit.get("pdf_page"), hit.get("printed_page"), hit.get("query"))
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(hit)
-        if unique:
-            windows_by_c[cit["id"]] = unique[: args.max_hits]
-            window_status[cit["id"]] = {
-                "status": "found", "count": len(unique[: args.max_hits]),
-                "fallbacks": sorted(fallbacks),
-                "page_range": ranges[0] if ranges else [],
-            }
-        elif not extraction_seen:
-            web_urls = []
-            for rid in likely:
-                src = sources.get(rid, {})
-                if src.get("work_kind") == "web" and src.get("url"):
-                    web_urls.append({"r_id": rid, "url": src["url"]})
-            web_hits = (web_windows(root, web_urls, phrases_for(cit), args.window,
-                                    args.max_hits) if web_urls else [])
-            if web_hits:
-                windows_by_c[cit["id"]] = web_hits[: args.max_hits]
-                window_status[cit["id"]] = {
-                    "status": "found", "count": len(web_hits[: args.max_hits]),
-                    "fallbacks": [], "source": "web", "page_range": [],
-                }
-            elif web_urls:
-                classes = sorted({web_cache.text_for(root, item["url"])[1].get(
-                    "classification", "") for item in web_urls} - {""})
-                if classes:
-                    reason = ("web source; cached page is "
-                              + "/".join(classes) + " and is not evidence")
-                else:
-                    reason = "web source; inspect the supplied URL before judging"
-                window_status[cit["id"]] = {
-                    "status": "web_url",
-                    "reason": reason,
-                    "urls": web_urls,
-                    "likely_r_ids": likely,
-                }
-            else:
-                window_status[cit["id"]] = {
-                    "status": "no_extraction",
-                    "reason": "none of the likely references has a shared extraction",
-                    "likely_r_ids": likely,
-                }
-        else:
-            window_status[cit["id"]] = {
-                "status": "no_window",
-                "reason": "no sentence phrase or title term matched in the allowed pages",
-                "phrases_tried": list(dict.fromkeys(tried))[:8],
-                "page_range": ranges[0] if ranges else [],
-                "note": ("A miss is not evidence of absence; use lookup.py with "
-                         "different terms or record the coverage gap."),
-            }
+            src = sources[rid]
+            hits, status = source_windows(root, rid, src, phrases, args.window,
+                                          args.max_hits, cache)
+            for i, hit in enumerate(hits, 1):
+                hit.update(r_id=rid, source_key=src.get("source_key") or rid,
+                           source_object_key=src.get("source_object_key") or rid,
+                           window_id=f"{cit['id']}:{rid}:{i}")
+            found.extend(hits)
+            per_ref[rid] = status
+        statuses = {item["status"] for item in per_ref.values()}
+        overall = next((state for state in ("found", "web_url", "no_window", "no_extraction")
+                        if state in statuses), "no_reference")
+        if found:
+            windows_by_c[cit["id"]] = found
+        summary = {"status": overall, "count": len(found), "likely_r_ids": likely,
+                   "by_reference": per_ref,
+                   "fallbacks": sorted({h["fallback"] for h in found if h.get("fallback")})}
+        urls = [url for item in per_ref.values() for url in item.get("urls", [])]
+        if urls:
+            summary["urls"] = urls
+        if len(per_ref) == 1:
+            summary.update(next(iter(per_ref.values())))
+        window_status[cit["id"]] = summary
 
     task = {
         "paper_id": args.paper,

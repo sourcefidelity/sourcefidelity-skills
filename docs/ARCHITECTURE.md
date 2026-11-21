@@ -61,7 +61,7 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 
 ### Batch
 
-A source folder plus a folder of papers. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review.
+A source folder plus a folder of papers. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review.
 
 ### Reappraisal
 

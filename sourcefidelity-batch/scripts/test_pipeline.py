@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import json
 import os
+from pathlib import Path
 import pathlib
 import sys
 import subprocess
@@ -636,6 +637,44 @@ class RenderValidationTests(unittest.TestCase):
             rr.validate({})
         rr.validate({"inventory_empty": True, "status": "complete"})
 
+    def test_rejects_contributions_for_unknown_or_uncited_references(self):
+        refs = [{"id": "R1", "source_key": "one", "verbatim": "First"},
+                {"id": "R2", "source_key": "two", "verbatim": "Second"}]
+        for rid, key, message in [("R9", "unknown", "not in the findings"),
+                                  ("R2", "two", "is not cited here"),
+                                  ("R1", "two", "source key differs")]:
+            with self.subTest(rid=rid, key=key):
+                occ = self._occ("C1", cited_r_ids=["R1"], sources=[
+                    {"r_id": rid, "source_key": key}])
+                with self.assertRaisesRegex(SystemExit, message):
+                    rr.validate({"references": refs, "occurrences": [occ]})
+
+    def test_window_validation_binds_reference_occurrence_and_excerpt(self):
+        task = {"candidates": {"references": [{"id": "R2", "verbatim": "Second"}],
+                               "citations": [{"id": "X1", "paragraph_id": "P1",
+                                              "marker": "(Doe, 2020)"}]},
+                "windows": {"X1": [{"r_id": "R2", "source_key": "two",
+                                    "window_id": "X1:R2:1", "text": "Observed text."}]}}
+        # Final inventory IDs can change during adjudication.
+        refs = [{"id": "R3", "source_key": "two", "verbatim": "Second"}]
+        inventory = {"occurrences": [{"id": "C1", "paragraph_id": "P1",
+                                      "marker": "(Doe, 2020)", "cited_r_ids": ["R3"]}]}
+        src = {"r_id": "R3", "source_key": "two", "window_id": "X1:R2:1",
+               "evidence": "Observed text.", "locator": "printed p. 1"}
+        occ = self._occ("C1", judgment="Supports", cited_r_ids=["R3"], sources=[src])
+        findings = {"references": refs, "occurrences": [occ]}
+        rr.validate(findings, inventory, task)
+        src["evidence"] = "Unrelated text."
+        with self.assertRaisesRegex(SystemExit, "evidence is not in window"):
+            rr.validate(findings, inventory, task)
+        src["evidence"] = "Observed text."
+        refs[0]["verbatim"] = "Different work"
+        with self.assertRaisesRegex(SystemExit, "does not match"):
+            rr.validate(findings, inventory, task)
+        occ["cited_r_ids"] = []
+        with self.assertRaisesRegex(SystemExit, "differ from the validated inventory"):
+            rr.validate(findings, inventory, task)
+
     def test_reconcile_rejects_a_dropped_inventory_item(self):
         inventory = {"occurrences": [{"id": "C1"}, {"id": "C2"}], "references": []}
         findings = {"occurrences": [{"id": "C1"}], "references": []}
@@ -983,6 +1022,73 @@ class TaskMatchingTests(unittest.TestCase):
     def test_a_surname_still_binds(self):
         citation = {"marker": "(Vale, 2010)", "sentence": "Franchising (Vale, 2010).", "year": "2010"}
         self.assertEqual(mt.match_refs(citation, self.REFS), ["R4"])
+
+
+    def test_group_matches_each_year_and_keeps_ambiguous_members_open(self):
+        refs = [{"id": rid, "verbatim": f"{author}, A. ({date}). {rid}. Press."}
+                for rid, author, date in [("R1", "Hart", "2020a"), ("R2", "Hart", "2020b"),
+                                            ("R3", "Rivera", "2021"), ("R4", "Kim", "2022"),
+                                            ("R5", "Kim", "2022")]]
+        marker = "(Hart, 2020b; Rivera, 2021; Kim, 2022; Nobody, 2023)"
+        citation = {"marker": marker, "year": "2020", "sentence": "Hart mentioned Rivera."}
+        self.assertEqual(mt.match_refs(citation, refs), ["R2", "R3"])
+        members = mt.reference_members(citation, refs)
+        self.assertEqual(members[2]["candidate_r_ids"], ["R4", "R5"])
+        self.assertEqual(members[3]["candidate_r_ids"], [])
+        self.assertNotIn("r_id", members[2])
+
+    def test_task_keeps_same_page_windows_and_web_companion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            phrase = "Independent evidence documents this effect."
+            refs = [
+                {"id": "R1", "verbatim": "Hart, A. (2020). First article. Journal."},
+                {"id": "R2", "verbatim": "Lee, C. (2021). Second article. Journal."},
+                {"id": "R3", "verbatim": "Rivera, D. (2022). Web article. https://example.test/item"},
+            ]
+            registry = {}
+            for index, ref in enumerate(refs, 1):
+                key = f"source-{index}"
+                registry[key] = {"identity": {"verbatim": ref["verbatim"]}}
+                if index < 3:
+                    path = root / f"{key}.txt"
+                    path.write_text(f"=== PDF p1 | printed p1 | native\nCopy {index}. {phrase}",
+                                    encoding="utf-8")
+                    registry[key]["extraction"] = str(path)
+            citation = {"id": "X1", "marker": "(Hart, 2020; Lee, 2021; Rivera, 2022)",
+                        "sentence": phrase, "paragraph_id": "P1"}
+            (work / "candidates.json").write_text(json.dumps({
+                "citations": [citation], "references": refs}), encoding="utf-8")
+            (root / "source_registry.json").write_text(json.dumps({"works": registry}),
+                                                      encoding="utf-8")
+            args = ["make_task.py", "--batch", tmp, "--paper", "P1", "--max-hits", "1"]
+            with mock.patch.object(sys, "argv", args), redirect_stdout(io.StringIO()):
+                mt.main()
+            task = json.loads((work / "task.json").read_text(encoding="utf-8"))
+            hits = task["windows"]["X1"]
+            self.assertEqual([(h["r_id"], h["printed_page"]) for h in hits],
+                             [("R1", "1"), ("R2", "1")])
+            self.assertNotEqual(hits[0]["text_sha256"], hits[1]["text_sha256"])
+            for hit in hits:
+                original = Path(registry[hit["source_key"]]["extraction"]).read_text(encoding="utf-8")
+                self.assertEqual(" ".join(original[hit["start"]:hit["end"]].split()), hit["text"])
+            self.assertEqual(task["window_status"]["X1"]["by_reference"]["R3"]["status"],
+                             "web_url")
+            self.assertEqual(fw.task_urls(tmp), {"https://example.test/item": "R3"})
+            web_cache.store(tmp, "https://example.test/item", {
+                "text": phrase + " Site text.",
+                "final_url": "https://example.test/final",
+                "status": 200,
+                "classification": "full_text",
+            })
+            with mock.patch.object(sys, "argv", args), redirect_stdout(io.StringIO()):
+                mt.main()
+            task = json.loads((work / "task.json").read_text(encoding="utf-8"))
+            self.assertEqual([h["r_id"] for h in task["windows"]["X1"]], ["R1", "R2", "R3"])
+            self.assertEqual(task["windows"]["X1"][2]["source_url"], "https://example.test/final")
+            self.assertEqual(fw.task_urls(tmp), {})
 
 
 class ScriptBootstrapTests(unittest.TestCase):
@@ -2861,6 +2967,44 @@ class ResolveDoisTests(unittest.TestCase):
             urls = rd.oa_pdf_urls("10.1000/x", "review@example.org")
         self.assertEqual(urls, ["https://example.org/a.pdf",
                                 "https://example.org/a", "https://example.org/b"])
+
+    def test_oa_failure_falls_through_and_duplicate_urls_are_downloaded_once(self):
+        unavailable = "https://example.test/unavailable"
+        working = "https://example.test/copy.pdf"
+        calls = []
+
+        def fetch(url, **_):
+            calls.append(url)
+            if url != working:
+                raise OSError("unavailable")
+            return 200, url, {"Content-Type": "application/pdf"}, b"%PDF-1.4"
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(rd, "cache_get", return_value=None), \
+                mock.patch.object(rd, "_unpaywall_oa", side_effect=OSError), \
+                mock.patch.object(rd, "_openalex_oa", return_value=[unavailable]), \
+                mock.patch.object(rd, "_semantic_scholar_oa", return_value=[unavailable, working]), \
+                mock.patch.object(rd, "_europepmc_oa") as later, \
+                mock.patch.object(rd, "_request", side_effect=fetch), \
+                mock.patch.object(rd, "_keep_pdf", side_effect=lambda record, *_: record):
+            result = rd._resolve_copy("10.1000/x", tmp)
+        self.assertEqual(calls, ["https://doi.org/10.1000/x", unavailable, working])
+        self.assertEqual(result["resolver"], "semantic_scholar")
+        later.assert_not_called()
+
+    def test_successful_unpaywall_download_skips_other_provider_calls(self):
+        url = "https://example.test/copy.pdf"
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(rd, "cache_get", return_value=None), \
+                mock.patch.object(rd, "_unpaywall_oa", return_value=[url]), \
+                mock.patch.object(rd, "_openalex_oa") as later, \
+                mock.patch.object(rd, "_request", side_effect=[
+                    OSError("publisher unavailable"),
+                    (200, url, {"Content-Type": "application/pdf"}, b"%PDF-1.4")]), \
+                mock.patch.object(rd, "_keep_pdf", side_effect=lambda record, *_: record):
+            result = rd._resolve_copy("10.1000/x", tmp)
+        self.assertEqual(result["resolver"], "unpaywall")
+        later.assert_not_called()
 
     def test_resolve_copy_still_exists(self):
         self.assertTrue(callable(rd.resolve_copy))

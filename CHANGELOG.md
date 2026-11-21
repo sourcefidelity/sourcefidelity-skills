@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Open-access fallback.** Preserve distinct provider URLs, continue when an
+  individual provider fails, and stop querying providers after saving a PDF.
+- **Multi-source citations.** Prepare evidence and coverage per reference and
+  validate report contributions against their citation and task window.
+
 - **PowerShell update check.** Show the PowerShell update command and return a
   failure exit code when release metadata cannot be fetched.
 

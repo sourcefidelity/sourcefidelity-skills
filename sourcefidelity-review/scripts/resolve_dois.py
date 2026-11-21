@@ -1419,25 +1419,42 @@ def _europepmc_oa(doi):
     return urls
 
 
-def oa_pdf_urls(doi, mailto=""):
-    """PDF URLs from Unpaywall's OA locations, best first."""
+def _unpaywall_oa(doi, mailto):
     query = "?email=" + urllib.parse.quote(mailto or "review@example.org")
     data = _json(UNPAYWALL + urllib.parse.quote(doi) + query)
-    for provider in (_openalex_oa, _semantic_scholar_oa, _europepmc_oa,
-                     _core_oa):
+    return [location.get(key) for location in data.get("oa_locations") or []
+            for key in ("url_for_pdf", "url")]
+
+
+def _oa_pdf_candidates(doi, mailto, per_provider=None):
+    """Yield distinct candidate URLs in provider order as downloads need them."""
+    routes = (("unpaywall", _unpaywall_oa, (doi, mailto)),
+              ("openalex", _openalex_oa, (doi,)),
+              ("semantic_scholar", _semantic_scholar_oa, (doi,)),
+              ("europe_pmc", _europepmc_oa, (doi,)),
+              ("core", _core_oa, (doi,)))
+    seen = set()
+    for provider, lookup, args in routes:
         try:
-            for value in provider(doi):
-                if value and value not in urls:
-                    urls.append(value)
-        except Exception:  # noqa: BLE001
-            pass
-    urls = []
-    for location in data.get("oa_locations") or []:
-        for key in ("url_for_pdf", "url"):
-            value = location.get(key)
-            if value and value not in urls:
-                urls.append(value)
-    return urls
+            urls = lookup(*args)
+        except Exception:  # best-effort provider lookup
+            continue
+        count = 0
+        for url in urls:
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            yield provider, url
+            count += 1
+            if count == per_provider:
+                break
+
+
+def oa_pdf_urls(doi, mailto=""):
+    """List all distinct candidate URLs in provider order."""
+    return [url for _, url in _oa_pdf_candidates(doi, mailto)]
 
 
 def _acquire_lock(key, timeout=120.0):
@@ -1482,7 +1499,7 @@ def resolve_copy(doi, out_dir, mailto=""):
 
 
 def _resolve_copy(doi, out_dir, mailto=""):
-    """Call the DOI resolver and keep a PDF only when the publisher serves one."""
+    """Try the DOI resolver first, then public open-access locations."""
     record = {"doi": doi, "resolver": "", "status": None, "content_type": "",
               "final_url": "", "pdf": "", "bytes": 0}
     cached = cache_get("fetch", (doi or "").lower()) if doi else None
@@ -1542,14 +1559,14 @@ def _resolve_copy(doi, out_dir, mailto=""):
 
     except Exception as exc:  # noqa: BLE001 - recorded, never raised
         record["pdf"] = f"{type(exc).__name__}: {exc}"
-    for candidate in oa_pdf_urls(doi, mailto)[:2]:
+    for provider, candidate in _oa_pdf_candidates(doi, mailto, per_provider=2):
         try:
             status4, final4, headers4, body4 = _request(candidate, accept="application/pdf",
                                                         timeout=30)
         except Exception:  # noqa: BLE001
             continue
         if body4[:4] == b"%PDF":
-            record.update({"resolver": "unpaywall", "status": status4,
+            record.update({"resolver": provider, "status": status4,
                            "final_url": final4,
                            "content_type": headers4.get("Content-Type", ""),
                            "bytes": len(body4)})
