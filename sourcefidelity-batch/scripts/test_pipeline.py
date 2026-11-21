@@ -36,6 +36,7 @@ import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import docx_text as dt  # noqa: E402
 import source_scope as scope  # noqa: E402
+import kind_coverage as kc  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
@@ -2424,6 +2425,21 @@ class ReappraiseCoverageTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ra.apply_review(path, task, judgments, "2026-11-21")
 
+    def test_later_edition_cannot_support_absence(self):
+        review = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n")
+        task = {"entries": [{"id": "C1", "prior": "Not Judged"}],
+                "sources": {"source": {"copy_observation": {
+                    "status": "adequate", "absence_allowed": True,
+                    "edition": {"status": "later_edition", "absence_allowed": False}}}}}
+        judgments = {"changes": [{"id": "C1", "source_key": "source",
+                                  "prior": "Not Judged", "new": "Not Supported",
+                                  "evidence": "quote", "locator": ""}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "review.md")
+            open(path, "w", encoding="utf-8").write(review)
+            with self.assertRaises(SystemExit):
+                ra.apply_review(path, task, judgments, "2026-11-21")
+
     def test_prepare_scope_observes_cited_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = os.path.join(tmp, "_sources", "key")
@@ -4512,6 +4528,109 @@ class SourcePackObservationTests(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(source, "observation.json")))
 
 
+class KindCoverageTests(unittest.TestCase):
+    def test_kind_routes(self):
+        self.assertEqual(kc.kind_for({"publisher": "", "volume": "12", "issue": "2"},
+                                      "Journal, 12(2), 1-10."), "article")
+        self.assertEqual(kc.kind_for({"publisher": "Routledge", "volume": ""},
+                                      "Book. Routledge."), "book")
+        self.assertEqual(kc.kind_for({"publisher": "Routledge", "volume": ""},
+                                      "Chapter. In A. Editor (Ed.), Book (pp. 1-10)."),
+                         "chapter")
+        self.assertEqual(kc.kind_for({}, "A report on media."), "report")
+        self.assertEqual(kc.kind_for({}, "A film [Film]."), "film")
+
+    def test_article_needs_both_indexes(self):
+        only_crossref = kc.assess("article", ["crossref"], [], False)
+        self.assertFalse(only_crossref["complete"])
+        both = kc.assess("article", ["crossref", "openalex"], [], False)
+        self.assertTrue(both["complete"])
+
+    def test_book_needs_a_book_index_and_an_article_index(self):
+        missing_book = kc.assess("book", ["crossref", "openalex"], [], False)
+        self.assertFalse(missing_book["complete"])
+        complete = kc.assess("book", ["openlibrary", "openalex"], [], False)
+        self.assertTrue(complete["complete"])
+
+    def test_batch_coverage_uses_attempted_providers(self):
+        article = {"work_kind": "article"}
+        crossref_only = {"attempts": [{"provider": "crossref", "outcome": "no_results"}]}
+        self.assertFalse(ru.coverage_for(article, crossref_only)["complete"])
+        both = {"attempts": [{"provider": "crossref", "outcome": "no_results"},
+                             {"provider": "openalex", "outcome": "no_results"}]}
+        self.assertTrue(ru.coverage_for(article, both)["complete"])
+        book = {"work_kind": "monograph"}
+        book_routes = {"attempts": [{"provider": "openlibrary", "outcome": "no_results"},
+                                    {"provider": "crossref", "outcome": "no_results"}]}
+        self.assertTrue(ru.coverage_for(book, book_routes)["complete"])
+
+    def test_required_failure_and_budget_are_incomplete(self):
+        failed = kc.assess("article", ["crossref"], ["openalex timeout"], False)
+        self.assertFalse(failed["complete"])
+        budget = kc.assess("article", ["crossref", "openalex"], [], True)
+        self.assertFalse(budget["complete"])
+
+
+class ClauseUncitedTests(unittest.TestCase):
+    def _build(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(body + "\nReferences\nSmith, J. (2020). A work. Journal.\n")
+            return ec.build(path, "P")
+
+    def test_clause_continuation_is_not_a_standalone_uncited_claim(self):
+        data = self._build(
+            "Smith (2020) found that uptake rose; this increase continued through "
+            "2021 and reached 40% of households.")
+        rows = [row for row in data["uncited_candidates"]
+                if row.get("outcome") == "possible_continuation"]
+        self.assertTrue(rows)
+        self.assertIn("this increase", rows[0]["text"])
+
+    def test_independent_claim_after_a_citation_is_uncited(self):
+        data = self._build(
+            "Smith (2020) found that uptake rose. The ministry expanded the "
+            "programme in 2021, reaching 40% of households.")
+        rows = [row for row in data["uncited_candidates"]
+                if row.get("outcome") == "uncited"]
+        self.assertTrue(rows)
+        self.assertIn("ministry expanded", rows[0]["text"])
+
+    def test_fully_cited_clauses_add_nothing(self):
+        data = self._build(
+            "Smith (2020) found that uptake rose. Smith (2020) also found that "
+            "coverage reached 40% of households.")
+        self.assertFalse([row for row in data["uncited_candidates"]
+                          if row.get("outcome")])
+
+
+class ReferenceInventoryTests(unittest.TestCase):
+    def test_reference_ids_spans_and_text_are_shared(self):
+        paragraphs = [
+            {"id": "P1", "text": "References", "links": []},
+            {"id": "P2", "text": "Smith, J. (2020). A very long title", "links": []},
+            {"id": "P3", "text": "that wraps across lines. Journal.", "links": []},
+            {"id": "P4", "text": "Jones, K. (2021). Another work.", "links": []},
+        ]
+        entries = ha.reference_entries(paragraphs)
+        self.assertEqual([entry["id"] for entry in entries], ["R1", "R2"])
+        self.assertIn("wraps across lines", entries[0]["text"])
+        self.assertEqual([segment["paragraph_id"]
+                          for segment in entries[0]["segments"]], ["P2", "P3"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("References\nSmith, J. (2020). A very long title\n"
+                             "that wraps across lines. Journal.\n"
+                             "Jones, K. (2021). Another work.\n")
+            data = ec.build(path, "P")
+        self.assertEqual([reference["id"] for reference in data["references"]],
+                         ["R1", "R2"])
+        self.assertIn("wraps across lines", data["references"][0]["verbatim"])
+        self.assertTrue(data["references"][0]["spans"])
+
+
 class SourceScopeTests(unittest.TestCase):
     def test_cited_page_range(self):
         self.assertEqual(scope.cited_page_range("Journal, 28(2), 501-523."), (501, 523))
@@ -4538,6 +4657,20 @@ class SourceScopeTests(unittest.TestCase):
         observation = scope.assess_reference_scope("Journal, 195-211.", pages)
         self.assertEqual(observation["status"], "unresolved")
         self.assertFalse(observation["absence_allowed"])
+
+    def test_edition_observation_separates_affirmative_use_from_absence(self):
+        pages = [{"printed": "1", "text": "Second edition 2019"}]
+        later = scope.observe_edition("Journal, 2008, 1-10.", pages)
+        self.assertEqual(later["status"], "later_edition")
+        self.assertTrue(later["affirmative_use"])
+        self.assertFalse(later["absence_allowed"])
+        translation = scope.observe_edition(
+            "Journal, 2008, 1-10.", [{"printed": "1", "text": "Translated by A. Translator"}])
+        self.assertEqual(translation["status"], "translation")
+        self.assertFalse(translation["affirmative_use"])
+        same = scope.observe_edition(
+            "Journal, 2008, 1-10.", [{"printed": "1", "text": "2008 edition"}])
+        self.assertTrue(same["absence_allowed"])
 
     def test_script_variant_is_unresolved(self):
         pages = [{"printed": "1", "text": "Телевидение без границ " * 20}]

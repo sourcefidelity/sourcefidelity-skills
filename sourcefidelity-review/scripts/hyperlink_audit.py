@@ -146,7 +146,7 @@ def _first_entry_run(records):
     reliable signal for the reference list; a one-entry list falls back to the
     first entry-like paragraph.
     """
-    flags = [looks_like_entry(text) for text, _links in records]
+    flags = [looks_like_entry(record[0]) for record in records]
     for index, flag in enumerate(flags):
         if flag and index + 1 < len(flags) and flags[index + 1]:
             return index
@@ -176,17 +176,19 @@ def _is_url_continuation(previous, text):
 
 
 def reference_entries(paragraphs):
-    """Reference entries with URL-only lines and hyperlink targets attached."""
+    """Reference entries with stable IDs, paragraph spans and URL continuations."""
     records = []
-    for item in paragraphs:
+    for index, item in enumerate(paragraphs):
         if isinstance(item, dict):
             text, links = item.get("text", ""), item.get("links") or []
+            paragraph_id = item.get("id") or f"P{index + 1}"
         else:
             text, links = item, []
+            paragraph_id = f"P{index + 1}"
         if text or links:
-            records.append((text, links))
+            records.append((text, links, paragraph_id))
     start = None
-    for index, (text, _links) in enumerate(records):
+    for index, (text, _links, _pid) in enumerate(records):
         if REFERENCE_HEADING.match(text):
             start = index + 1
     if start is None:
@@ -194,31 +196,42 @@ def reference_entries(paragraphs):
     if start is None:
         return []
     entries = []
-    for text, links in records[start:]:
+    for text, links, paragraph_id in records[start:]:
         if not text and not links:
             continue
-        if URL_RE.fullmatch(text.strip()):
+        stripped = text.strip()
+        segment = {"paragraph_id": paragraph_id, "start": 0,
+                   "end": len(stripped), "text": stripped}
+        if URL_RE.fullmatch(stripped):
             if entries:
-                entries[-1]["lines"].append(text.strip())
+                entries[-1]["segments"].append(segment)
+                entries[-1]["lines"].append(stripped)
                 entries[-1]["links"].extend(links)
             continue
         if looks_like_entry(text):
-            entries.append({"lines": [text.strip()], "links": list(links)})
+            entries.append({"lines": [stripped], "links": list(links),
+                            "segments": [segment]})
         elif entries:
             previous = entries[-1]["lines"][-1] if entries[-1]["lines"] else ""
-            if _is_url_continuation(previous, text):
-                joined = previous + text.strip()
+            if _is_url_continuation(previous, stripped):
+                joined = previous + stripped
                 repairs = entries[-1].setdefault("locator_repairs", {})
                 old_url = URL_RE.findall(previous)[-1]
                 new_url = URL_RE.findall(joined)[-1]
                 fragments = repairs.pop(old_url, [old_url])
-                repairs[new_url] = [*fragments, text.strip()]
+                repairs[new_url] = [*fragments, stripped]
                 entries[-1]["lines"][-1] = joined
+                entries[-1]["segments"].append(segment)
             else:
-                entries[-1]["lines"].append(text.strip())
+                entries[-1]["lines"].append(stripped)
+                entries[-1]["segments"].append(segment)
             entries[-1]["links"].extend(links)
-    for entry in entries:
+    for number, entry in enumerate(entries, start=1):
+        entry["id"] = f"R{number}"
+        entry["paragraph_id"] = entry["segments"][0]["paragraph_id"] if entry["segments"] else ""
         entry["text"] = " ".join(entry.pop("lines"))
+        entry["start"] = entry["segments"][0]["start"] if entry["segments"] else 0
+        entry["end"] = entry["segments"][-1]["end"] if entry["segments"] else 0
     return entries
 
 

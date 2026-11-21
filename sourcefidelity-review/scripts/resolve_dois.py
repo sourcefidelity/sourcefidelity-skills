@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import kind_coverage  # noqa: E402
 import page_map  # noqa: E402
 import provider_pacing  # noqa: E402
 import public_fetch  # noqa: E402
@@ -1836,7 +1837,9 @@ def process(entry, out_dir, attempt, mailto, check_contents=False):
 def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
     parsed = parse_reference(entry)
     kind = entry_kind(parsed["entry"], parsed)
-    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind, "identity": "",
+    coverage_kind = kind_coverage.kind_for(parsed, parsed["entry"])
+    record = {"entry": parsed["entry"], "parsed": parsed, "kind": kind,
+              "coverage_kind": coverage_kind, "identity": "",
               "doi": "", "submitted_doi": parsed["doi"], "record_title": "",
               "copy": {}, "notes": []}
     if parsed["doi"]:
@@ -1866,6 +1869,8 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
             record["submitted_doi_check"] = _cached_identity["submitted_doi_check"]
         if "evidence" in _cached_identity:
             record["evidence"] = _cached_identity["evidence"]
+        if "coverage" in _cached_identity:
+            record["coverage"] = _cached_identity["coverage"]
         record["notes"].extend(_cached_identity["notes"])
         record["notes"].append("identity: cache hit")
     if _web_only_entry(parsed):
@@ -1873,7 +1878,8 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
         record["notes"].append("web-only entry: bibliographic adapters skipped")
         record["notes"].append("routes run: none")
         return record
-    routes = KIND_ROUTES[kind]
+    route_kind = "book" if coverage_kind in ("book", "chapter") else kind
+    routes = KIND_ROUTES.get(route_kind, KIND_ROUTES["unclassified"])
     ran, failed, seen = [], [], []
 
     def stop_early():
@@ -1999,6 +2005,8 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
     record["notes"].append("routes run: " + (", ".join(ran) or "none"))
     if failed:
         record["notes"].append("route failures: " + "; ".join(failed))
+    coverage = kind_coverage.assess(coverage_kind, ran, failed, budget_skipped)
+    record["coverage"] = coverage
     if not record["identity"]:
         if failed or budget_skipped:
             record["identity"] = "search_incomplete"
@@ -2006,6 +2014,10 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
             record["identity"] = "not_indexed"
         else:
             record["identity"] = "unlocated_after_search"
+    if (not _cached_identity and not coverage["complete"]
+            and record["identity"] in ("unlocated_after_search", "not_indexed")):
+        record["identity"] = "search_incomplete"
+        record["notes"].append("kind coverage incomplete: " + coverage["reason"])
 
     if (_identity_key and record["identity"] != "search_incomplete"
             and (record["identity"] in DECISIVE_IDENTITIES
@@ -2013,7 +2025,8 @@ def _resolve_identity(entry, mailto, attempt, check_contents, deadline):
             and not (parsed["doi"] and (failed or budget_skipped))
             and not _cached_identity):
         cached = {field: record[field] for field in
-                  ("identity", "doi", "record_title", "evidence", "submitted_doi_check")
+                  ("identity", "doi", "record_title", "evidence", "coverage",
+                   "submitted_doi_check")
                   if field in record}
         cached["notes"] = identity_notes
         cache_put("identity", _identity_key, cached)

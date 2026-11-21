@@ -20,7 +20,7 @@ You are revising a completed review after sources were supplied. This is **not**
 - `chapter_authored_book`: the source object is the book; the chapter citation is a form issue, not a reason to look for a separate chapter. Assess the cited pages in the book.
 - `chapter_edited_collection`: the source object is the collection. `restrict_pages` is true, so use only passages inside `page_range`; pass `--min-page` and `--max-page` to `lookup.py`. A passage from another chapter does not assess this citation.
 - A missing chapter page range is a coverage gap; leave the item Not Judged.
-- `scope_status` reports whether the extraction reaches the cited pages. If it is `inadequate` or `unresolved`, return `Not Judged` for every entry from that source; the apply step rejects any other judgment. If `absence_allowed` is false, do not return `Contradicts` or `Not Supported`; a missing page is not evidence that the claim is absent.
+- `scope_status` reports whether the extraction reaches the cited pages. If it is `inadequate` or `unresolved`, return `Not Judged` for every entry from that source; the apply step rejects any other judgment. If `absence_allowed` is false, do not return `Contradicts` or `Not Supported`; a missing page is not evidence that the claim is absent. `copy_observation.edition` reports `translation`, `abridgment`, `later_edition`, `alternate_unverified`, `same_year_or_unstated` or `unknown`; a translation/abridgment is not the cited text, and a later edition permits an affirmative passage but not pagination or whole-work absence.
 
 ## Rules
 

@@ -37,6 +37,7 @@ _utf8_streams()
 HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW_SKILL = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(REVIEW_SKILL, "scripts"))
+import hyperlink_audit as ha  # noqa: E402
 
 REF_HEAD_RE = re.compile(
     r"^\s*(references?|references?\s+lists?|reference\s+lists?|list\s+of\s+references|"
@@ -189,6 +190,73 @@ def reference_heading_index(paragraphs):
     return None
 
 
+CONTINUATION = re.compile(
+    r"^(?:this|these|it|its|they|their|such|that|the same|accordingly|"
+    r"consequently|however|moreover|furthermore|in addition|as a result|thus|"
+    r"therefore|meanwhile|but|and|which|who)\b", re.I)
+CLAUSE_SPLIT = re.compile(r"[^.!?;]+[.!?;]*")
+
+
+def _clause_spans(text):
+    return [(match.start(), match.end(), match.group(0).strip())
+            for match in CLAUSE_SPLIT.finditer(text or "") if match.group(0).strip()]
+
+
+def _clause_signals(text):
+    has_fact = bool(FACT_RE.search(text))
+    has_name = bool(re.search(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+", text))
+    has_claim = bool(re.search(
+        r"\b(?:argues?|shows?|reveals?|demonstrates?|suggests?|states?|claims?"
+        r"|explains?)\b", text, re.I))
+    return [name for name, ok in (("fact", has_fact), ("name", has_name),
+                                  ("claim", has_claim)) if ok]
+
+
+def clause_uncited(paragraphs, citations, limit=None):
+    """Clause-level uncited claims and possible continuations after citations."""
+    by_paragraph = {}
+    for citation in citations:
+        by_paragraph.setdefault(citation["paragraph_id"], []).append(citation)
+    candidates = []
+    for paragraph in paragraphs[:limit if limit is not None else len(paragraphs)]:
+        paragraph_citations = by_paragraph.get(paragraph["id"], [])
+        if not paragraph_citations:
+            continue                      # wholly uncited paragraphs keep one U
+        spans = _clause_spans(paragraph["text"])
+        if len(spans) < 2:
+            continue
+        covered = []
+        for start, end, text in spans:
+            hit = [citation for citation in paragraph_citations
+                   if citation.get("start", 0) < end
+                   and start < citation.get("end", 0)]
+            covered.append(hit)
+        if all(covered):
+            continue                      # every clause has its citation
+        for index, (start, end, text) in enumerate(spans):
+            if covered[index]:
+                continue
+            signals = _clause_signals(text)
+            words = len(text.split())
+            substantive = (words >= 8 and bool(signals)) or words >= 12
+            if not substantive:
+                continue
+            previous_cited = index > 0 and bool(covered[index - 1])
+            continuation = bool(CONTINUATION.match(text)) or (
+                previous_cited and not any(name in signals for name in ("fact", "name")))
+            candidates.append({
+                "paragraph_id": paragraph["id"],
+                "start": start,
+                "end": end,
+                "text": text,
+                "signals": signals,
+                "outcome": "possible_continuation" if continuation else "uncited",
+                "citation_ids": [citation["id"] for hit in covered[index]
+                                 for citation in hit],
+            })
+    return candidates
+
+
 def build(path, paper_id):
     raw, kind = blocks_for(path)
     paragraphs = []
@@ -207,26 +275,25 @@ def build(path, paper_id):
     heading_index = reference_heading_index(paragraphs)
     explicit_heading = (heading_index is not None
                         and bool(REF_HEAD_RE.match(paragraphs[heading_index]["text"])))
+    reference_input = []
+    for p in paragraphs:
+        if reference_input and APPENDIX_RE.match(p["text"]):
+            break
+        reference_input.append(p)
+    entries = ha.reference_entries(reference_input) if heading_index is not None else []
     references = []
-    if heading_index is not None:
-        for p in paragraphs[heading_index + (1 if explicit_heading else 0):]:
-            if APPENDIX_RE.match(p["text"]):
-                break
-            if p["text"].lower().startswith("http") and references:
-                references[-1]["verbatim"] += " " + p["text"]
-                references[-1]["has_url"] = True
-                continue
-            if len(p["text"].split()) < 2:
-                continue
-            references.append({
-                "id": f"R{len(references) + 1}",
-                "paragraph_id": p["id"],
-                "verbatim": p["text"],
-                "years": YEAR_RE.findall(p["text"]),
-                "has_doi": "doi.org" in p["text"].lower() or "doi:" in p["text"].lower(),
-                "has_url": "http" in p["text"].lower(),
-                "flags": [],
-            })
+    for entry in entries:
+        references.append({
+            "id": entry["id"],
+            "paragraph_id": entry.get("paragraph_id", ""),
+            "verbatim": entry["text"],
+            "years": YEAR_RE.findall(entry["text"]),
+            "has_doi": ("doi.org" in entry["text"].lower()
+                        or "doi:" in entry["text"].lower()),
+            "has_url": "http" in entry["text"].lower(),
+            "flags": [],
+            "spans": entry.get("segments", []),
+        })
 
     ref_keys = reference_keys(references)
     citations = []
@@ -351,6 +418,13 @@ def build(path, paper_id):
                                   int(c.get("start") or 0)))
     for number, citation in enumerate(citations, 1):
         citation["id"] = f"X{number}"
+
+    for candidate in clause_uncited(
+            paragraphs, citations,
+            heading_index if heading_index is not None else len(paragraphs)):
+        candidate["id"] = f"U{len(uncited) + 1}"
+        uncited.append(candidate)
+
 
     ambiguity = ambiguity_for(paragraphs, references, citations)
     return {

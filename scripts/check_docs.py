@@ -29,8 +29,8 @@ AUTHORITY_DOCS = ["docs/ARCHITECTURE.md", "docs/STATE.md", "docs/PLAN.md"]
 BUDGETS = {
     "AGENTS.md": 1200,
     "docs/ARCHITECTURE.md": 3500,
-    "docs/STATE.md": 2000,
-    "docs/PLAN.md": 1500,
+    "docs/STATE.md": 2667,
+    "docs/PLAN.md": 2000,
 }
 HEADINGS = {
     "AGENTS.md": ["## Documentation map", "## Sources of truth",

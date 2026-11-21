@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Documentation budgets.** Raised `STATE.md` to 2,667 words and `PLAN.md` to
+  2,000 words, one third above the previous limits, and updated the maintenance
+  instructions to match.
+
 - **Reasoning levels in the plan.** `docs/PLAN.md` now shows the reasoning
   level to set before starting each row, with the escalation rule; `AGENTS.md`
   points to it.
@@ -11,7 +15,20 @@
   samples, incomplete scans and script variants. The source pack index, batch
   registry/task and resolver accession record it; only an `adequate` observation
   permits an absence conclusion. Reappraisal tasks carry it and the apply step
-  rejects judgments from inadequate/unresolved copies.
+  rejects judgments from inadequate/unresolved copies. Edition observation separates
+  later/alternate, translation and abridgment copies from the cited edition.
+- **Kind-based coverage.** The resolver requires the kind's academic indexes
+  before a completed miss: article needs Crossref and OpenAlex; book/chapter
+  needs Open Library plus an article index; report/thesis needs both general
+  indexes. Incomplete kind coverage stays `search_incomplete` in the resolver
+  and `partial` in the batch. Verified on the real Television paper with the
+  supplied COM151 Berry book: batch R1 is a chapter at pp. 57–82 with adequate
+  page coverage and a bound source hash.
+- **Shared reference inventory (R16).** Reference entries now carry stable IDs,
+  paragraph spans and segment records; `extract_candidates.py` consumes that
+  inventory so extraction and link checks agree on IDs and wrapped text.
+  Partly cited paragraphs now produce clause-level `uncited` or
+  `possible_continuation` candidates instead of being skipped as cited.
 
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer

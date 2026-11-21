@@ -28,7 +28,7 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `SKILL.md` | Entry point: preflight, interpreter, dossier-first workflow, deliverables. |
 | `REVIEW_PROTOCOL.md` | Canonical method: source classes, finding categories, evidence states, report shape. |
 | `dossier.py` | One call for identity and link state: `dossier.md` and `dossier.json`, one row per reference. |
-| `hyperlink_audit.py` | Classifies every submitted link by state; joins split URLs; records transport and cache. |
+| `hyperlink_audit.py` | Classifies every submitted link by state; joins split URLs; owns the shared reference inventory (stable R IDs, paragraph spans and segments). |
 | `resolve_dois.py` | Reference identity: submitted DOI check before bounded title/author fallback, separate submitted and resolved identifiers, archive routing. |
 | `sourcepack.py` | Proposes unique PDF mappings from first-page title and author evidence or a strong filename, honours explicit overrides, and indexes the extracts by printed page. |
 | `openfetch.py` | Best-effort open-access copies from OpenAlex and CORE, with attempted CORE queries and access outcomes in the index. |
@@ -36,7 +36,8 @@ This shape is deliberate: a review must run under DSH, Claude Code, Codex or Cur
 | `public_fetch.py` | Shared transport for audits, downloads, batch retrieval and DOI acquisition. Pins a public address and verifies the connected peer before HTTP or TLS on each hop. Applies redirect, request and response limits. |
 | `hyperlink_audit.py` | Records submitted locator forms and fetch outcomes per reference. Stores archive locations separately. |
 | `docx_text.py`, `word_count.py` | Paragraph text and counts from the original DOCX. |
-| `source_scope.py` | Shared copy-scope observation: cited page range versus observed printed pages, previews, front matter, incomplete scans and script variants. |
+| `kind_coverage.py` | Required academic coverage by reference kind; a missing or failed required route keeps the search incomplete. |
+| `source_scope.py` | Shared copy-scope and edition observation: cited page range versus observed printed pages, previews, front matter, incomplete scans, script variants, and later/alternate/translation copies. |
 | `update_check.py` | Weekly release check; prints one line when an update is due. |
 
 Public-content fetches use direct connections with the original hostname for TLS.
@@ -70,7 +71,7 @@ fetch cache.
 
 ### Batch
 
-A source folder plus a folder of papers. Each supplied copy carries the shared `source_scope` observation, including its source hash, mapping decision, observed match evidence and unknowns. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures.
+A source folder plus a folder of papers. Each supplied copy carries the shared `source_scope` observation, including its source hash, mapping decision, observed match evidence and unknowns. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures. Batch kind coverage uses the same requirements as the resolver; a missing required provider makes the record `partial`, not a completed miss.
 
 ### Reappraisal
 
@@ -98,7 +99,8 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 - **Paragraph locators.** The paper's own locators are paragraph-based. Source page numbers are quoted from the source and never invented; a missing locator means the check is limited, not that the passage is absent.
 - **Source states are distinct.** `verified`, `blocked`, `dead`, `record-only` and `absent` are different outcomes. A blocked or dead link is not a formatting defect; an unretrieved source is `not judged`, not "not supported".
 - **Findings.** Category A is a formatting/mechanical defect; Category B is a substantive use problem. Outcomes are `Supports`, `Qualified`, `Contradicts`, `Not Supported` and `Not Judged`. A claim the retrieved evidence cannot decide stays `Not Judged`.
-- **No absence without a completed route.** "Could not be found" is only sayable after the protocol's required routes ran; access restrictions and operational failures are `search_incomplete`.
+- **Clause-level uncited checks.** A partly cited paragraph is not wholly cited: clauses after a citation are checked separately, with `possible_continuation` distinguished from an independent uncited claim.
+- **No absence without a completed route.** "Could not be found" is only sayable after the protocol's required routes ran; access restrictions and operational failures are `search_incomplete`. Kind coverage tracks the routes each reference kind requires, so a partial provider set cannot become `unlocated_after_search`.
 - **Copy coverage.** Identity does not prove that a copy contains the cited component. A preview, front-matter-only copy, incomplete scan or non-Latin script variant is a coverage limitation; only an `adequate` copy-scope observation permits an absence conclusion.
 - **Provider pacing.** Review discovery, open-access lookup and batch adapters share local per-provider request slots and Retry-After cooldowns. The pacing store holds only provider keys and timestamps. Waits occur outside its transactions.
 - **Identity request budget.** Each reference shares a cooperative elapsed budget across metadata pacing, socket timeouts and retry waits. Provider waits that exceed the remaining budget are skipped. Copy retrieval has its own timeouts.

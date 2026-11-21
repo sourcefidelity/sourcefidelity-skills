@@ -606,6 +606,9 @@ def copy_observation(record, digest=""):
         unknowns.append("chapter membership not checked")
     if scope.get("status") in {"unresolved", "inadequate"}:
         unknowns.append(scope.get("reason") or "copy coverage unresolved")
+    edition = source_scope.observe_edition(
+        "", [], {}, identity_status=record.get("identity_status", ""))
+    unknowns.extend(edition.get("unknowns") or [])
     return {
         "source_file": record.get("supplied_file", ""),
         "sha256": digest,
@@ -620,6 +623,9 @@ def copy_observation(record, digest=""):
             "edition": "later" if match.get("later_edition") else "unspecified",
         },
         "scope": scope,
+        "edition": edition,
+        "absence_allowed": bool(scope.get("absence_allowed")
+                                and edition.get("absence_allowed")),
         "unknowns": unknowns,
     }
 

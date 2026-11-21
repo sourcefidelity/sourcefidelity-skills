@@ -170,6 +170,12 @@ def render_review_text(original, task, judgments, day, counts=None):
             raise SystemExit(
                 f"{cid}: {source_key} coverage does not permit an absence "
                 "conclusion; return Not Judged")
+        edition = observation.get("edition") or {}
+        if (new in ("Contradicts", "Not Supported")
+                and edition and not edition.get("absence_allowed")):
+            raise SystemExit(
+                f"{cid}: {source_key} edition ({edition.get('status')}) does not "
+                "permit an absence conclusion; return Not Judged")
         block = set_judgment(block, new)
         evidence = (change.get("evidence") or "").strip()
         locator = (change.get("locator") or "").strip()

@@ -70,6 +70,72 @@ def _preview_copy(pages):
     return bool(PREVIEW.search(sampled))
 
 
+YEAR = re.compile(r"\b((?:19|20)\d{2})\b")
+TRANSLATION = re.compile(r"\b(translated by|translation|translator)\b", re.I)
+ABRIDGMENT = re.compile(r"\b(abridged|abridgment|abridged edition)\b", re.I)
+EDITION = re.compile(
+    r"\b((?:\d+|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|"
+    r"tenth)\s+edition|revised edition|new edition|reprint(?:ed)?)\b", re.I)
+
+
+def observe_edition(reference_text, pages=None, meta=None,
+                    identity_status=""):
+    """Separate exact/alternate edition and permitted use from identity.
+
+    Similar title, author and year do not establish an alternate-edition
+    relationship. A later edition or a translation may support a narrow
+    affirmative statement, but cannot establish pagination or whole-work
+    absence; those need the cited edition or verified correspondence.
+    """
+    meta = meta or {}
+    text = " ".join([
+        str(meta.get("first_page_head") or ""),
+        str((meta.get("pdf_metadata") or {}).get("title") or ""),
+        str((meta.get("pdf_metadata") or {}).get("subject") or ""),
+        " ".join(str(page.get("text") or "") for page in (pages or [])),
+    ])
+    cited_match = YEAR.search(reference_text or "")
+    cited_year = int(cited_match.group(1)) if cited_match else None
+    years = [int(match.group(1)) for match in YEAR.finditer(text)]
+    latest = max(years) if years else None
+    statement = EDITION.search(text)
+    observation = {
+        "status": "unknown",
+        "cited_year": cited_year,
+        "observed_year": latest,
+        "evidence": statement.group(0) if statement else "",
+        "affirmative_use": False,
+        "pagination_allowed": False,
+        "absence_allowed": False,
+        "unknowns": [],
+    }
+    if TRANSLATION.search(text):
+        observation.update(status="translation", affirmative_use=False)
+        observation["unknowns"].append("translation is not the cited edition")
+        return observation
+    if ABRIDGMENT.search(text):
+        observation.update(status="abridgment", affirmative_use=False)
+        observation["unknowns"].append("abridgment is not the cited edition")
+        return observation
+    later = bool(latest and cited_year and latest > cited_year + 1)
+    if later or identity_status == "supplied_edition_mismatch":
+        observation.update(status="later_edition", affirmative_use=True)
+        observation["unknowns"].append("later edition; pagination and absence not verified")
+        return observation
+    if latest and cited_year and latest != cited_year:
+        observation.update(status="alternate_unverified", affirmative_use=True)
+        observation["unknowns"].append("year differs from the cited edition")
+        return observation
+    if not text.strip():
+        observation["unknowns"].append("edition statement not observed")
+        return observation
+    observation.update(status="same_year_or_unstated", affirmative_use=True,
+                       pagination_allowed=True, absence_allowed=True)
+    if not statement:
+        observation["unknowns"].append("edition statement not observed; same year assumed")
+    return observation
+
+
 def assess_page_span(start, end, pages, meta=None):
     """Scope observation for a known cited page span (batch registry)."""
     try:

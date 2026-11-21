@@ -162,6 +162,10 @@ def _observe(entry, result, why=""):
     parsed = rd.parse_reference(entry["text"])
     observation = source_scope.assess_reference_scope(
         entry["text"], pages, meta, scope_kind=rd.entry_kind(entry["text"], parsed))
+    edition = source_scope.observe_edition(entry["text"], pages, meta)
+    observation["edition"] = edition
+    observation["absence_allowed"] = bool(
+        observation.get("absence_allowed") and edition.get("absence_allowed"))
     head = str(meta.get("first_page_head") or "")
     metadata = meta.get("pdf_metadata") or {}
     year = re.search(r"\b((?:19|20)\d{2})\b", head)

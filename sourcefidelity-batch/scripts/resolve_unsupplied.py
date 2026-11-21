@@ -39,6 +39,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
                                 "sourcefidelity-review", "scripts"))
 import enrich_registry as er  # noqa: E402
+import kind_coverage  # noqa: E402
 import source_registry as sr  # noqa: E402
 
 
@@ -370,6 +371,31 @@ def plausible(record, result):
                          "provider_type": ptype}
 
 
+def coverage_kind(record):
+    work_kind = str(record.get("work_kind") or "")
+    if work_kind == "article":
+        return "article"
+    if work_kind.startswith("chapter"):
+        return "chapter"
+    if work_kind in {"monograph", "edited_collection", "book"}:
+        return "book"
+    if work_kind in {"report", "thesis"}:
+        return work_kind
+    return "unclassified"
+
+
+def coverage_for(record, result):
+    """Kind coverage from the providers actually attempted by the batch lookup."""
+    attempts = (result or {}).get("attempts") or []
+    ran = [attempt.get("provider") for attempt in attempts
+           if attempt.get("provider")
+           and attempt.get("outcome") != "provider_failure"]
+    failed = [attempt.get("provider") for attempt in attempts
+              if attempt.get("provider")
+              and attempt.get("outcome") == "provider_failure"]
+    return kind_coverage.assess(coverage_kind(record), ran, failed)
+
+
 def set_status(record, status, reason, result=None):
     record["search_status"] = status
     record["search"] = {
@@ -383,6 +409,7 @@ def set_status(record, status, reason, result=None):
         "score": (result or {}).get("score", ""),
         "provider_doi": ((result or {}).get("provider") or {}).get("doi", ""),
         "handle_url": (result or {}).get("handle_url", ""),
+        "coverage": (result or {}).get("coverage", {}),
     }
 
 
@@ -467,6 +494,7 @@ def main():
     for index, (ident, keys) in enumerate(pending, 1):
         record = representative([registry[k] for k in keys])
         result = lookup(record, root, cache, refresh=args.refresh)
+        result["coverage"] = coverage_for(record, result)
         if result.get("_cached"):
             stats["cached"] += 1
         if result.get("provider"):
@@ -507,7 +535,10 @@ def main():
             for key in keys:
                 registry[key].pop("provider_error", None)
                 registry[key].pop("doi_conflict", None)
-                set_status(registry[key], "searched", result["reason"], result)
+                if not result["coverage"]["complete"]:
+                    set_status(registry[key], "partial", "coverage_incomplete", result)
+                else:
+                    set_status(registry[key], "searched", result["reason"], result)
         if not result.get("_cached"):
             er.save_cache(root, cache)
         if index % 25 == 0:

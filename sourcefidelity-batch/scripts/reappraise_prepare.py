@@ -225,6 +225,13 @@ def main():
         page_range = rec.get("page_range", [])
         restrict = bool(rec.get("restrict_pages"))
         observation = scope_for(extraction, page_range)
+        edition_text = (f"{identity.get('author', '')} ({identity.get('year', '')}). "
+                        f"{identity.get('title', '')}.")
+        observation["edition"] = source_scope.observe_edition(
+            edition_text, [], {}, identity_status=rec.get("identity_status", ""))
+        observation["absence_allowed"] = bool(
+            observation.get("absence_allowed")
+            and observation["edition"].get("absence_allowed", True))
         text_cache = None
         if extraction and os.path.exists(extraction):
             text_cache = make_task.page_index(extraction)
