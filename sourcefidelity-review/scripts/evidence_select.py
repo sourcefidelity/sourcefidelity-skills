@@ -14,12 +14,18 @@ or model. The result is presentation evidence, not proof of support or absence.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import os
 import re
+import sys
 from dataclasses import dataclass
 
-from sentence_split import split_sentences
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from sentence_split import split_sentences  # noqa: E402
 
 VERSION = "skill-sentence-evidence-v1"
 MAX_SELECTIONS = 8
@@ -217,3 +223,99 @@ def select_evidence(statement, passages, *, call=None, cited_as="", max_input_to
         "end": ref.passage_end, "reason": reason, "text": ref.text,
     } for ref, reason in chosen]
     return result
+
+
+def _task_citations(task):
+    return task.get("citations") or (task.get("candidates") or {}).get("citations", [])
+
+
+def task_request(task, citation):
+    hits = (task.get("windows") or {}).get(citation.get("id"), [])
+    passages = [{"passage_id": hit.get("window_id") or f"{citation.get('id')}:{index}",
+                 "page_index": hit.get("pdf_page"), "text": hit.get("text", "")}
+                for index, hit in enumerate(hits, 1)]
+    request = prepare_request(citation.get("sentence") or citation.get("marker", ""),
+                              passages, cited_as=citation.get("marker", ""))
+    return request, passages
+
+
+def emit_requests(task_path, out_dir):
+    """Write one model-neutral request per citation that has source windows."""
+    task = json.load(open(task_path, encoding="utf-8"))
+    os.makedirs(out_dir, exist_ok=True)
+    emitted = []
+    for citation in _task_citations(task):
+        request, passages = task_request(task, citation)
+        if not request.sentences:
+            continue
+        path = os.path.join(out_dir, f"{citation['id']}.request.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"citation_id": citation["id"],
+                       "system_prompt": request.system_prompt,
+                       "user_prompt": request.user_prompt,
+                       "fingerprint": request.fingerprint,
+                       "sentence_count": len(request.sentences),
+                       "response_file": f"{citation['id']}.response.json"},
+                      handle, indent=1, ensure_ascii=False)
+        emitted.append({"citation_id": citation["id"], "path": path,
+                        "sentences": len(request.sentences)})
+    with open(os.path.join(out_dir, "index.json"), "w", encoding="utf-8") as handle:
+        json.dump({"requests": emitted}, handle, indent=1)
+    return emitted
+
+
+def bind_responses(task_path, response_dir):
+    """Validate host-model responses and replace each citation's selection."""
+    task = json.load(open(task_path, encoding="utf-8"))
+    bound, errors = [], []
+    for citation in _task_citations(task):
+        response_path = os.path.join(response_dir, f"{citation['id']}.response.json")
+        if not os.path.exists(response_path):
+            continue
+        request, _passages = task_request(task, citation)
+        if not request.sentences:
+            errors.append({"citation_id": citation["id"], "error": "no_window"})
+            continue
+        try:
+            raw = json.load(open(response_path, encoding="utf-8"))
+            chosen = bind_response(raw, request)
+        except Exception as exc:  # invalid model output is recorded, not guessed
+            errors.append({"citation_id": citation["id"], "error": type(exc).__name__})
+            continue
+        if not chosen:
+            selection = {"version": VERSION, "status": "empty", "sentences": [],
+                         "limitations": ["The model selected no sentence; not absence evidence."]}
+        else:
+            selection = {"version": VERSION, "status": "selected", "sentences": [{
+                "sentence_id": ref.alias, "passage_id": ref.passage_id,
+                "page_index": ref.page_index, "start": ref.passage_start,
+                "end": ref.passage_end, "reason": reason, "text": ref.text,
+            } for ref, reason in chosen], "limitations": []}
+        citation["evidence_selection"] = selection
+        bound.append(citation["id"])
+    with open(task_path, "w", encoding="utf-8") as handle:
+        json.dump(task, handle, indent=1, ensure_ascii=False)
+    with open(os.path.join(response_dir, "bind-report.json"), "w", encoding="utf-8") as handle:
+        json.dump({"bound": bound, "errors": errors}, handle, indent=1)
+    return {"bound": bound, "errors": errors}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--task", required=True)
+    ap.add_argument("--emit", default="", help="write one request per citation with windows")
+    ap.add_argument("--bind", default="", help="bind <C>.response.json files into the task")
+    args = ap.parse_args(argv)
+    if args.emit:
+        emitted = emit_requests(args.task, args.emit)
+        print(json.dumps({"emitted": len(emitted), "requests": emitted}, indent=1))
+        return 0
+    if args.bind:
+        result = bind_responses(args.task, args.bind)
+        print(json.dumps(result, indent=1))
+        return 0 if not result["errors"] else 1
+    ap.error("give --emit DIR or --bind DIR")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -4887,6 +4887,49 @@ class EvidenceSelectionTests(unittest.TestCase):
         self.assertEqual(fallback["status"], "fallback")
         self.assertTrue(fallback["limitations"])
 
+    def test_file_requests_round_trip_to_bound_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_path = os.path.join(tmp, "task.json")
+            task = {"citations": [{"id": "C1", "marker": "(Smith, 2020)",
+                                   "sentence": "The directive creates a single market."}],
+                    "windows": {"C1": [{"window_id": "C1:R1:1", "pdf_page": 4,
+                                        "text": "The directive creates a single market. "
+                                                "It also sets minimum rules."}]}}
+            with open(task_path, "w", encoding="utf-8") as handle:
+                json.dump(task, handle)
+            request_dir = os.path.join(tmp, "requests")
+            self.assertEqual(len(ev.emit_requests(task_path, request_dir)), 1)
+            self.assertTrue(os.path.exists(os.path.join(request_dir, "C1.request.json")))
+            with open(os.path.join(request_dir, "C1.response.json"), "w",
+                      encoding="utf-8") as handle:
+                json.dump({"selections": [{"sentence_id": "s1",
+                                           "reason": "bears_on_statement"}]}, handle)
+            result = ev.bind_responses(task_path, request_dir)
+            self.assertEqual(result["bound"], ["C1"])
+            updated = json.load(open(task_path, encoding="utf-8"))
+            selection = updated["citations"][0]["evidence_selection"]
+            self.assertEqual(selection["status"], "selected")
+            self.assertIn("single market", selection["sentences"][0]["text"])
+
+    def test_invalid_host_response_is_reported_not_guessed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_path = os.path.join(tmp, "task.json")
+            task = {"citations": [{"id": "C1", "sentence": "A claim.",
+                                   "marker": "(Smith, 2020)"}],
+                    "windows": {"C1": [{"window_id": "w1", "pdf_page": 1,
+                                        "text": "A claim. Another sentence here."}]}}
+            with open(task_path, "w", encoding="utf-8") as handle:
+                json.dump(task, handle)
+            request_dir = os.path.join(tmp, "requests")
+            ev.emit_requests(task_path, request_dir)
+            with open(os.path.join(request_dir, "C1.response.json"), "w",
+                      encoding="utf-8") as handle:
+                handle.write('{"selections": [{"sentence_id": "s9", '
+                             '"reason": "bears_on_statement"}]}')
+            result = ev.bind_responses(task_path, request_dir)
+            self.assertFalse(result["bound"])
+            self.assertEqual(result["errors"][0]["error"], "SelectionResponseInvalid")
+
     def test_lexical_fallback_ignores_generic_questions(self):
         result = ev.select_evidence("media policy", [{
             "passage_id": "w1", "page_index": 1,
