@@ -995,6 +995,10 @@ def main():
             record["extraction"] = os.path.join(extraction_dir, "text.txt")
             record["extraction_key"] = os.path.basename(extraction_dir)
             record["page_map"] = meta.get("offset", {})
+            record["extraction_version"] = meta.get("extractor_version", "")
+            record["extraction_options"] = meta.get("extraction_options", {})
+            record["text_sha256"] = meta.get("text_sha256", "")
+            record["pages_sha256"] = meta.get("pages_sha256", "")
         prepare_this = (record["supplied_file"] and args.prepare
                         and (not args.prepare_key or key in args.prepare_key))
         if prepare_this:
@@ -1007,6 +1011,10 @@ def main():
                 try:
                     meta = json.load(open(os.path.join(out_dir, "meta.json"), encoding="utf-8"))
                     record["page_map"] = meta.get("offset", {})
+                    record["extraction_version"] = meta.get("extractor_version", "")
+                    record["extraction_options"] = meta.get("extraction_options", {})
+                    record["text_sha256"] = meta.get("text_sha256", "")
+                    record["pages_sha256"] = meta.get("pages_sha256", "")
                 except ValueError:
                     pass
             else:

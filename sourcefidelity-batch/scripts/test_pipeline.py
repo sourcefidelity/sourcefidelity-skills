@@ -8,6 +8,7 @@ No network, no PDFs, no OCR. Uses unittest so pytest can also collect it.
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,7 +43,9 @@ import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
 import file_digest as fd  # noqa: E402
 import extract_candidates as ec  # noqa: E402
+import benchmark_retrieval as bm  # noqa: E402
 import make_task as mt  # noqa: E402
+import prepare_source as ps  # noqa: E402
 import page_map  # noqa: E402
 import pdf_quality as pq  # noqa: E402
 import paper_index as pi  # noqa: E402
@@ -2347,11 +2350,46 @@ class EnrichTests(unittest.TestCase):
         self.assertEqual(stats["errors"], 2)
 
 
+class ExtractionCacheTests(unittest.TestCase):
+    def test_differently_labelled_copy_is_rejected(self):
+        self.assertTrue(ps.source_key_conflict({"source_key": "R1"}, "R2"))
+        self.assertFalse(ps.source_key_conflict({"source_key": "R1"}, "R1"))
+        self.assertFalse(ps.source_key_conflict({}, "R2"))
+
+    def test_version_options_and_output_files_must_match(self):
+        with tempfile.TemporaryDirectory() as out:
+            options = {"dpi": 220, "max_ocr_pages": 0, "seed_json": False}
+            text_path = os.path.join(out, "text.txt")
+            pages_path = os.path.join(out, "pages.csv")
+            open(text_path, "w", encoding="utf-8").write("text")
+            open(pages_path, "w", encoding="utf-8").write("header\n")
+            meta = {"sha256": "abc", "extractor_version": ps.EXTRACTOR_VERSION,
+                    "extraction_options": options,
+                    "text_sha256": ps.sha256_file(text_path),
+                    "pages_sha256": ps.sha256_file(pages_path)}
+            open(os.path.join(out, "meta.json"), "w", encoding="utf-8").write("{}")
+            self.assertTrue(ps.cache_is_current(out, meta, "abc", options))
+            self.assertFalse(ps.cache_is_current(out, {**meta, "extractor_version": "old"},
+                                                "abc", options))
+            self.assertFalse(ps.cache_is_current(out, meta, "abc",
+                                                {**options, "dpi": 300}))
+            open(text_path, "a", encoding="utf-8").write("tampered")
+            self.assertFalse(ps.cache_is_current(out, meta, "abc", options))
+            open(text_path, "w", encoding="utf-8").write("text")
+            os.remove(text_path)
+            self.assertFalse(ps.cache_is_current(out, meta, "abc", options))
+
+
 class SourceBindingTests(unittest.TestCase):
-    def _write_extraction(self, root, key, digest, text, offset=None):
+    def _write_extraction(self, root, key, digest, text, offset=None, version=None):
         out = os.path.join(root, "_sources", key)
         os.makedirs(out, exist_ok=True)
-        json.dump({"sha256": digest, "offset": offset or {}},
+        json.dump({"sha256": digest, "offset": offset or {},
+                   "extractor_version": version or rp.prepare_source_module.EXTRACTOR_VERSION,
+                   "extraction_options": {"dpi": rp.prepare_source_module.DEFAULT_DPI,
+                                          "max_ocr_pages": 0, "seed_json": False},
+                   "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                   "pages_sha256": ""},
                   open(os.path.join(out, "meta.json"), "w", encoding="utf-8"))
         open(os.path.join(out, "text.txt"), "w", encoding="utf-8").write(text)
 
@@ -2375,6 +2413,61 @@ class SourceBindingTests(unittest.TestCase):
             self.assertEqual(open(bound["extraction"], encoding="utf-8").read(),
                              "NEW TEXT")
             self.assertEqual(bound["sha256"], rp.sha256_file(supplied))
+
+    def test_old_extraction_version_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "copy.pdf")
+            open(supplied, "wb").write(b"COPY")
+            self._write_extraction(tmp, "key", rp.sha256_file(supplied), "OLD",
+                                   version="prepare-source-v1")
+            calls = []
+
+            def fake_prepare(path, out, key):
+                calls.append(key)
+                self._write_extraction(tmp, key, rp.sha256_file(path), "NEW")
+
+            with mock.patch.object(rp, "run_prepare_source", side_effect=fake_prepare):
+                bound = rp.prepare_extraction(tmp, "key", supplied)
+            self.assertEqual(calls, ["key"])
+            self.assertEqual(open(bound["extraction"], encoding="utf-8").read(), "NEW")
+            self.assertEqual(bound["extraction_version"],
+                             rp.prepare_source_module.EXTRACTOR_VERSION)
+
+    def test_tampered_text_is_reextracted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "copy.pdf")
+            open(supplied, "wb").write(b"COPY")
+            self._write_extraction(tmp, "key", rp.sha256_file(supplied), "ORIGINAL")
+            open(os.path.join(tmp, "_sources", "key", "text.txt"), "w",
+                 encoding="utf-8").write("TAMPERED")
+            calls = []
+
+            def fake_prepare(path, out, key):
+                calls.append(key)
+                self._write_extraction(tmp, key, rp.sha256_file(path), "REBUILT")
+
+            with mock.patch.object(rp, "run_prepare_source", side_effect=fake_prepare):
+                bound = rp.prepare_extraction(tmp, "key", supplied)
+            self.assertEqual(calls, ["key"])
+            self.assertEqual(open(bound["extraction"], encoding="utf-8").read(), "REBUILT")
+            self.assertEqual(bound["limitation"], "")
+
+    def test_missing_extraction_text_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            supplied = os.path.join(tmp, "copy.pdf")
+            open(supplied, "wb").write(b"COPY")
+            self._write_extraction(tmp, "key", rp.sha256_file(supplied), "OLD")
+            os.remove(os.path.join(tmp, "_sources", "key", "text.txt"))
+            calls = []
+
+            def fake_prepare(path, out, key):
+                calls.append(key)
+                self._write_extraction(tmp, key, rp.sha256_file(path), "NEW")
+
+            with mock.patch.object(rp, "run_prepare_source", side_effect=fake_prepare):
+                bound = rp.prepare_extraction(tmp, "key", supplied)
+        self.assertEqual(calls, ["key"])
+        self.assertEqual(bound["limitation"], "")
 
     def test_identical_copy_reuses_the_verified_extraction(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -4569,6 +4662,45 @@ class KindCoverageTests(unittest.TestCase):
         self.assertFalse(failed["complete"])
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
+
+
+class RetrievalBenchmarkTests(unittest.TestCase):
+    def test_benchmark_measures_recall_and_wrong_source(self):
+        metrics = bm.benchmark([
+            {"name": "a", "text": "alpha beta gamma", "quotes": ["alpha beta"]},
+            {"name": "b", "text": "alpha beta delta", "quotes": ["delta"]},
+        ])
+        self.assertEqual(metrics["quotes"], 2)
+        self.assertEqual(metrics["recall"], 1.0)
+        self.assertEqual(metrics["wrong_source_windows"], 1)
+
+    def test_benchmark_fixture_reports_coverage(self):
+        metrics = bm.benchmark([
+            {"name": "a", "text": "nothing", "quotes": ["missing"]},
+        ])
+        self.assertEqual(metrics["coverage"], 0.0)
+        self.assertEqual(metrics["found"], 0)
+
+    def test_exact_quote_windows_are_marked(self):
+        text = "=== PDF p1 | printed p57 | native | conf 1.0 ===\nquoted phrase appears here.\n"
+        marks = [(0, 1, "57")]
+        hits = mt.windows(text, marks, {}, ["quoted phrase"], 40, quotes=["quoted phrase"])
+        self.assertTrue(hits)
+        self.assertEqual(hits[0]["query_kind"], "quote")
+        self.assertTrue(hits[0]["exact_quote"])
+
+    def test_locator_members_preserve_ranges_and_commas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("Smith (2008) argues a point (p. 12; "
+                             "Smith, 2008, pp. 57–82, 90).\nReferences\n"
+                             "Smith, J. (2008). A work. Journal.\n")
+            data = ec.build(path, "P")
+        citing = [c for c in data["citations"] if "p. 12" in c["marker"]]
+        self.assertTrue(citing)
+        self.assertIn("57–82", citing[0]["locator_members"])
+        self.assertIn("90", citing[0]["locator_members"])
 
 
 class ClauseUncitedTests(unittest.TestCase):

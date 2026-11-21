@@ -97,6 +97,12 @@ def page_at(marks, pages, pos):
     return pdf, printed
 
 
+def quotes_for(citation):
+    """Exact quotations in the citation's sentence; these are searched first."""
+    sentence = citation.get("sentence") or citation.get("marker", "")
+    return [q.strip() for q in QUOTED.findall(sentence) if len(q.split()) >= 4][:3]
+
+
 def phrases_for(citation):
     """Candidate search phrases: quotations first, then content n-grams.
 
@@ -106,9 +112,9 @@ def phrases_for(citation):
     because it only produces title-page hits that say nothing about the claim.
     """
     sentence = citation.get("sentence") or citation.get("marker", "")
-    quoted = [q.strip() for q in QUOTED.findall(sentence) if len(q.split()) >= 4]
+    quoted = quotes_for(citation)
     if quoted:
-        return quoted[:3]
+        return quoted
     stop = {"that", "this", "with", "from", "their", "which", "have", "were",
             "been", "into", "about", "also", "used", "using", "such", "these",
             "they", "them", "then", "than", "over", "under", "between"}
@@ -178,9 +184,11 @@ def web_windows(root, url_entries, phrases, width, limit=2):
 
 
 def windows(text, marks, pages, phrases, width, page_range=None,
-            limit=2, body_only=False, allow_single=False):
+            limit=2, body_only=False, allow_single=False, quotes=None):
     out = []
     seen_pages = set()
+    quote_set = {re.sub(r"\s+", " ", quote).strip().lower()
+                 for quote in (quotes or [])}
     for phrase in phrases:
         needle = re.sub(r"\s+", " ", phrase).strip().lower()
         if len(needle) < 8:
@@ -215,8 +223,11 @@ def windows(text, marks, pages, phrases, width, page_range=None,
         if bounds is None:
             continue
         start, end = bounds
+        exact_quote = needle in quote_set
         out.append({
             "query": phrase[:120],
+            "query_kind": "quote" if exact_quote else "terms",
+            "exact_quote": exact_quote,
             "printed_page": printed,
             "pdf_page": pdf,
             "start": start,
@@ -280,27 +291,35 @@ def match_refs(citation, refs):
                               if "r_id" in member))
 
 
-def source_windows(root, rid, source, phrases, width, limit, cache):
+def source_windows(root, rid, source, phrases, width, limit, cache,
+                   quotes=None, locator=""):
     """Prepare windows and coverage for exactly one cited reference."""
     extraction = source.get("extraction")
     path = extraction or source.get("open_text")
     page_range = source.get("page_range") if source.get("restrict_pages") else None
-    status = {"r_id": rid, "page_range": page_range or []}
+    status = {"r_id": rid, "page_range": page_range or [], "locator": locator,
+              "locator_members": []}
     hits = []
     if path and os.path.exists(path):
         if path not in cache:
             text, marks, pages = page_index(path)
             meta = load(os.path.join(os.path.dirname(path), "meta.json"), {}) or {}
-            cache[path] = (text, marks, pages, hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                           meta.get("sha256"))
-        text, marks, pages, text_sha256, source_sha256 = cache[path]
-        hits = windows(text, marks, pages, phrases, width, page_range, limit=limit)
+            cache[path] = (
+                text, marks, pages,
+                hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                meta.get("sha256"), meta.get("extractor_version", ""),
+                meta.get("extraction_options", {}), meta.get("pages_sha256", ""),
+                meta.get("text_sha256", ""))
+        (text, marks, pages, text_sha256, source_sha256, extraction_version,
+         extraction_options, page_map_sha256, extraction_text_sha256) = cache[path]
+        hits = windows(text, marks, pages, phrases, width, page_range, limit=limit,
+                       quotes=quotes)
         if not hits and extraction:
             identity = source.get("identity") or {}
             terms = (title_phrases(identity.get("title", "")) +
                      title_phrases(source.get("container_title", "")))
             hits = windows(text, marks, pages, terms, width, page_range, limit=limit,
-                           body_only=True, allow_single=True)
+                           body_only=True, allow_single=True, quotes=quotes)
             for hit in hits:
                 hit["fallback"] = "title_terms"
         status.update(status="found" if hits else "no_window")
@@ -308,6 +327,10 @@ def source_windows(root, rid, source, phrases, width, limit, cache):
             status["phrases_tried"] = phrases[:4]
         for hit in hits:
             hit["text_sha256"] = text_sha256
+            hit["extraction_version"] = extraction_version
+            hit["extraction_options"] = extraction_options
+            hit["page_map_sha256"] = page_map_sha256
+            hit["extraction_text_sha256"] = extraction_text_sha256
             if extraction and source_sha256:
                 hit["source_sha256"] = source_sha256
             if not extraction:
@@ -407,6 +430,12 @@ def main():
             "search_status": rec.get("search_status", "not_searched"),
             "extraction": obj.get("extraction") or rec.get("extraction", ""),
             "page_map": obj.get("page_map", rec.get("page_map", {})),
+            "extraction_version": obj.get("extraction_version",
+                                          rec.get("extraction_version", "")),
+            "extraction_options": obj.get("extraction_options",
+                                          rec.get("extraction_options", {})),
+            "text_sha256": obj.get("text_sha256", rec.get("text_sha256", "")),
+            "pages_sha256": obj.get("pages_sha256", rec.get("pages_sha256", "")),
             "supplied_file": obj.get("supplied_file") or rec.get("supplied_file", ""),
         }
 
@@ -424,8 +453,9 @@ def main():
         found, per_ref = [], {}
         for rid in likely:
             src = sources[rid]
-            hits, status = source_windows(root, rid, src, phrases, args.window,
-                                          args.max_hits, cache)
+            hits, status = source_windows(
+                root, rid, src, phrases, args.window, args.max_hits, cache,
+                quotes=quotes_for(cit), locator=cit.get("locator", ""))
             for i, hit in enumerate(hits, 1):
                 hit.update(r_id=rid, source_key=src.get("source_key") or rid,
                            source_object_key=src.get("source_object_key") or rid,

@@ -29,6 +29,15 @@
   inventory so extraction and link checks agree on IDs and wrapped text.
   Partly cited paragraphs now produce clause-level `uncited` or
   `possible_continuation` candidates instead of being skipped as cited.
+- **Extraction provenance (R17).** `prepare_source.py` records extractor
+  version, options and text/page-map hashes; cache reuse requires all of them.
+  Batch windows and reappraisal bind the same fields to each excerpt. Cache
+  reuse also verifies the text and page-map hashes; a different `--key` cannot
+  reuse another labelled copy's extraction directory.
+- **Quotation and locator retrieval (R18).** Quotations are searched first and
+  marked as exact-quote windows; citation locators preserve ranges, comma
+  members, Roman folios and timestamps. `benchmark_retrieval.py` measures
+  recall, coverage, wrong-source windows and elapsed time.
 
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer

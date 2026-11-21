@@ -106,9 +106,29 @@ def sentence_for(text, marker, start):
     return part
 
 
+PAGE_MEMBERS = re.compile(
+    r"\b(pp?\.\s*(?:\d+(?:\s*[–-]\s*\d+)?(?:\s*,\s*\d+(?:\s*[–-]\s*\d+)?)*"
+    r"|[ivxlcdm]+(?:\s*[–-]\s*[ivxlcdm]+)?|\d{1,2}:\d{2}(?::\d{2})?))", re.I)
+
+
 def locator(text):
     m = PAGE_RE.search(text)
     return m.group(1) if m else ""
+
+
+def locator_members(text):
+    """Preserve every stated page/range/timestamp member inside a locator."""
+    members = []
+    for match in PAGE_MEMBERS.finditer(text or ""):
+        raw = re.sub(r"\s+", " ", match.group(1)).strip()
+        body = re.sub(r"^pp?\.\s*", "", raw, flags=re.I)
+        for part in body.split(","):
+            part = part.strip()
+            if part and part not in members:
+                members.append(part)
+        if raw not in members:
+            members.insert(0, raw)
+    return members
 
 
 def ambiguity_for(paragraphs, references, citations):
@@ -350,6 +370,7 @@ def build(path, paper_id):
                 "confidence": confidence,
                 "year": (YEAR_RE.search(inside).group(0) if YEAR_RE.search(inside) else ""),
                 "locator": locator(inside),
+                "locator_members": locator_members(inside),
                 "sentence": sentence_for(text, marker, start),
                 "parts": parts or [],
                 "flags": flags,

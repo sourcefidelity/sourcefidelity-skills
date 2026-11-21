@@ -60,6 +60,42 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+EXTRACTOR_VERSION = "prepare-source-v2"
+
+
+def extraction_options(args):
+    """Options that change the extraction and therefore its cache identity."""
+    return {"dpi": int(args.dpi), "max_ocr_pages": int(args.max_ocr_pages),
+            "seed_json": bool(args.seed_json)}
+
+
+def source_key_conflict(existing, key):
+    """A directory belongs to one labelled copy; another key must use its own."""
+    return bool(key and existing.get("source_key")
+                and existing["source_key"] != key)
+
+
+def cache_is_current(out, meta, digest, options):
+    """Reuse only an extraction of the same bytes, version, options and files."""
+    if not meta or meta.get("sha256") != digest:
+        return False
+    if meta.get("extractor_version") != EXTRACTOR_VERSION:
+        return False
+    if meta.get("extraction_options") != options:
+        return False
+    paths = {name: os.path.join(out, name)
+             for name in ("text.txt", "pages.csv", "meta.json")}
+    if not all(os.path.exists(path) for path in paths.values()):
+        return False
+    # The text and page map must still be the ones recorded; a tampered or
+    # partially rewritten artifact is a cache miss, not a reusable extract.
+    if not meta.get("text_sha256") or sha256_file(paths["text.txt"]) != meta["text_sha256"]:
+        return False
+    if not meta.get("pages_sha256") or sha256_file(paths["pages.csv"]) != meta["pages_sha256"]:
+        return False
+    return True
+
+
 def load_meta(out):
     path = os.path.join(out, "meta.json")
     if os.path.exists(path):
@@ -185,13 +221,13 @@ def main():
     os.makedirs(out, exist_ok=True)
     digest = sha256_file(pdf)
     existing = load_meta(out)
-    if (args.key and existing.get("source_key")
-            and existing["source_key"] != args.key):
+    options = extraction_options(args)
+    if source_key_conflict(existing, args.key):
         print(f"--out {out} already holds the extraction for "
               f"{existing['source_key']!r}; give each source its own directory "
               f"(got --key {args.key!r})", file=sys.stderr)
         return 2
-    if existing.get("sha256") == digest and not args.force:
+    if cache_is_current(out, existing, digest, options) and not args.force:
         if args.refresh_structure:
             pages = detect_structure.read_extraction(out)
             existing["structure"] = detect_structure.public(
@@ -266,6 +302,8 @@ def main():
         "source_file": pdf,
         "source_key": args.key,
         "sha256": digest,
+        "extractor_version": EXTRACTOR_VERSION,
+        "extraction_options": options,
         "prepared_at": now(),
         "page_count": len(pages),
         "native_pages": sum(1 for p in pages if p["source"] == "native"),
@@ -302,6 +340,8 @@ def main():
     if not structure.get("outline") and not structure.get("toc"):
         meta["gaps"].append("No usable contents page or PDF outline; chapter bounds cannot be derived.")
 
+    meta["text_sha256"] = sha256_file(os.path.join(out, "text.txt"))
+    meta["pages_sha256"] = sha256_file(os.path.join(out, "pages.csv"))
     json.dump(meta, open(os.path.join(out, "meta.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
     write_readme(out, pdf, meta, pages)

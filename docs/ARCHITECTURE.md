@@ -56,7 +56,7 @@ fetch cache.
 
 ### Shared helpers
 
-`http_cache.py` owns the page cache and host-state memory. `user_settings.py` reads optional keys from the user's DSH home or environment and never prints them. `page_map.py`, `prepare_source.py` and `detect_structure.py` provide the extraction layer.
+`http_cache.py` owns the page cache and host-state memory. `user_settings.py` reads optional keys from the user's DSH home or environment and never prints them. `page_map.py`, `prepare_source.py` and `detect_structure.py` provide the extraction layer. `prepare_source.py` binds an extraction to the source hash, extractor version, options and text/page-map hashes; consumers carry those fields with each window.
 
 ## 3. Data flow
 
@@ -71,7 +71,7 @@ fetch cache.
 
 ### Batch
 
-A source folder plus a folder of papers. Each supplied copy carries the shared `source_scope` observation, including its source hash, mapping decision, observed match evidence and unknowns. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures. Batch kind coverage uses the same requirements as the resolver; a missing required provider makes the record `partial`, not a completed miss.
+A source folder plus a folder of papers. Each supplied copy carries the shared `source_scope` observation, including its source hash, mapping decision, observed match evidence and unknowns. Preparation inventories each paper, masks identity, maps supplied sources and writes bounded passage windows. Each window records its citation candidate and reference, source and text identity, and offsets into the extracted text. Coverage is tracked per reference. Report validation checks source contributions against the adjudicated citation membership and checks supplied window IDs against their excerpts. Each paper is then reviewed under the same protocol; rendering and validation check the findings schema before `batch_report.py` builds the cohort report. Batch never replaces the independent per-paper review. `benchmark_retrieval.py` measures local lexical retrieval on the shared extracts: exact-quote/query recall, coverage, wrong-source windows and elapsed time. Batch discovery writes per-provider attempts and explicit outcomes to the source registry. Its cache reuses completed citation-scoped results and retries operational failures. Batch kind coverage uses the same requirements as the resolver; a missing required provider makes the record `partial`, not a completed miss.
 
 ### Reappraisal
 

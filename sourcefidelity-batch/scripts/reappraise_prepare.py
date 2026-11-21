@@ -32,6 +32,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 import source_registry  # noqa: E402
 import make_task  # noqa: E402
+import prepare_source as prepare_source_module  # noqa: E402
 import source_scope  # noqa: E402
 
 
@@ -149,21 +150,41 @@ def prepare_extraction(root, key, path):
     digest = sha256_file(path)
     out = os.path.join(root, "_sources", key)
     meta = load(os.path.join(out, "meta.json"), {})
-    if meta.get("sha256") != digest:
+    options = {"dpi": prepare_source_module.DEFAULT_DPI, "max_ocr_pages": 0,
+               "seed_json": False}
+    text = os.path.join(out, "text.txt")
+    current = (meta.get("sha256") == digest
+               and meta.get("extractor_version") == prepare_source_module.EXTRACTOR_VERSION
+               and meta.get("extraction_options") == options
+               and os.path.exists(text))
+    if not current:
         run_prepare_source(path, out, key)
         meta = load(os.path.join(out, "meta.json"), {})
         if not meta:
             return {"extraction": "", "page_map": {}, "sha256": digest,
                     "limitation": "extraction_failed"}
-        if meta.get("sha256") != digest:
+        if (meta.get("sha256") != digest
+                or meta.get("extractor_version") != prepare_source_module.EXTRACTOR_VERSION):
             return {"extraction": "", "page_map": {}, "sha256": digest,
                     "limitation": "supplied_copy_not_extracted"}
-    text = os.path.join(out, "text.txt")
     if not os.path.exists(text):
         return {"extraction": "", "page_map": {}, "sha256": digest,
                 "limitation": "extraction_failed"}
+    if meta.get("text_sha256") and sha256_file(text) != meta["text_sha256"]:
+        run_prepare_source(path, out, key)
+        meta = load(os.path.join(out, "meta.json"), {})
+        if not meta or not os.path.exists(text):
+            return {"extraction": "", "page_map": {}, "sha256": digest,
+                    "limitation": "extraction_failed"}
+        if meta.get("text_sha256") and sha256_file(text) != meta["text_sha256"]:
+            return {"extraction": "", "page_map": {}, "sha256": digest,
+                    "limitation": "stale_extraction_text"}
     return {"extraction": text, "page_map": meta.get("offset", {}) or {},
-            "sha256": digest, "limitation": ""}
+            "sha256": digest, "limitation": "",
+            "extraction_version": meta.get("extractor_version", ""),
+            "extraction_options": meta.get("extraction_options", {}),
+            "text_sha256": meta.get("text_sha256", ""),
+            "pages_sha256": meta.get("pages_sha256", "")}
 
 
 def scope_for(extraction, page_range):
@@ -288,6 +309,10 @@ def main():
                 "supplied_file": path, "identity": identity,
                 "extraction": extraction, "page_map": bound["page_map"],
                 "supplied_sha256": bound["sha256"],
+                "extraction_version": bound.get("extraction_version", ""),
+                "extraction_options": bound.get("extraction_options", {}),
+                "text_sha256": bound.get("text_sha256", ""),
+                "pages_sha256": bound.get("pages_sha256", ""),
                 "extraction_limitation": bound["limitation"],
                 "work_kind": rec.get("work_kind", ""), "form_issue": rec.get("form_issue", ""),
                 "page_range": page_range, "restrict_pages": restrict,
