@@ -2,7 +2,7 @@
   "version": "1.1.1",
   "tag": "v1.1.1",
   "url": "https://github.com/sourcefidelity/sourcefidelity-skills/releases/download/v1.1.1/sourcefidelity-v1.1.1.tar.gz",
-  "sha256": "",
+  "sha256": "69b76b0f81067d8a641de107fd41b21e020a410ed01b3d3bc85b201b45746d6e",
   "min_supported": "1.1.0",
   "notes": "CORE open-access retrieval: subtitle queries, work/output fullText fallback, escaped-apostrophe decoding, and landing pages no longer counted as copies.",
   "released": "2026-11-21"
