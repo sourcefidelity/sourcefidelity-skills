@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Install the SourceFidelity skills into a coding harness skills directory.
 #
-#   ./install.sh [--target DIR] [--dry-run] [--no-venv]
-#                [--check] [--update] [--channel NAME] [--version TAG]
+#   ./install.sh [--target DIR] [--dev] [--link] [--force]
+#                [--dry-run] [--no-venv] [--check] [--update]
+#                [--channel NAME] [--version TAG]
 #
-# The installer copies the three skill folders, checks for Python 3.12, builds
-# the shared .venv (unless --no-venv), and records the installed version.
-# --check asks whether a newer release exists; --update downloads the release
-# named in latest.json, verifies its checksum, and installs it. It never
-# installs Python, pip packages beyond pypdf/pymupdf, or OCR tools silently.
+# The default is a development install: copy the working tree, record channel
+# dev, and leave VERSION/latest.json alone. --link symlinks the skill folders
+# to the checkout instead (macOS/Linux; --force replaces existing folders and
+# their venv). --check asks whether a newer release exists; --update downloads
+# the release named in latest.json, verifies its checksum, and installs it.
+# It never installs Python, pip packages beyond pypdf/pymupdf, or OCR tools
+# silently.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,6 +20,9 @@ TARGET=""
 DRY_RUN="0"
 WITH_VENV="1"
 CHANNEL="dev"
+DEV="0"
+LINK="0"
+FORCE="0"
 CHECK="0"
 UPDATE="0"
 ALLOW_UNVERIFIED="0"
@@ -29,6 +35,9 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --target) TARGET="${2:-}"; shift 2 ;;
+    --dev) DEV="1"; shift ;;
+    --link) LINK="1"; DEV="1"; shift ;;
+    --force) FORCE="1"; shift ;;
     --dry-run) DRY_RUN="1"; shift ;;
     --no-venv) WITH_VENV="0"; shift ;;
     --check) CHECK="1"; shift ;;
@@ -40,6 +49,17 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [ "$DEV" = "1" ]; then
+  CHANNEL="dev"
+  WITH_VENV="0"
+fi
+if [ "$LINK" = "1" ]; then
+  case "$(uname -s)" in
+    Darwin|Linux) : ;;
+    *) echo "--link is available on macOS and Linux; use --dev (copy) on this platform" >&2; exit 2 ;;
+  esac
+fi
 
 if [ -z "$TARGET" ]; then
   for candidate in "$HOME/.claude/skills" "$HOME/.agents/skills" \
@@ -195,7 +215,26 @@ for skill in "${SKILLS[@]}"; do
     exit 1
   fi
   if [ "$DRY_RUN" = "1" ]; then
-    echo "would install: $skill -> $TARGET/$skill"
+    if [ "$LINK" = "1" ]; then
+      echo "would link: $skill -> $HERE/$skill"
+    else
+      echo "would install: $skill -> $TARGET/$skill"
+    fi
+  elif [ "$LINK" = "1" ]; then
+    if [ -L "$TARGET/$skill" ] && [ "$(readlink "$TARGET/$skill")" = "$HERE/$skill" ]; then
+      echo "already linked: $skill"
+      continue
+    fi
+    if [ -e "$TARGET/$skill" ]; then
+      if [ "$FORCE" != "1" ]; then
+        echo "$TARGET/$skill exists; pass --force to replace it with a link (its venv is removed)" >&2
+        exit 1
+      fi
+      rm -rf "$TARGET/$skill"
+    fi
+    mkdir -p "$TARGET"
+    ln -s "$HERE/$skill" "$TARGET/$skill"
+    echo "linked: $skill -> $HERE/$skill"
   else
     mkdir -p "$TARGET/$skill"
     cp -R "$HERE/$skill/." "$TARGET/$skill/"
@@ -265,6 +304,13 @@ else
   fi
   echo
   echo "Next: relaunch your harness and ask for a source-use review."
+fi
+
+if [ "$DEV" = "1" ] && [ "$LINK" = "1" ]; then
+  echo "Linked development install: edits in $HERE are live."
+  echo "The shared venv, if needed, is $HERE/sourcefidelity-review/.venv."
+elif [ "$DEV" = "1" ]; then
+  echo "Development install: re-run this command after editing; no release is needed."
 fi
 
 if [ -n "${SHARED:-}" ]; then

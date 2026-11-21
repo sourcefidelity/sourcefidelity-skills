@@ -97,6 +97,8 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 
 ## 5. Verification and release
 
+Ordinary work uses a development install (`install.sh --dev`, or `--link` for live symlinks) and does not bump `VERSION` or `latest.json`; releases are batched. `VERSION` may carry a `-dev` suffix whose base is ahead of `latest.json`, with changes under `## Unreleased`.
+
 Local verification before any commit:
 
 ```bash

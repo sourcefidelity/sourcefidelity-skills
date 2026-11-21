@@ -1,6 +1,6 @@
 # Install the SourceFidelity skills into a coding harness skills directory.
 #
-#   .\install.ps1 [-Target DIR] [-DryRun] [-NoVenv]
+#   .\install.ps1 [-Target DIR] [-Dev] [-DryRun] [-NoVenv]
 #                 [-Check] [-Update] [-Channel NAME] [-Version TAG]
 #
 # Copies the three skill folders, checks for Python 3.12, builds the .venv
@@ -12,6 +12,7 @@ param(
     [string]$Target = "",
     [switch]$DryRun,
     [switch]$NoVenv,
+    [switch]$Dev,
     [string]$Channel = "dev",
     [string]$Version = "",
     [switch]$Check,
@@ -88,6 +89,11 @@ Write-Host "SourceFidelity skills installer"
 Write-Host "  target: $Target"
 if ($DryRun) { Write-Host "  mode:   dry run (nothing is written)" }
 Write-Host ""
+if ($Dev) {
+    $Channel = "dev"
+    $NoVenv = $true
+}
+
 if ($Version) {
     $Want = $Version -replace '^v', ''
     $Have = (Get-Content (Join-Path $Here "VERSION") -Raw).Trim()

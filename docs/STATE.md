@@ -33,6 +33,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
 | Release install | `install.sh --update` on the live install | Upgraded through `1.0.0` → `1.1.0` → `1.1.1` → `1.1.2`; checksums verified; venv preserved; stamp is `v1.1.2` |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
+| Development install | `install.sh --dev` and `--link` on temp targets | `--dev` copied the working tree and recorded channel `dev`; `--link` created symlinks; no version or `latest.json` change |
 | Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
 | CORE adapter alignment | `openfetch.py --paper` on the Television references | Outputs search, cleaned phrase, author clause, DOI-first and word fallback saved R2, R4, R6, R7, R8 and R9; time 2m35s for all ten references |
 | Third Television review | `reviews/sf-20261120-television-rerun-1.1.1` | 16/20 occurrences judged (12 Supports, 4 Qualified, 4 Not Judged); Category A 12, B 7; R10 landing only, R3 supplied file was the wrong work |

@@ -56,6 +56,19 @@ python scripts/check_docs.py
 
 Done when each exits 0 and reports no failures. Replace `python` with a Python 3.12 interpreter, for example the installed shared venv at `<skills>/sourcefidelity-review/.venv/bin/python`. The PDF-quality suite reports layout checks as skipped when PyMuPDF is absent.
 
+## Development workflow
+
+The default is a development install, not a release:
+
+```bash
+./install.sh --dev --target "$HOME/.dsh/skills"    # copy the working tree, channel dev
+./install.sh --link --target "$HOME/.dsh/skills"   # live symlinks, macOS/Linux
+```
+
+`--dev` copies the current checkout and records `channel: dev`; `--link` points the installed skill folders at the checkout so edits are live (add `--force` to replace existing folders; this removes their venv). Neither bumps `VERSION`, tags, or touches `latest.json`.
+
+Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Unreleased`. During development `VERSION` may stay at the last release or use the next version with `-dev` (for example `1.1.3-dev`); the base must be ahead of `latest.json`. Release only a batch: strip `-dev`, close `## Unreleased`, then follow **Verification and release**.
+
 ## Documentation maintenance
 
 - Update a document when its owned fact changes: `STATE.md` for status, test counts, measured results or limitations; `ARCHITECTURE.md` for a design decision or a changed boundary; `PLAN.md` for work order, acceptance or a superseded row; `CHANGELOG.md` and the release files for a release.

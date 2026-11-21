@@ -27,7 +27,7 @@ REQUIRED = [
 ]
 AUTHORITY_DOCS = ["docs/ARCHITECTURE.md", "docs/STATE.md", "docs/PLAN.md"]
 BUDGETS = {
-    "AGENTS.md": 1000,
+    "AGENTS.md": 1200,
     "docs/ARCHITECTURE.md": 3500,
     "docs/STATE.md": 2000,
     "docs/PLAN.md": 1500,
@@ -58,6 +58,11 @@ def read(path):
 
 def word_count(text):
     return len(text.split())
+
+
+def _version_tuple(value):
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", value or "")
+    return tuple(int(part) for part in match.groups()) if match else None
 
 
 def local_links(text):
@@ -112,16 +117,29 @@ def main():
         latest = json.loads(docs.get("latest.json", "{}"))
     except ValueError:
         latest, errors = {}, errors + ["latest.json: invalid JSON"]
-    if version and latest.get("version") != version:
-        errors.append(f"VERSION {version} != latest.json version {latest.get('version')!r}")
-    tag = latest.get("tag") or ""
-    if tag and tag not in (version, "v" + version):
-        errors.append(f"latest.json tag {tag!r} does not match version {version}")
+    changelog = docs.get("CHANGELOG.md", "")
+    if version.endswith("-dev"):
+        base = version[:-4]
+        if not _version_tuple(base):
+            errors.append(f"VERSION {version!r}: dev version has no X.Y.Z base")
+        elif (latest.get("version")
+              and _version_tuple(base) <= _version_tuple(latest["version"])):
+            errors.append(f"VERSION {base}-dev must be ahead of latest.json "
+                          f"{latest['version']}")
+        if "## Unreleased" not in changelog:
+            errors.append("CHANGELOG.md: a -dev version needs ## Unreleased")
+        if base and f"## {base}" in changelog:
+            errors.append(f"CHANGELOG.md: -dev base {base} already has a release heading")
+    else:
+        if version and latest.get("version") != version:
+            errors.append(f"VERSION {version} != latest.json version {latest.get('version')!r}")
+        tag = latest.get("tag") or ""
+        if tag and tag not in (version, "v" + version):
+            errors.append(f"latest.json tag {tag!r} does not match version {version}")
+        if version and f"## {version}" not in changelog:
+            errors.append(f"CHANGELOG.md: no entry for {version}")
     if not latest.get("sha256"):
         warnings.append("latest.json: no sha256; --update will refuse this release")
-    changelog = docs.get("CHANGELOG.md", "")
-    if version and f"## {version}" not in changelog:
-        errors.append(f"CHANGELOG.md: no entry for {version}")
     if changelog.count("\n## Unreleased") > 1:
         errors.append("CHANGELOG.md: more than one Unreleased section")
     if "check_docs.py" not in docs.get("AGENTS.md", ""):

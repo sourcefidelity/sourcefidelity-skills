@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Development workflow is the default.** `install.sh --dev` copies the working
+  tree as channel `dev` without a version bump; `--link` makes the installed
+  skill folders symlinks to the checkout for live edits (macOS/Linux). A
+  `VERSION` such as `1.2.0-dev` is allowed while `latest.json` stays on the
+  last release. Releases are batched.
+
 ## 1.1.2 — November 21, 2026
 
 - **CORE retrieval aligned with the application adapter.** `openfetch.py` now

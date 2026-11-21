@@ -37,6 +37,17 @@ Both scripts find your harness skills directory, copy the three skills, check fo
 
 If Python is missing, the installer still copies the skills and explains prompt-only mode: a review still runs, but word counts, page mapping and the verbatim checks are unavailable. Install Python from https://www.python.org/downloads/ and run the installer again to enable them.
 
+### Development installs
+
+For work on the skills themselves, install the working tree without cutting a release:
+
+```bash
+./install.sh --dev --target "$HOME/.dsh/skills"    # copy the checkout, channel dev
+./install.sh --link --target "$HOME/.dsh/skills"   # live symlinks, macOS/Linux; --force to replace
+```
+
+Neither changes `VERSION` or `latest.json`. Run the suites and `scripts/check_docs.py`, and release only a batch of changes.
+
 ### Manual installation
 
 Copy the three skill directories into the skills directory used by your agent host. For a ZCode-style host this is usually:
