@@ -21,15 +21,13 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 304 passed |
+| Pipeline regressions | `test_pipeline.py` | 309 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
-| Installer update path | Installed `1.0.0` into a temp target, then `install.sh --update` from a `1.1.0` archive with SHA-256 | Verified download, checksum, extraction, reinstall; installed record `1.1.0` |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
 | Source pack | Television run's supplied folder (`wilkins1991.pdf`) | Mapped, extracted in ~1 s, printed range 195–211; phrase search returned p. 201 |
 | Dual-client fetch | Middleton landing page (curl 403, urllib 200) and a remembered blocked host | Saved through urllib; blocked host refused without retry |
-| Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.0.0 (commit 1dc5304)` |
-| Deploy | `install.sh --target ~/.dsh/skills --no-venv --channel dev` | New scripts and `installed.json` written; venv preserved |
+| Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
 | Release install | `install.sh --update` on the live install | Upgraded through `1.0.0` → `1.1.0` → `1.1.1` → `1.1.2`; checksums verified; venv preserved; stamp is `v1.1.2` |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |

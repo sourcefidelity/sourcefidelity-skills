@@ -2,7 +2,7 @@
 
 Agent skills for independent, evidence-based source-use review of student papers. The skills check what a cited source actually says, distinguish access limitations from findings, and produce review artifacts that a human can audit.
 
-The current release is **1.0.0** (see `VERSION` and `CHANGELOG.md`). The skills are not a grading system and do not determine misconduct.
+The current stable release is **1.1.2** (see `VERSION`, `latest.json` and `CHANGELOG.md`). The skills are not a grading system and do not determine misconduct.
 
 ## Skills
 
@@ -20,7 +20,7 @@ Start with the `SKILL.md` in the relevant skill directory. The review protocols 
 - `pypdf` for PDF text extraction.
 - `pymupdf` for the preferred PDF extraction layer (layout, OCR-page detection). Without it, or without a virtual environment beside the skill, extraction falls back to bare `pypdf`: counts and passage windows still work for native-text PDFs, but are reported as `counts_available: unknown` (or `false` for a file with no extractable text) and the review says so.
 - Tesseract OCR (optional, cross-platform) for image-only PDFs. Native-text PDFs and DOCX files work without it. Find it at https://github.com/tesseract-ocr/tesseract; install the language data you need (for example `eng` and `chi_sim`). A requested language that is not installed is reported as a limitation instead of being read in another language, and `python -I scripts/pdf_quality.py languages` lists what is available. To fetch a missing pack into a writable `tessdata` directory, run `python -I scripts/pdf_quality.py languages --install chi_sim`; OCR never downloads anything on its own.
-- **No API keys are required.** Identity and open copies use free endpoints (Crossref, OpenAlex, Open Library, BnF, K10plus, DNB, CiNii, Internet Archive, Google Books) open copies from Unpaywall (contact email) and, rate permitting, OpenAlex, Semantic Scholar, Europe PMC and CORE. Optional free keys raise provider quotas; see [Optional provider keys](#optional-provider-keys). A work that cannot be located is recorded as an access limitation, never as a finding.
+- **No API keys are required for the base workflow.** Identity and open copies use keyless endpoints (Crossref, OpenAlex, Open Library, BnF, K10plus, DNB, CiNii, Internet Archive, Google Books) and Unpaywall (contact email). Optional free keys raise quotas for OpenAlex, Semantic Scholar and Europe PMC; CORE is used only when its free key is configured. See [Optional provider keys](#optional-provider-keys). A work that cannot be located is recorded as an access limitation, never as a finding.
 
 ## Installation
 
@@ -100,7 +100,7 @@ Identity work is bounded per reference (30 seconds by default; `reference_identi
 
 Run `python -I scripts/user_settings.py --prompt` once to store a contact address and optional free API keys in `~/.dsh/sourcefidelity.json` (mode 0600, never in the venv or the repo). `user_settings.py --show` prints the settings with key values redacted. The address routes Crossref to its polite pool and is passed to Unpaywall; OpenAlex and Semantic Scholar use free keys for a higher rate; Google Books and CORE keys are optional.
 
-Retrieval tries, in order: the supplied copy; a DOI PDF at the publisher (including `citation_pdf_url`); open copies from Unpaywall's OA locations plus OpenAlex, Semantic Scholar, Europe PMC and CORE (free keys raise their limits); the keyless book catalogues (K10plus, BnF, DNB, Internet Archive, CiNii, Google Books, Open Library), which are queried with title, author and year and never establish absence from a single answer. The batch open-source stage (`fetch_open_sources.py`) adds Gallica OCR for digitised periodicals plus Internet Archive and Lantern routes; the cited-URL link audit uses Wayback for dead or blocked links, and the single-paper resolver has no non-DOI periodical identifier to query Gallica with.
+Retrieval tries, in order: the supplied copy; a DOI PDF at the publisher (including `citation_pdf_url`); open copies from Unpaywall's OA locations plus OpenAlex, Semantic Scholar, Europe PMC and CORE (free keys raise their limits); the keyless book catalogues (K10plus, BnF, DNB, Internet Archive, CiNii, Google Books, Open Library), which are queried with title, author and year and never establish absence from a single answer. The batch open-source stage (`fetch_open_sources.py`) adds Gallica OCR for digitised periodicals plus Internet Archive and Lantern routes; the cited-URL link audit does not probe the Wayback Machine by default (pass `--wayback` deliberately), and the single-paper resolver has no non-DOI periodical identifier to query Gallica with.
 
 In a batch, pass `--cache-root ROOT/_work`: DOI metadata, contents verdicts and fetched copies are cached once for the whole cohort, keyed by DOI, with a 30-day time to live and an identity entry per cited work so a second paper skips the provider queries. The cache root defaults to the batch `_work` directory (override with SOURCEFIDELITY_CACHE_ROOT or --cache-root), so a batch shares one warm cache across all its papers and across runs. Cache caps are settings: `cache_max_pdf_bytes` (default 3 GB), `cache_max_text_bytes` and `cache_max_web_bytes` (200 MB each), in `~/.dsh/sourcefidelity.json` or the matching SOURCEFIDELITY_MAX_* variables. `user_settings.py --show` prints them. Fetched PDFs form a batch source library under `_work/_fetched/`, hard-linked from each paper that needs the same copy, so a book cited by many papers costs one file. Extracted text under `_work/_extracted/` is capped by `cache_max_text_bytes`. A blocked or empty web page is cached for one hour, a good page for seven days; both stores are trimmed to a 200 MB cap after expired entries are removed. For an article, the resolver also reads the publisher landing page: its Highwire tags give the true page range and volume, and its issue link is followed for a table of contents. A PDF that the resolver saves is extracted automatically with `prepare_source.py`, so a retrieved copy becomes inspectable text.
 
@@ -111,7 +111,7 @@ Releases are tagged on GitHub and described by `latest.json` at the repository r
 ```bash
 ./install.sh --check     # is a newer release available?
 ./install.sh --update    # download it, verify its checksum, install it
-./install.sh --version v1.1.0   # require a checkout of that tag
+./install.sh --version v1.1.2   # require a checkout of that tag
 ```
 
 Every review starts with `sourcefidelity-review/scripts/update_check.py`. It is silent when the install is current, checks the network at most once a week, and prints one line when an update is due. A notice persists on later reviews until the installed version changes. The check sends one GET for `latest.json` and no identifying data. State lives in `<skills dir>/.sourcefidelity/update.json`, with a user-level and workspace fallback; when no state file is writable the weekly check is skipped and `--check` still works.
@@ -130,7 +130,7 @@ cd sourcefidelity-batch/scripts   && <python> -I test_style_signals.py
 cd sourcefidelity-review/scripts  && <python> -I test_pdf_quality.py
 ```
 
-Use the shared `.venv` interpreter (`sourcefidelity-review/.venv/bin/python`) or any Python 3.12. The PDF-quality suite reports layout checks as skipped when PyMuPDF is absent. CI runs all three on Ubuntu, macOS and Windows.
+Use the shared `.venv` interpreter (`sourcefidelity-review/.venv/bin/python`) or any Python 3.12. The PDF-quality suite reports layout checks as skipped when PyMuPDF is absent. CI runs all three on Ubuntu, macOS and Windows, plus the development-docs check.
 
 ## Status and limitations
 

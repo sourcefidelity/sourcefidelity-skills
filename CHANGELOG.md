@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **README sync.** The stable version, the `--version` example, the CORE key
+  requirement, the opt-in Wayback behaviour and the CI docs check now match the
+  current installer and release.
+
 - **Development workflow is the default.** `install.sh --dev` copies the working
   tree as channel `dev` without a version bump; `--link` makes the installed
   skill folders symlinks to the checkout for live edits (macOS/Linux). A
