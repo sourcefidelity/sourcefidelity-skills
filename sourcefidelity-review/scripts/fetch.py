@@ -43,7 +43,8 @@ def download(url, target, timeout=40):
     """Save a bounded public HTTP response."""
     result = public_fetch.fetch(
         url, timeout=timeout, max_bytes=MAX_BYTES, include_body=True,
-        headers={"User-Agent": UA, "Accept": "application/pdf,text/html;q=0.9"})
+        headers={"User-Agent": UA, "Accept": "application/pdf,text/html;q=0.9"},
+        mode=public_fetch.policy_mode())
     status2, content_type2 = result["status"], result["content_type"]
     if status2 != 200 or result["limitation"] or result["truncated"]:
         state = ("blocked" if status2 in (401, 403, 429) else

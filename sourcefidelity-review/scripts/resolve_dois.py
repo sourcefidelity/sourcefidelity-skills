@@ -429,8 +429,10 @@ def _request(url, accept="application/json", timeout=15, referer="", attempts=3,
         try:
             remaining = _within_budget(timeout)
             if max_bytes is not None:
-                result = public_fetch.fetch(url, timeout=remaining, max_bytes=max_bytes,
-                                            include_body=True, headers=headers)
+                result = public_fetch.fetch(
+                    url, timeout=remaining, max_bytes=max_bytes,
+                    include_body=True, headers=headers,
+                    mode=public_fetch.policy_mode())
                 status = result["status"]
                 final = result["final_url"]
                 if status >= 400:

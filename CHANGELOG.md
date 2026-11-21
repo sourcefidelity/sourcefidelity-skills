@@ -51,6 +51,11 @@
   text-free stage counters (requests, retries, reuse, latency) with input
   hashes and supports an offline `--verify` replay; evidence quality is never
   mixed into the receipt.
+- **VPN/proxy-compatible fetching.** Default `auto` transport uses the OS
+  proxy/VPN and certificate store, refusing literal private targets; `strict`
+  keeps peer verification for shared deployments.
+- **Source-pack chapter boundaries.** The index separates file pages from cited
+  chapter pages, so front matter is not mistaken for the chapter start.
 
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer

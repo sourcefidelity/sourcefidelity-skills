@@ -146,6 +146,21 @@ def _printed_range(source_dir):
     return f"{min(printed)}-{max(printed)}"
 
 
+def reference_kind(entry):
+    """Library kind from the reference text, not only its page punctuation."""
+    text = entry.get("text", "")
+    parsed = rd.parse_reference(text)
+    if re.search(r"\bIn\b.{0,240}?\(Eds?\.\)", text, re.I | re.S):
+        return "chapter_edited_collection"
+    if re.search(r"\bIn\b", text) and parsed.get("publisher"):
+        return "chapter_authored_book"
+    if parsed.get("publisher") and not parsed.get("volume"):
+        return "monograph"
+    if parsed.get("volume") or parsed.get("pages"):
+        return "article"
+    return rd.entry_kind(text, parsed)
+
+
 def _observe(entry, result, why=""):
     """Copy observation from prepare_source's text, pages and meta."""
     source_dir = (result or {}).get("dir")
@@ -161,7 +176,7 @@ def _observe(entry, result, why=""):
              for _number, printed, text in pages_of(os.path.join(source_dir, "text.txt"))]
     parsed = rd.parse_reference(entry["text"])
     observation = source_scope.assess_reference_scope(
-        entry["text"], pages, meta, scope_kind=rd.entry_kind(entry["text"], parsed))
+        entry["text"], pages, meta, scope_kind=reference_kind(entry))
     edition = source_scope.observe_edition(entry["text"], pages, meta)
     observation["edition"] = edition
     observation["absence_allowed"] = bool(
@@ -209,11 +224,17 @@ def index_rows(refs, mapping, results, observations=None):
             continue
         result = results.get(ref_id, {})
         observation = observations.get(ref_id) or {}
+        expected = (observation.get("expected_pages")
+                    or (observation.get("scope") or {}).get("expected") or [])
+        cited = (f"{expected[0]}-{expected[-1]}"
+                 if len(expected) >= 2 else "")
         rows.append({"ref": ref_id, "entry": entry["text"][:90],
                      "path": item["path"], "why": item.get("why", ""),
                      "score": item.get("score"), "status": result.get("status", ""),
                      "dir": result.get("dir", ""),
                      "printed": _printed_range(result.get("dir", "")),
+                     "cited": cited,
+                     "edition": (observation.get("edition") or {}).get("status", ""),
                      "scope": observation.get("status", ""),
                      "scope_reason": observation.get("reason", ""),
                      "absence_allowed": observation.get("absence_allowed", False),
@@ -225,16 +246,17 @@ def write_index(out, rows, unmapped_files=()):
     base = os.path.join(out, "_work", "sourcepack")
     os.makedirs(base, exist_ok=True)
     lines = ["# Source pack", "",
-             "| Ref | Entry | File | Match | Status | Printed | Scope | Text |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| Ref | Entry | File | Match | Status | File pages | Cited | Scope | Edition | Text |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:
         text = os.path.join(row.get("dir") or "", "text.txt")
         link = os.path.relpath(text, out) if row.get("dir") else "-"
         lines.append(f"| {row['ref']} | {row['entry']} | "
                      f"{os.path.basename(row['path']) or '-'} | "
                      f"{row.get('why') or '-'} | {row['status'] or '-'} | "
-                     f"{row.get('printed') or '-'} | "
-                     f"{row.get('scope') or '-'} | {link} |")
+                     f"{row.get('printed') or '-'} | {row.get('cited') or '-'} | "
+                     f"{row.get('scope') or '-'} | {row.get('edition') or '-'} | "
+                     f"{link} |")
     if unmapped_files:
         lines.extend(["", "## Unmapped PDFs", ""])
         lines.extend(f"- {path}" for path in unmapped_files)

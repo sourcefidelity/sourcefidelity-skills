@@ -23,6 +23,9 @@ import zipfile
 from contextlib import redirect_stdout
 from unittest import mock
 
+# Policy tests assert the strict SSRF path; production callers default to auto.
+os.environ.setdefault("SOURCEFIDELITY_FETCH_MODE", "strict")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                       "sourcefidelity-review", "scripts")
@@ -1658,6 +1661,57 @@ class ExtractionLayerTests(unittest.TestCase):
     def test_no_layer_when_nothing_is_installed(self):
         with mock.patch.object(wc.os.path, "exists", return_value=False):
             self.assertEqual(wc._extraction_layer(), ("", ""))
+
+
+class AutoFetchTests(unittest.TestCase):
+    class Response:
+        status = 200
+        headers = {"Content-Type": "text/html; charset=utf-8"}
+
+        def __init__(self, body=b"<html>ok</html>", final="https://example.org/"):
+            self.body = body
+            self.final = final
+
+        def read(self, limit=-1):
+            return self.body[:limit] if limit >= 0 else self.body
+
+        def geturl(self):
+            return self.final
+
+        def close(self):
+            pass
+
+    def test_policy_defaults_to_auto(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SOURCEFIDELITY_FETCH_MODE", None)
+            self.assertEqual(ha.public_fetch.policy_mode(), "auto")
+
+    def test_auto_path_does_not_resolve_proxy_mapped_hosts(self):
+        with mock.patch.object(ha.public_fetch, "resolve",
+                               side_effect=AssertionError("resolved")), \
+                mock.patch.object(ha.public_fetch, "auto_transport",
+                                  return_value=self.Response()) as transport:
+            result = ha.public_fetch.fetch("https://example.org/x", mode="auto")
+        self.assertEqual(result["limitation"], "")
+        self.assertEqual(result["status"], 200)
+        transport.assert_called_once()
+
+    def test_auto_path_still_refuses_literal_private_hosts(self):
+        result = ha.public_fetch.fetch("http://127.0.0.1/", mode="auto",
+                                       network=lambda *_: self.Response())
+        self.assertEqual(result["limitation"], "private_host")
+
+    def test_auto_link_audit_records_a_verified_state(self):
+        fake = {"status": 200, "final_url": "https://example.org/",
+                "redirects": [], "truncated": False, "limitation": "",
+                "content_type": "text/html", "bytes": 10, "body": b"<html>ok</html>"}
+        with mock.patch.dict(os.environ, {"SOURCEFIDELITY_FETCH_MODE": "auto"}), \
+                mock.patch.object(ha, "http_cache") as cache, \
+                mock.patch.object(ha.public_fetch, "fetch", return_value=fake):
+            cache.cache_get.return_value = None
+            state = ha.fetch_state("https://example.org/x")
+        self.assertEqual(state["state"], "ok")
+        self.assertFalse(state["environment"])
 
 
 class FetchPolicyTests(unittest.TestCase):
@@ -4676,6 +4730,31 @@ class DocxFormattingTests(unittest.TestCase):
             data = ec.build(self._write_docx(tmp, body), "sample")
         self.assertEqual([(row["paragraph_id"], row["signals"])
                           for row in data["uncited_candidates"]], [("P1", ["name"])])
+
+
+class SourcePackIndexTests(unittest.TestCase):
+    def test_edited_collection_chapter_is_not_called_an_article(self):
+        chapter = {"text": "Berry, M. (2019). Neoliberalism and the media. In J. Curran & "
+                           "D. Hesmondhalgh (Eds.), Media and society (6th ed., pp. 57-82). "
+                           "Bloomsbury Academic."}
+        self.assertEqual(sp.reference_kind(chapter), "chapter_edited_collection")
+        article = {"text": "Nenova, M. (2007). Reform. Journal, 14(2), 169-204."}
+        self.assertEqual(sp.reference_kind(article), "article")
+
+    def test_file_pages_and_cited_pages_are_separate_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sp.write_index(tmp, [{
+                "ref": "R1", "entry": "Berry chapter", "path": "/tmp/berry.pdf",
+                "why": "override", "status": "extracted", "dir": "/tmp/berry",
+                "printed": "55-82", "cited": "57-82", "scope": "adequate",
+                "edition": "same_year_or_unstated"}])
+            with open(os.path.join(tmp, "_work", "sourcepack", "index.md"),
+                      encoding="utf-8") as handle:
+                text = handle.read()
+        self.assertIn("File pages", text)
+        self.assertIn("Cited", text)
+        self.assertIn("55-82", text)
+        self.assertIn("57-82", text)
 
 
 class SourcePackObservationTests(unittest.TestCase):

@@ -23,6 +23,7 @@ import argparse
 import ipaddress
 import http.client
 import json
+import os
 import socket
 import time
 import sys
@@ -49,6 +50,37 @@ ALLOWED_TYPES = ("text/html", "text/plain", "application/xhtml+xml",
 MAX_REDIRECTS = 5
 MAX_DOWNLOAD_BYTES = 40 * 1024 * 1024
 UA = "SourceFidelity/1.0 (read-only citation check)"
+MODE_ENV = "SOURCEFIDELITY_FETCH_MODE"
+
+
+def policy_mode():
+    """Transport policy. `auto` follows the OS proxy/VPN; `strict` checks peers."""
+    value = os.environ.get(MODE_ENV, "auto").strip().lower()
+    return "strict" if value == "strict" else "auto"
+
+
+def literal_refusal(url):
+    """Reject unsafe URL shapes without resolving an ordinary hostname."""
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        parsed.port
+    except ValueError:
+        return "invalid_url"
+    if parsed.scheme not in ("http", "https"):
+        return "unsupported_scheme"
+    if parsed.username is not None or parsed.password is not None:
+        return "credentials_in_url"
+    host = parsed.hostname
+    if not host:
+        return "missing_host"
+    lowered = host.lower().rstrip(".")
+    if lowered == "localhost" or lowered.endswith(".local"):
+        return "private_host"
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return ""
+    return "" if is_public(address) else "private_host"
 
 
 def resolve(host):
@@ -126,6 +158,20 @@ def is_public(address):
     return address.is_global and not address.is_multicast and not address.is_reserved
 
 
+AUTO_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler(), NoRedirect())
+
+
+def auto_transport(url, timeout, headers=None):
+    """Use the OS proxy/VPN path and the default certificate store."""
+    request = urllib.request.Request(url, headers=headers or {"User-Agent": UA})
+    try:
+        return AUTO_OPENER.open(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (301, 302, 303, 307, 308):
+            return exc
+        raise
+
+
 def destination(url, resolver):
     """Return the policy refusal and the vetted addresses for this hop."""
     try:
@@ -182,9 +228,10 @@ def decode(body, content_type):
 
 
 def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000,
-          include_body=False, headers=None):
+          include_body=False, headers=None, mode=None):
     """Fetch one URL under policy; never raises for a policy or network failure."""
     deadline = time.monotonic() + timeout
+    mode = mode or "strict"
     resolver = resolver or resolve
     requested = url
     current = url
@@ -192,7 +239,10 @@ def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000,
               "content_type": "", "bytes": 0, "truncated": False,
               "text": "", "limitation": "", "redirects": []}
     for hop in range(MAX_REDIRECTS + 1):
-        reason, addresses = destination(current, resolver)
+        if mode == "auto":
+            reason, addresses = literal_refusal(current), ()
+        else:
+            reason, addresses = destination(current, resolver)
         if reason:
             result["limitation"] = reason
             return result
@@ -202,7 +252,9 @@ def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000,
             return result
         try:
             if network is None:
-                response = transport(current, left, headers, addresses=addresses)
+                response = (auto_transport(current, left, headers)
+                            if mode == "auto" else
+                            transport(current, left, headers, addresses=addresses))
             else:
                 response = network(current, left)
         except urllib.error.HTTPError as exc:  # provider answered with an error
@@ -311,7 +363,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=20)
     args = ap.parse_args()
     print(json.dumps(fetch(args.url, timeout=args.timeout,
-                           max_bytes=args.max_bytes), ensure_ascii=False, indent=1))
+                           max_bytes=args.max_bytes, mode=policy_mode()),
+                     ensure_ascii=False, indent=1))
     return 0
 
 

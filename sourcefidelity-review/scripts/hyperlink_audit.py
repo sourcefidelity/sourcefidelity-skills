@@ -430,11 +430,16 @@ def _request(url, accept="text/html", timeout=20):
         return response.status, response.geturl(), response.headers, response.read()
 
 
-def _cached_state(url):
+def _policy_reason(url, mode):
+    return (public_fetch.literal_refusal(url) if mode == "auto"
+            else public_fetch.refusal(url, public_fetch.resolve))
+
+
+def _cached_state(url, mode="strict"):
     if http_cache is None:
         return None
     hit = http_cache.cache_get("public-fetch-v2:" + url)
-    if not hit or public_fetch.refusal(hit["final"], public_fetch.resolve):
+    if not hit or _policy_reason(hit["final"], mode):
         return None
     body = hit["body"]
     saved = _save_body(body, hit["content_type"], hit["final"])
@@ -446,13 +451,15 @@ def _cached_state(url):
 
 def fetch_state(url, timeout=10):
     """Fetch a submitted link under the shared public URL policy."""
-    if not public_fetch.refusal(url, public_fetch.resolve):
-        cached = _cached_state(url)
+    mode = public_fetch.policy_mode()
+    if not _policy_reason(url, mode):
+        cached = _cached_state(url, mode)
         if cached:
             return cached
     fetched = public_fetch.fetch(
         url, timeout=timeout, max_bytes=300000, include_body=True,
-        headers={"User-Agent": UA, "Accept": "text/html,application/pdf"})
+        headers={"User-Agent": UA, "Accept": "text/html,application/pdf"},
+        mode=mode)
     status = fetched["status"]
     final = fetched["final_url"]
     detail = {"status": status or None, "final_url": final,
