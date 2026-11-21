@@ -187,6 +187,17 @@ def prepare_extraction(root, key, path):
             "pages_sha256": meta.get("pages_sha256", "")}
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
 def scope_for(extraction, page_range):
     """Shared copy-scope observation for a reappraisal task source."""
     if not extraction or not os.path.exists(extraction):
@@ -304,7 +315,8 @@ def main():
                                  "absence_allowed": observation.get("absence_allowed", False)},
                 })
             bucket = by_paper.setdefault(pid, {"paper_id": pid, "sources": {},
-                                               "entries": [], "windows": {}})
+                                               "entries": [], "windows": {},
+                                               "paper_dir": paper_dir})
             bucket["sources"][key] = {
                 "supplied_file": path, "identity": identity,
                 "extraction": extraction, "page_map": bound["page_map"],
@@ -326,6 +338,21 @@ def main():
                 bucket["entries"].append(entry)
             bucket["windows"][key] = windows
     for pid, bucket in sorted(by_paper.items()):
+        paper_dir = bucket.pop("paper_dir", "")
+        review_path = os.path.join(paper_dir, "review.md")
+        ledger_path = os.path.join(paper_dir, "ledger.md")
+        summary_path = os.path.join(paper_dir, "summary.json")
+        bucket["binding"] = {
+            "paper_id": pid,
+            "review_sha256": file_sha256(review_path),
+            "ledger_sha256": file_sha256(ledger_path),
+            "summary_sha256": file_sha256(summary_path),
+            "prepared_at": run,
+        }
+        bucket["binding"]["task_id"] = hashlib.sha256(json.dumps(
+            {key: bucket["binding"][key] for key in
+             ("paper_id", "review_sha256", "ledger_sha256", "summary_sha256")},
+            sort_keys=True).encode("utf-8")).hexdigest()[:16]
         bucket["constraints"] = {
             "no_ocr": True, "no_pdf_open": True, "no_adapters": True,
             "only_these_ids": [e["id"] for e in bucket["entries"]],

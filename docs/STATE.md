@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
-| Test suites | 380 pipeline tests. Style and PDF suites passed. |
+| Test suites | 395 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,7 +21,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 380 passed |
+| Pipeline regressions | `test_pipeline.py` | 395 passed |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
@@ -33,6 +33,10 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
 | Windows installer component checks | Published v1.1.2 asset, SHA-256, macOS tar extraction, BOM install record | Digest matched; 1.1.1 showed the notice; 1.1.2 read back stable. macOS tools only. |
 | Release install | `install.sh --update` on the live install | Upgraded through `1.0.0` → `1.1.0` → `1.1.1` → `1.1.2`; checksums verified; venv preserved; stamp is `v1.1.2` |
+| Stage receipts | A synthetic batch and the real Television batch | Requests/retries/reuse and latency counted separately; receipt carries no text; offline verify passes and detects a changed task input |
+| Recoverable reappraisal | Stale, member and interrupted-commit fixtures | Stale task rejected before writing; missing source member rejected; interrupted commit restores all three artifacts and a retry preserves the untouched finding |
+| Finding counts | Derived-count, mismatch and no-ID fixtures; protocol copies | Category/issue counts come from ID-bearing findings; a summary count mismatch is rejected; all three protocols carry the same hyperlink row and HL definition |
+| Academic checks | Positive, negative and abstention fixtures; real Berry quotation | Quote matched at span and page; locator `p. 63` matched; mismatches and short/empty inputs abstain rather than fail silently |
 | Retrieval benchmark | Real Berry/Mirrlees extraction fixture and a prepared Television task | Exact-quote fixture: 2/2 recall, coverage 1.0, 0 wrong-source windows, about 31 ms; task-term queries report lower recall |
 | Extraction provenance | Real Wilkins PDF, cache identity and reappraisal fixtures | Extraction records version, options and text/page hashes; cache hits require intact files; old, missing or tampered text re-extracts; a different `--key` is rejected; windows carry the binding fields |
 | Clause-level uncited | Partly cited paragraphs with a continuation and an independent claim | A pronoun-led continuation is `possible_continuation`; an independent factual sentence is `uncited`; a fully cited paragraph adds nothing |

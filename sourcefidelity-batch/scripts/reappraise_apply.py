@@ -22,6 +22,7 @@ as given; a later audit can test them against the shared extraction.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -61,6 +62,37 @@ def load(path, default=None):
         return json.load(open(path, encoding="utf-8"))
     except (OSError, ValueError):
         return default
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def binding_problems(task, folder):
+    """Artifacts changed after task preparation: the result would be stale."""
+    binding = task.get("binding") or {}
+    if not binding:
+        return []
+    paths = batch_paths.artifacts(folder)
+    problems = []
+    for name, key in (("review.md", "review_sha256"),
+                      ("ledger.md", "ledger_sha256"),
+                      ("summary.json", "summary_sha256")):
+        expected = binding.get(key)
+        if not expected:
+            continue
+        if not os.path.exists(paths[name]):
+            problems.append(f"{name} is missing")
+        elif file_sha256(paths[name]) != expected:
+            problems.append(f"{name} changed after the task was prepared")
+    return problems
 
 
 BOUNDARY_RE = re.compile(r"(?m)^(?=## |### |\*\*C\d+\b)")
@@ -155,6 +187,10 @@ def render_review_text(original, task, judgments, day, counts=None):
         new = change.get("new", "")
         if new not in JUDGMENT_KEYS:
             raise SystemExit(f"{cid}: invalid new judgment {new!r}")
+        if change.get("source_key") and change["source_key"] not in task.get("sources", {}):
+            raise SystemExit(f"{cid}: source member {change['source_key']!r} is outside the task")
+        if not change.get("source_key") and len(task.get("sources", {})) > 1:
+            raise SystemExit(f"{cid}: name the affected source member")
         source_key = change.get("source_key") or (
             list(task.get("sources", {}))[0] if task.get("sources") else "")
         observation = (task.get("sources", {}).get(source_key, {})
@@ -430,6 +466,9 @@ def apply_all(folder, task, judgments, day):
     beside it, and only then are the staged files swapped in. A render failure
     leaves all three artifacts as they were.
     """
+    problems = binding_problems(task, folder)
+    if problems:
+        raise SystemExit("stale reappraisal task: " + "; ".join(problems))
     paths = batch_paths.artifacts(folder)
     review_path = paths["review.md"]
     ledger_path = paths["ledger.md"]
@@ -438,6 +477,8 @@ def apply_all(folder, task, judgments, day):
     ledger_old = (open(ledger_path, encoding="utf-8").read()
                   if os.path.exists(ledger_path) else None)
     summary_old = load(summary_path, {})
+    summary_old_text = (open(summary_path, encoding="utf-8").read()
+                        if os.path.exists(summary_path) else "")
     changes = judgments.get("changes", [])
     counts = (shift_counts(summary_old["occurrences"], changes)
               if summary_old.get("occurrences") else None)
@@ -477,7 +518,7 @@ def apply_all(folder, task, judgments, day):
         if ledger_old is not None:
             _restore(ledger_path, ledger_old)
         if summary_old:
-            _restore(summary_path, json.dumps(summary_old, ensure_ascii=False, indent=1))
+            _restore(summary_path, summary_old_text)
         raise
     return {"changes": len(rows), "ledger_rows_updated": ledger_updated,
             "summary": summary_new, "log": rows}

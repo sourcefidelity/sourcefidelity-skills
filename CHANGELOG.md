@@ -38,6 +38,19 @@
   marked as exact-quote windows; citation locators preserve ranges, comma
   members, Roman folios and timestamps. `benchmark_retrieval.py` measures
   recall, coverage, wrong-source windows and elapsed time.
+- **Inspectable academic checks (R19).** Exact-span quotation, locator,
+  numeric-field, formatting and bounded-wording checks return evidence and a
+  state (including explicit abstention), never a verdict.
+- **Finding-based summaries (R20).** Summary counts come from evidenced
+  finding IDs, a disagreement fails rendering, and the three protocol copies
+  now share one hyperlink rule and HL definition.
+- **Recoverable reappraisal (R21).** Tasks bind to prior review, ledger and
+  summary hashes; stale tasks and unbound source members are rejected, and an
+  interrupted three-artifact commit restores all files for a clean retry.
+- **Performance and verification receipts (R22).** `stage_receipt.py` writes
+  text-free stage counters (requests, retries, reuse, latency) with input
+  hashes and supports an offline `--verify` replay; evidence quality is never
+  mixed into the receipt.
 
 - **Submitted links.** Record original locator forms and outcomes separately
   from alternative copies. Share redirect and connected-peer

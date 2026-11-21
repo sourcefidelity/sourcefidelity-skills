@@ -42,7 +42,9 @@ import enrich_registry as er  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
 import file_digest as fd  # noqa: E402
+import finding_counts as fc  # noqa: E402
 import extract_candidates as ec  # noqa: E402
+import academic_checks as ac  # noqa: E402
 import benchmark_retrieval as bm  # noqa: E402
 import make_task as mt  # noqa: E402
 import prepare_source as ps  # noqa: E402
@@ -60,6 +62,7 @@ import link_states as ls  # noqa: E402
 import refresh_pricing as pricing_refresh  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
+import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
 import fetch_open_sources as fos  # noqa: E402
@@ -2502,6 +2505,84 @@ class SourceBindingTests(unittest.TestCase):
             self.assertEqual(bound["limitation"], "extraction_failed")
 
 
+class ReappraisalBindingTests(unittest.TestCase):
+    def _bind(self, folder, task):
+        task["binding"] = {
+            "paper_id": "P1",
+            "review_sha256": ra.file_sha256(os.path.join(folder, "review.md")),
+            "ledger_sha256": ra.file_sha256(os.path.join(folder, "ledger.md")),
+            "summary_sha256": ra.file_sha256(os.path.join(folder, "summary.json")),
+            "task_id": "task-1", "prepared_at": "2026-11-21T00:00:00Z"}
+        return task
+
+    def _folder(self, tmp):
+        review = ("### C1 — ¶1 — (Smith, 2020)\n\n"
+                  "**Overall judgment: Supports.**\n\nBody.\n\n"
+                  "### C2 — ¶2 — (Jones, 2021)\n\n"
+                  "**Overall judgment: Not Judged.**\n\nBody.\n")
+        ledger = ("| C1 | ¶1 | m | s | R1 | old | old | old | none |\n"
+                  "| C2 | ¶2 | m | s | R2 | old | old | old | none |\n")
+        summary = {"occurrences": {"total": 2, "supports": 1, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0,
+                                   "not_judged": 1}}
+        for name, body in (("review.md", review), ("ledger.md", ledger)):
+            with open(os.path.join(tmp, name), "w", encoding="utf-8") as handle:
+                handle.write(body)
+        with open(os.path.join(tmp, "summary.json"), "w", encoding="utf-8") as handle:
+            json.dump(summary, handle)
+        return review, ledger, summary
+
+    def test_stale_task_is_rejected_before_writing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            review, _ledger, _summary = self._folder(tmp)
+            task = self._bind(tmp, {"entries": [{"id": "C2", "prior": "Not Judged"}]})
+            with open(os.path.join(tmp, "review.md"), "a", encoding="utf-8") as handle:
+                handle.write("\nchanged\n")
+            judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                      "new": "Supports", "evidence": "quote"}]}
+            with self.assertRaises(SystemExit) as caught:
+                ra.apply_all(tmp, task, judgments, "2026-11-17")
+            self.assertIn("stale reappraisal task", str(caught.exception))
+            self.assertTrue(open(os.path.join(tmp, "review.md"),
+                                 encoding="utf-8").read().endswith("changed\n"))
+
+    def test_amendment_must_name_its_source_member(self):
+        review = "### C1 — ¶1\n\n**Overall judgment: Not Judged.**\n\nBody.\n"
+        task = {"entries": [{"id": "C1", "prior": "Not Judged"}],
+                "sources": {"a": {}, "b": {}}}
+        judgments = {"changes": [{"id": "C1", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote"}]}
+        with self.assertRaises(SystemExit) as caught:
+            ra.render_review_text(review, task, judgments, "2026-11-17")
+        self.assertIn("affected source member", str(caught.exception))
+
+    def test_interruption_preserves_other_findings_and_retry_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            review, ledger, summary = self._folder(tmp)
+            task = self._bind(tmp, {"entries": [{"id": "C2", "prior": "Not Judged"}]})
+            judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                      "new": "Supports", "evidence": "quote",
+                                      "locator": "printed p. 2"}]}
+            def broken(items):
+                for index, (temp, path) in enumerate(items):
+                    os.replace(temp, path)
+                    if index == 0:
+                        raise RuntimeError("interrupted")
+            with mock.patch.object(ra, "commit_staged", side_effect=broken):
+                with self.assertRaises(RuntimeError):
+                    ra.apply_all(tmp, task, judgments, "2026-11-17")
+            self.assertEqual(open(os.path.join(tmp, "review.md"),
+                                  encoding="utf-8").read(), review)
+            self.assertEqual(open(os.path.join(tmp, "ledger.md"),
+                                  encoding="utf-8").read(), ledger)
+            self.assertEqual(json.load(open(os.path.join(tmp, "summary.json"),
+                                            encoding="utf-8")), summary)
+            ra.apply_all(tmp, task, judgments, "2026-11-17")
+            retried = open(os.path.join(tmp, "review.md"), encoding="utf-8").read()
+            self.assertIn("**Overall judgment: Supports.**", retried)
+            self.assertIn("### C1 — ¶1 — (Smith, 2020)", retried)
+
+
 class ReappraiseCoverageTests(unittest.TestCase):
     def test_unresolved_copy_cannot_support_a_negative_judgment(self):
         review = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n")
@@ -4662,6 +4743,169 @@ class KindCoverageTests(unittest.TestCase):
         self.assertFalse(failed["complete"])
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
+
+
+class StageReceiptTests(unittest.TestCase):
+    def _batch(self, tmp):
+        work = os.path.join(tmp, "_work", "P1")
+        os.makedirs(work)
+        extraction_dir = os.path.join(tmp, "_sources", "k")
+        os.makedirs(extraction_dir)
+        with open(os.path.join(extraction_dir, "meta.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump({"ocr_pages_count": 2}, handle)
+        registry = {"works": {
+            "R1": {"source_key": "k",
+                   "extraction": os.path.join(extraction_dir, "text.txt"),
+                   "extraction_version": "prepare-source-v2",
+                   "search": {"cached": False, "attempts": [
+                       {"provider": "crossref", "outcome": "returned"},
+                       {"provider": "crossref", "outcome": "provider_failure"}]}},
+            "R2": {"source_key": "k2", "search": {"cached": True,
+                                                   "attempts": [
+                                                       {"provider": "openalex",
+                                                        "outcome": "no_results"}]}},
+        }}
+        with open(os.path.join(tmp, "source_registry.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump(registry, handle)
+        task = {"sources": {"R1": {}, "R2": {}},
+                "windows": {"C1": [{"query": "SECRET QUOTE"}]},
+                "citations": [{"id": "C1", "statement": "SECRET QUOTE"}]}
+        with open(os.path.join(work, "task.json"), "w", encoding="utf-8") as handle:
+            json.dump(task, handle)
+        with open(os.path.join(work, "review_metrics.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump({"runs": [{"duration_ms": 1200}]}, handle)
+
+    def test_receipt_counts_without_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp)
+            receipt = stg.collect(tmp)
+        stages = receipt["stages"]
+        self.assertEqual(stages["identity_search"]["requests"], 3)
+        self.assertEqual(stages["identity_search"]["retries"], 2)
+        self.assertEqual(stages["identity_search"]["reuse"], 1)
+        self.assertEqual(stages["retrieval"]["windows"], 1)
+        self.assertEqual(stages["review"]["latency_ms"], 1200)
+        self.assertEqual(stages["extraction"]["ocr_pages"], 2)
+        self.assertTrue(receipt["text_free"])
+        self.assertFalse(receipt["evidence_quality_included"])
+        self.assertNotIn("SECRET QUOTE", json.dumps(receipt))
+
+    def test_offline_replay_verifies_and_detects_changed_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._batch(tmp)
+            receipt = stg.collect(tmp)
+            self.assertEqual(stg.verify(tmp, receipt), [])
+            task_path = os.path.join(tmp, "_work", "P1", "task.json")
+            data = json.load(open(task_path, encoding="utf-8"))
+            data["windows"] = {"C1": [{"query": "changed"}]}
+            with open(task_path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle)
+            problems = stg.verify(tmp, receipt)
+        self.assertTrue(problems)
+        self.assertIn("input hashes changed", " ".join(problems))
+
+
+class FindingCountsTests(unittest.TestCase):
+    def _findings(self):
+        return {
+            "occurrences": [
+                {"id": "C1", "summary_category": "A",
+                 "academic_practice": ["missing quotation locator"]},
+                {"id": "C2", "summary_category": "A", "apa": ["italics"]},
+            ],
+            "references": [{"id": "R1", "category": "HL",
+                            "verbatim": "Smith (2020). Work."}],
+            "summary": {"category_a": ["missing quotation locator", "italics"],
+                        "hyperlinks_missing": [{"work": "R1", "reason": "no link"}]},
+        }
+
+    def test_counts_come_from_evidenced_ids(self):
+        counts = fc.issue_counts(self._findings())
+        self.assertEqual(sorted(counts["A"]["ids"]), ["C1", "C2"])
+        self.assertEqual(counts["A"]["issues"], {"italics": 1,
+                                                 "missing quotation locator": 1})
+        self.assertEqual(counts["HL"]["ids"], ["R1"])
+        self.assertEqual(fc.render_counts(self._findings()),
+                         {"A": 2, "B": 0, "HL": 1})
+        self.assertEqual(fc.reconcile(self._findings()), [])
+
+    def test_summary_count_mismatch_is_reported(self):
+        findings = self._findings()
+        findings["summary"]["category_a"] = ["one issue"]
+        messages = fc.reconcile(findings)
+        self.assertTrue(any("category_a" in message for message in messages))
+
+    def test_counts_fall_back_when_no_finding_ids_carry_categories(self):
+        findings = {"summary": {"category_a": ["one", "two"], "category_b": ["three"]}}
+        self.assertEqual(fc.render_counts(findings), {"A": 2, "B": 1, "HL": 0})
+
+    def test_hyperlink_rules_are_aligned_across_protocols(self):
+        root = Path(__file__).resolve().parents[2]
+        rows = []
+        for skill in ("sourcefidelity-review", "sourcefidelity-batch",
+                      "sourcefidelity-reappraise"):
+            text = (root / skill / "REVIEW_PROTOCOL.md").read_text(encoding="utf-8")
+            rows.extend(line for line in text.splitlines()
+                        if line.startswith("| Hyperlink |"))
+            self.assertIn("HL = distinct works missing", text)
+            self.assertNotIn("There is no print-only exclusion.", text)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row for row in rows}, {max(rows)})
+
+
+class AcademicChecksTests(unittest.TestCase):
+    def test_quote_positive_negative_and_ambiguous(self):
+        pages = [{"printed": "57", "text": "The quick brown fox jumps over the dog."}]
+        hit = ac.check_quote("quick brown fox jumps", "The quick\nbrown fox jumps.", pages)
+        self.assertEqual(hit["state"], "matched")
+        self.assertEqual(hit["page"], "57")
+        self.assertTrue(hit["span"])
+        self.assertEqual(ac.check_quote("quick brown fox jumps", "Nothing here.")["state"],
+                         "not_found")
+        twice = ac.check_quote("quick brown fox jumps", "quick brown fox jumps and quick brown fox jumps")
+        self.assertEqual(twice["state"], "ambiguous")
+        self.assertEqual(twice["occurrences"], 2)
+
+    def test_quote_abstains_on_short_or_empty_input(self):
+        self.assertEqual(ac.check_quote("too short", "too short")["state"], "abstained")
+        self.assertEqual(ac.check_quote("four word quotation here", "")["state"],
+                         "abstained")
+
+    def test_locator_positive_negative_and_abstention(self):
+        self.assertEqual(ac.check_locator("pp. 57–82, 90", "63")["state"], "matched")
+        self.assertEqual(ac.check_locator("p. 12", "63")["state"], "mismatch")
+        self.assertEqual(ac.check_locator("", "63")["state"], "abstained")
+
+    def test_numeric_fields_inspectable(self):
+        result = ac.check_numeric_fields(
+            {"year": "2008", "volume": "12", "issue": "2", "pages": "57-82",
+             "doi": "https://doi.org/10.1/X"},
+            {"year": "2008", "volume": "12", "issue": "2", "pages": "57–82",
+             "doi": "10.1/x"})
+        self.assertEqual(result["state"], "matched")
+        mismatch = ac.check_numeric_fields({"year": "2009"}, {"year": "2008"})
+        self.assertEqual(mismatch["state"], "mismatch")
+        self.assertEqual(mismatch["fields"]["volume"]["state"], "abstained")
+
+    def test_formatting_positive_negative_and_abstention(self):
+        good = ac.check_formatting(
+            "Smith, J. (2008). Title. Journal, 12(2), 57-82. https://doi.org/10.1/x")
+        self.assertNotEqual(good["state"], "mismatch")
+        bad = ac.check_formatting("Smith, J. Title. doi:10.1/x")
+        self.assertEqual(bad["state"], "mismatch")
+        self.assertEqual(ac.check_formatting("")["state"], "abstained")
+
+    def test_wording_is_bounded(self):
+        self.assertEqual(ac.check_wording(
+            "the policy expands media markets", "the policy expands media markets")["state"],
+            "close")
+        self.assertEqual(ac.check_wording(
+            "the policy expands media markets", "totally different words here")["state"],
+            "distinct")
+        self.assertEqual(ac.check_wording("short", "short text")["state"], "abstained")
 
 
 class RetrievalBenchmarkTests(unittest.TestCase):

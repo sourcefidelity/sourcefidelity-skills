@@ -26,6 +26,7 @@ sys.path.insert(0, REVIEW_SCRIPTS)
 
 import authorship_signals  # noqa: E402
 import file_digest  # noqa: E402
+import finding_counts  # noqa: E402
 import batch_paths  # noqa: E402
 import review_metrics  # noqa: E402
 
@@ -67,6 +68,8 @@ def validate(findings, inventory=None, task=None):
     duplicates = sorted({i for i in ids if ids.count(i) > 1})
     if duplicates:
         fail(f"duplicate IDs: {duplicates}")
+    for message in finding_counts.reconcile(findings):
+        fail(message)
     refs_by_id = {ref["id"]: ref for ref in references}
     inventory_occurrences = {occ["id"]: occ for occ in (inventory or {}).get("occurrences", [])}
     task = task or {}
@@ -337,9 +340,10 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("Category A academic integrity violation: " + "; ".join(summary["category_a"]) + ".")
     if summary.get("category_b"):
         lines.append("Category B academic integrity violation: " + "; ".join(summary["category_b"]) + ".")
+    derived_counts = finding_counts.render_counts(findings)
     lines.append(
-        f"Counts: Category A {len(summary.get('category_a') or [])}; "
-        f"Category B {len(summary.get('category_b') or [])}; "
+        f"Counts: Category A {derived_counts['A']}; "
+        f"Category B {derived_counts['B']}; "
         f"uncited substantive passages {len(findings.get('uncited', []))}.")
     lines.append("")
 
@@ -527,7 +531,9 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
         },
         "works_discussed": len(findings.get("works", [])),
         "uncited_passages": len(findings.get("uncited", [])),
-        "category_a_findings": len(findings.get("summary", {}).get("category_a", []) or []),
+        "category_a_findings": finding_counts.render_counts(findings)["A"],
+        "finding_counts": finding_counts.render_counts(findings),
+        "derived_issue_counts": finding_counts.issue_counts(findings),
         "category_b": {
             "citation_findings": len(findings.get("summary", {}).get("category_b_citation", []) or []),
             "uncited_passages": len(findings.get("uncited", [])),
