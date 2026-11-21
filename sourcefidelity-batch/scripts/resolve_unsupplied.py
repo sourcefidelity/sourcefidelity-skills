@@ -5,7 +5,7 @@
         [--dry-run] [--include-non-academic]
 
 Only unresolved works without a supplied file are queried. Records are grouped
-by DOI, or by title + author + year, so variant keys share one lookup. A DOI is
+by normalized citation fields so identical claims share one lookup. A DOI is
 queried first at Crossref, then at DataCite if Crossref has no record, then at
 the global DOI handle service; otherwise Crossref is searched by title and
 author. Results are cached in `_work/_crossref_cache.json` and written to
@@ -29,7 +29,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import urllib.parse
@@ -107,7 +106,9 @@ def datacite_fields(attributes):
 
 def datacite_lookup(record, doi):
     data = er.fetch(f"{DATACITE}/{urllib.parse.quote(doi, safe='/')}")
-    attributes = (data.get("data") or {}).get("attributes") or {}
+    attributes = (data.get("data") or {}).get("attributes")
+    if not isinstance(attributes, dict) or not attributes.get("doi"):
+        raise ValueError("DataCite response has no DOI record")
     provider = datacite_fields(attributes)
     cited_title = (record.get("identity") or {}).get("title", "")
     cited = set(sr.tokens(cited_title))
@@ -127,23 +128,15 @@ def datacite_lookup(record, doi):
 def doi_handle(doi):
     """Return the resolved URL when the global DOI handle exists, else ''."""
     url = f"https://doi.org/api/handles/{urllib.parse.quote(doi, safe='/')}"
-    proc = subprocess.run(["curl", "-sS", "-L", "--max-time", "15",
-                           "-w", "\n%{http_code}", url],
-                          capture_output=True, text=True)
-    body = proc.stdout.rsplit("\n", 1)[0] if proc.stdout else ""
-    code = proc.stdout.rsplit("\n", 1)[-1].strip() if proc.stdout else ""
-    if code != "200":
+    data = er.fetch(url, timeout=15)
+    if data.get("responseCode") == 100:
         return ""
-    try:
-        data = json.loads(body)
-    except ValueError:
-        return ""
-    if data.get("responseCode") != 1:
-        return ""
-    for value in data.get("values") or []:
-        if value.get("type") == "URL":
-            return (value.get("data") or {}).get("value", "")
-    return ""
+    if data.get("responseCode") != 1 or not isinstance(data.get("values"), list):
+        raise ValueError("DOI handle response has no usable record")
+    for value in data["values"]:
+        if value.get("type") == "URL" and (value.get("data") or {}).get("value"):
+            return value["data"]["value"]
+    raise ValueError("DOI handle response has no URL")
 
 
 def now():
@@ -152,15 +145,15 @@ def now():
 
 def identity_key(record):
     identity = record.get("identity") or {}
-    doi = (identity.get("doi") or "").strip().lower()
-    if doi:
-        return "doi:" + doi
     title = sr.norm(identity.get("title", ""))
-    author = sr.surname_of(identity.get("author", ""))
-    year = identity.get("year", "")
     if not title:
         return ""
-    return f"title:{title}|{author}|{year}"
+    fields = [str(identity.get(field) or "").strip().casefold()
+              for field in ("doi", "year", "edition")]
+    return json.dumps([*fields, title, sr.norm(identity.get("author", "")),
+                       sr.norm(record.get("container_title", "")), record.get("work_kind", ""),
+                       record.get("page_range") or []],
+                      ensure_ascii=False)
 
 
 def is_academic(record):
@@ -176,7 +169,7 @@ def is_academic(record):
 def skip_reason(record):
     if record.get("supplied_file"):
         return "supplied_copy"
-    if record.get("identity_status") != "unresolved":
+    if record.get("identity_status") not in (None, "unresolved"):
         return "already_resolved"
     title = (record.get("identity") or {}).get("title", "")
     if len(title) < 6:
@@ -194,105 +187,136 @@ def representative(records):
 
 
 def cache_key(record):
-    """Key compatible with enrich_registry.py's cache."""
-    identity = record.get("identity") or {}
-    doi = (identity.get("doi") or "").strip()
-    if doi:
-        return doi
-    return (sr.norm(identity.get("title", ""))[:200] + "|" +
-            sr.surname_of(identity.get("author", "")))
+    # Enrichment uses the same file for provider metadata with a different key.
+    return "batch-search-v1:" + identity_key(record)
+
+
+def fresh_result(record, cache):
+    result = cache.get(cache_key(record))
+    if (result and result.get("outcome") in
+            {"matched", "no_results", "candidates_rejected", "doi_not_found", "doi_mismatch"}
+            and 0 <= time.time() - result.get("_timestamp", 0) < CACHE_TTL):
+        return result
+    return None
+
+
+def http_status(exc):
+    status = re.match(r"HTTP ([1-5]\d{2})(?:[: ]|$)", str(exc))
+    return int(status.group(1)) if status else None
 
 
 def lookup(record, root, cache, refresh=False):
-    """One cached Crossref lookup for a group representative."""
+    """Resolve one citation, recording attempted routes and caching completed results."""
     identity = record.get("identity") or {}
     doi = (identity.get("doi") or "").strip()
+    cached = fresh_result(record, cache) if not refresh else None
+    if cached:
+        return {**cached, "_cached": True}
     key = cache_key(record)
-    cached = cache.get(key)
-    if not cached and doi:
-        cached = cache.get("doi:" + doi.lower())
-    if cached and not refresh:
-        age = time.time() - cached.get("_timestamp", 0)
-        if age < CACHE_TTL:
-            result = {**cached, "_cached": True}
-            if result.get("provider"):
-                ok, why = plausible(record, result)
-                if not ok:
-                    result["candidate"] = result["provider"]
-                    result["provider"] = None
-                    result["reason"] = "no_match"
-                    result["rejected"] = why
-            return result
+    cache.pop(key, None)
+
+    attempts = []
     result = {"provider": None, "reason": "no_match", "_cached": False,
-              "query": "doi" if doi else "bibliographic"}
+              "query": "doi" if doi else "bibliographic", "attempts": attempts}
+
+    def attempt(provider, request, *, doi_query=False):
+        route = {"provider": provider, "query": result["query"]}
+        attempts.append(route)
+        try:
+            data = request()
+        except Exception as exc:  # provider boundary
+            status = http_status(exc)
+            if status is not None:
+                route["http_status"] = status
+            if doi_query and status == 404:
+                route["outcome"] = "no_results"
+                return None
+            route.update(outcome="provider_failure", reason=type(exc).__name__)
+            raise
+        route["outcome"] = "returned"
+        return data
+
+    def crossref_record():
+        data = er.fetch(f"{er.API}/{urllib.parse.quote(doi, safe='/')}")
+        item = data.get("message")
+        if not isinstance(item, dict) or not item.get("DOI"):
+            raise ValueError("Crossref response has no DOI record")
+        return item
+
+    def title_items():
+        params = urllib.parse.urlencode({
+            "query.bibliographic": identity.get("title", ""),
+            "query.author": sr.surname_of(identity.get("author", "")),
+            "rows": "8",
+        })
+        data = er.fetch(f"{er.API}?{params}")
+        items = data.get("message", {}).get("items")
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise ValueError("Crossref response has no result list")
+        return items
+
     try:
         if doi:
-            try:
-                data = er.fetch(f"{er.API}/{urllib.parse.quote(doi, safe='/')}")
-            except RuntimeError as exc:
-                if "HTTP 404" not in str(exc):
-                    raise
-                try:
-                    provider, detail = datacite_lookup(record, doi)
-                except RuntimeError as data_exc:
-                    if "HTTP 404" not in str(data_exc):
-                        raise
-                    resolved = doi_handle(doi)
-                    if resolved:
-                        result.update({"reason": "doi_resolves_elsewhere",
-                                       "handle_url": resolved})
-                    else:
-                        raise RuntimeError("HTTP 404: DOI not registered")
-                else:
-                    if detail.get("doi_title_mismatch"):
-                        result.update({"reason": "doi_mismatch", "detail": detail,
-                                       "provider": provider})
-                    else:
-                        result.update({"provider": provider, "score": 0.95,
-                                       "detail": detail})
-            else:
-                item = data.get("message") or {}
+            item = attempt("crossref", crossref_record, doi_query=True)
+            if item is not None:
                 score, detail = er.match_item(record, item, True)
                 if detail.get("doi_title_mismatch"):
-                    result.update({"reason": "doi_mismatch", "detail": detail,
-                                   "provider": er.provider_fields(item)})
+                    result.update(reason="doi_mismatch", candidate=er.provider_fields(item),
+                                  detail=detail)
                 elif score >= 0.55:
-                    result.update({"provider": er.provider_fields(item),
-                                   "score": score, "detail": detail})
+                    result.update(provider=er.provider_fields(item), score=score, detail=detail)
+            else:
+                hit = attempt("datacite", lambda: datacite_lookup(record, doi), doi_query=True)
+                if hit is not None:
+                    provider, detail = hit
+                    if detail.get("doi_title_mismatch"):
+                        result.update(reason="doi_mismatch", candidate=provider, detail=detail)
+                    else:
+                        result.update(provider=provider, score=0.95, detail=detail)
+                else:
+                    resolved = attempt("doi_handle", lambda: doi_handle(doi), doi_query=True)
+                    if resolved:
+                        result.update(reason="doi_resolves_elsewhere", handle_url=resolved)
+                    else:
+                        attempts[-1]["outcome"] = "no_results"
+                        result["reason"] = "doi_not_found"
         else:
-            params = urllib.parse.urlencode({
-                "query.bibliographic": identity.get("title", ""),
-                "query.author": sr.surname_of(identity.get("author", "")),
-                "rows": "8",
-            })
-            data = er.fetch(f"{er.API}?{params}")
-            items = [(*er.match_item(record, item, False), item)
-                     for item in data.get("message", {}).get("items", [])]
-            items.sort(key=lambda x: x[0], reverse=True)
-            if items and items[0][0] >= 0.55:
-                score, detail, item = items[0]
-                result.update({"provider": er.provider_fields(item),
-                               "score": score, "detail": detail})
-    except Exception as exc:  # network, API, or JSON failure
-        message = str(exc)
-        if "HTTP 404" in message:
-            reason = "doi_not_found"
-        elif "HTTP 429" in message:
-            reason = "rate_limited"
-        elif "HTTP 5" in message:
-            reason = "provider_error"
-        else:
-            reason = f"error: {type(exc).__name__}"
-        result.update({"reason": reason, "error": message[:200]})
-    if result.get("provider"):
-        ok, why = plausible(record, result)
-        if not ok:
-            result["candidate"] = result["provider"]
-            result["provider"] = None
-            result["reason"] = "no_match"
-            result["rejected"] = why
+            items = attempt("crossref", title_items)
+            attempts[-1]["candidate_count"] = len(items)
+            if not items:
+                attempts[-1]["outcome"] = "no_results"
+            ranked = sorted([(*er.match_item(record, item, False), item) for item in items],
+                            key=lambda hit: hit[0], reverse=True)
+            for score, detail, item in ranked:
+                candidate = er.provider_fields(item)
+                candidate_result = {**result, "provider": candidate,
+                                    "score": score, "detail": detail}
+                ok, why = plausible(record, candidate_result)
+                if ok:
+                    result.update(provider=candidate, score=score, detail=detail)
+                    break
+                if "rejected" not in result:
+                    result.update(candidate=candidate, rejected=why)
+    except Exception as exc:  # retain the disposition and retry on the next run
+        status = http_status(exc)
+        reason = ("rate_limited" if status == 429 else "provider_error"
+                  if status is not None and status >= 500 else f"error: {type(exc).__name__}")
+        attempts[-1].update(outcome="provider_failure", reason=type(exc).__name__)
+        result.update(reason=reason, outcome="incomplete", error=reason)
+        return result
+
+    if result["provider"]:
+        result["outcome"] = "matched"
+    elif result["reason"] != "no_match":
+        result["outcome"] = result["reason"]
+    else:
+        result["outcome"] = ("no_results" if attempts[-1]["outcome"] == "no_results"
+                             else "candidates_rejected")
+    if attempts[-1]["outcome"] == "returned":
+        attempts[-1]["outcome"] = result["outcome"]
     result["_timestamp"] = time.time()
-    cache[key] = result
+    if result["outcome"] != "doi_resolves_elsewhere":
+        cache[key] = result
     return result
 
 
@@ -353,6 +377,8 @@ def set_status(record, status, reason, result=None):
         "reason": reason,
         "checked_at": now(),
         "query": (result or {}).get("query", ""),
+        "outcome": (result or {}).get("outcome", "skipped" if status == "not_searched" else ""),
+        "attempts": (result or {}).get("attempts", []),
         "cached": bool((result or {}).get("_cached")),
         "score": (result or {}).get("score", ""),
         "provider_doi": ((result or {}).get("provider") or {}).get("doi", ""),
@@ -363,12 +389,14 @@ def set_status(record, status, reason, result=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
-    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--limit", type=int, default=0, help="maximum uncached groups to query")
     ap.add_argument("--refresh", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--include-non-academic", action="store_true",
                     help="also query web/other works (normally skipped)")
     args = ap.parse_args()
+    if args.limit < 0:
+        ap.error("--limit cannot be negative")
     root = os.path.abspath(args.batch)
     payload = json.load(open(os.path.join(root, "source_registry.json"),
                              encoding="utf-8"))
@@ -397,7 +425,8 @@ def main():
     already = 0
     for ident, keys in groups.items():
         records = [registry[k] for k in keys]
-        if any(r.get("provider") for r in records) and not args.refresh:
+        if not args.refresh and all(r.get("provider") and not r.get("doi_conflict")
+                                    and r.get("search_status") != "partial" for r in records):
             already += 1
             for r in records:
                 if r.get("provider") and r.get("identity_status") != "supplied_confirmed":
@@ -408,18 +437,24 @@ def main():
                 if r.get("search_status") not in {"searched", "partial"}:
                     set_status(r, "searched", "cached_provider")
             continue
-        if all(r.get("search_status") == "searched" for r in records) and not args.refresh:
-            already += 1
-            continue
         pending.append((ident, keys))
 
     pending.sort()
-    all_pending = pending
     if args.limit:
-        pending = pending[: args.limit]
-        for ident, keys in all_pending[args.limit:]:
+        cached_groups, new_groups = [], []
+        for group in pending:
+            _, keys = group
+            record = representative([registry[k] for k in keys])
+            if not args.refresh and fresh_result(record, cache):
+                cached_groups.append(group)
+            else:
+                new_groups.append(group)
+        pending = cached_groups + new_groups[:args.limit]
+        for _, keys in new_groups[args.limit:]:
+            skipped["not_reached"] = skipped.get("not_reached", 0) + len(keys)
             for key in keys:
-                set_status(registry[key], "not_searched", "not_reached")
+                if not registry[key].get("search", {}).get("attempts"):
+                    set_status(registry[key], "not_searched", "not_reached")
 
     stats = {"groups": len(groups), "pending": len(pending), "already": already,
              "resolved": 0, "no_match": 0, "doi_mismatch": 0, "errors": 0,
@@ -444,6 +479,8 @@ def main():
                                                            "score": result.get("score")})
                 if outcome.get("applied"):
                     applied += 1
+                    registry[key].pop("provider_error", None)
+                    registry[key].pop("doi_conflict", None)
                     set_status(registry[key], "searched", "resolved", result)
                 else:
                     set_status(registry[key], "partial",
@@ -457,12 +494,10 @@ def main():
             for key in keys:
                 registry[key]["doi_conflict"] = {
                     "doi": (record.get("identity") or {}).get("doi", ""),
-                    "provider_title": (result.get("provider") or {}).get("title", ""),
+                    "provider_title": (result.get("candidate") or {}).get("title", ""),
                     "checked_at": now()}
                 set_status(registry[key], "partial", "doi_mismatch", result)
-        elif str(result.get("reason", "")).startswith("error") or \
-                result.get("reason") in {"doi_not_found", "doi_resolves_elsewhere",
-                                          "rate_limited", "provider_error"}:
+        elif result["outcome"] in {"incomplete", "doi_resolves_elsewhere"}:
             stats["errors"] += 1
             for key in keys:
                 registry[key]["provider_error"] = result.get("error", "")
@@ -470,8 +505,11 @@ def main():
         else:
             stats["no_match"] += 1
             for key in keys:
-                set_status(registry[key], "searched", "no_match", result)
-        er.save_cache(root, cache)
+                registry[key].pop("provider_error", None)
+                registry[key].pop("doi_conflict", None)
+                set_status(registry[key], "searched", result["reason"], result)
+        if not result.get("_cached"):
+            er.save_cache(root, cache)
         if index % 25 == 0:
             print(f"  {index}/{len(pending)} groups", file=sys.stderr)
 

@@ -414,6 +414,107 @@ class MatchPlausibilityTests(unittest.TestCase):
         self.assertTrue(ok)
 
 
+class BatchSearchOutcomeTests(unittest.TestCase):
+    def record(self, title="Independent film archives", doi=""):
+        return {"identity_status": "unresolved", "work_kind": "article",
+                "identity": {"title": title, "author": "Smith, J.",
+                             "year": "2024", "doi": doi}}
+
+    def test_legacy_failure_and_new_failure_do_not_prevent_retry(self):
+        record = self.record()
+        cache = {"independent film archives|smith": {
+            "reason": "rate_limited", "_timestamp": time.time()}}
+        with mock.patch.object(er, "fetch", side_effect=[
+                RuntimeError("HTTP 429: provider busy"), {"message": {"items": []}}]) as fetch:
+            failed = ru.lookup(record, "", cache)
+            completed = ru.lookup(record, "", cache)
+            replay = ru.lookup(record, "", cache)
+        self.assertEqual(failed["outcome"], "incomplete")
+        self.assertEqual(failed["attempts"], [{
+            "provider": "crossref", "query": "bibliographic",
+            "outcome": "provider_failure", "reason": "RuntimeError", "http_status": 429}])
+        self.assertEqual(completed["outcome"], "no_results")
+        self.assertTrue(replay["_cached"])
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_malformed_refresh_invalidates_previous_completed_result(self):
+        record, cache = self.record(), {}
+        with mock.patch.object(er, "fetch", side_effect=[
+                {"message": {"items": []}}, {"message": {}}, {"message": {"items": []}}]) as fetch:
+            ru.lookup(record, "", cache)
+            failed = ru.lookup(record, "", cache, refresh=True)
+            retried = ru.lookup(record, "", cache)
+        self.assertEqual(failed["outcome"], "incomplete")
+        self.assertFalse(retried["_cached"])
+        self.assertEqual(fetch.call_count, 3)
+
+    def test_rejected_candidates_are_distinct_from_an_empty_response(self):
+        record, cache = self.record(), {}
+        data = {"message": {"items": [{
+            "title": ["Research about bees"], "type": "journal-article",
+            "author": [{"family": "Other"}], "DOI": "10.1000/bees"}]}}
+        with mock.patch.object(er, "fetch", return_value=data):
+            result = ru.lookup(record, "", cache)
+        self.assertEqual(result["outcome"], "candidates_rejected")
+        self.assertEqual(result["attempts"][0]["candidate_count"], 1)
+        self.assertIsNone(result["provider"])
+
+    def test_handle_failure_is_not_an_unregistered_doi(self):
+        record = self.record(doi="10.1000/example")
+        missing = RuntimeError("HTTP 404: absent")
+        cache = {}
+        with mock.patch.object(er, "fetch", side_effect=[
+                missing, missing, RuntimeError("HTTP 503: failed"),
+                missing, missing, {"responseCode": 100}]) as fetch:
+            failed = ru.lookup(record, "", cache)
+            absent = ru.lookup(record, "", cache)
+            replay = ru.lookup(record, "", cache)
+        self.assertEqual([(a["provider"], a["outcome"]) for a in failed["attempts"]],
+                         [("crossref", "no_results"), ("datacite", "no_results"),
+                          ("doi_handle", "provider_failure")])
+        self.assertEqual(absent["outcome"], "doi_not_found")
+        self.assertEqual(replay["attempts"][-1]["outcome"], "no_results")
+        self.assertTrue(replay["_cached"])
+        self.assertEqual(fetch.call_count, 6)
+
+    def test_doi_conflict_is_recorded_without_installing_the_provider(self):
+        bad = self.record(doi="10.1000/same")
+        good = self.record("Tropical ornamental horticulture", doi="10.1000/same")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source_registry.json"
+            path.write_text(json.dumps({"works": {"bad": bad, "good": good}}), encoding="utf-8")
+            data = {"message": {"title": ["Tropical ornamental horticulture"],
+                                "DOI": "10.1000/same", "type": "journal-article",
+                                "author": [{"family": "Other"}]}}
+            with mock.patch.object(sys, "argv", ["resolve_unsupplied.py", "--batch", tmp]), \
+                    mock.patch.object(er, "fetch", return_value=data) as fetch, \
+                    redirect_stdout(io.StringIO()):
+                ru.main()
+            works = json.loads(path.read_text(encoding="utf-8"))["works"]
+        self.assertNotIn("provider", works["bad"])
+        self.assertEqual(works["bad"]["search"]["outcome"], "doi_mismatch")
+        self.assertEqual(works["good"]["search"]["outcome"], "matched")
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_query_limit_records_skips_and_does_not_charge_cache_hits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source_registry.json"
+            works = {str(i): self.record(f"Archives collection {i}") for i in range(3)}
+            path.write_text(json.dumps({"works": works}), encoding="utf-8")
+            with mock.patch.object(sys, "argv", ["resolve_unsupplied.py", "--batch", tmp,
+                                                 "--limit", "1"]), \
+                    mock.patch.object(er, "fetch", return_value={"message": {"items": []}}) as fetch, \
+                    redirect_stdout(io.StringIO()):
+                ru.main()
+                first = json.loads(path.read_text(encoding="utf-8"))["works"]
+                ru.main()
+            second = json.loads(path.read_text(encoding="utf-8"))["works"]
+        self.assertEqual(sum(r["search"]["outcome"] == "skipped" for r in first.values()), 2)
+        self.assertEqual(sum(r["search"]["outcome"] == "no_results" for r in second.values()), 2)
+        self.assertEqual(sum(r["search"]["cached"] for r in second.values()), 1)
+        self.assertEqual(fetch.call_count, 2)
+
+
 class DataCiteTests(unittest.TestCase):
     def test_text_with_journal_citeproc_is_article(self):
         fields = ru.datacite_fields({

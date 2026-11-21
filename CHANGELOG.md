@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Batch discovery.** Record provider attempts, distinguish empty searches
+  from rejected candidates and failures, and retry incomplete searches.
+  Cache completed results per citation so conflicting uses of a DOI are
+  checked independently.
+
 - **Submitted DOI fallback.** Try bounded title-and-author search when a
   submitted DOI does not provide a matching record. Keep the submitted DOI
   and its check separate from the resolved identifier.

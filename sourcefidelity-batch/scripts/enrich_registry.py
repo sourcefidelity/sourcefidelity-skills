@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import time
+import tempfile
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -68,9 +69,17 @@ def load_cache(root):
 
 
 def save_cache(root, cache):
-    os.makedirs(os.path.dirname(cache_path(root)), exist_ok=True)
-    json.dump(cache, open(cache_path(root), "w", encoding="utf-8"),
-              ensure_ascii=False)
+    path = cache_path(root)
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(cache, handle, ensure_ascii=False)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def fetch(url, timeout=20):
@@ -312,6 +321,7 @@ def save_sidecar(root, registry):
     side = {}
     for key, record in registry.items():
         if not (record.get("provider") or record.get("doi_conflict")
+                or (record.get("search") or {}).get("outcome")
                 or record.get("search_status") in {"searched", "partial"}):
             continue
         entry = {field: record.get(field) for field in common
