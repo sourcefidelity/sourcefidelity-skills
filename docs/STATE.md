@@ -7,11 +7,11 @@
 
 | Item | Value |
 |---|---|
-| Branch | `main`; release tag `v1.1.0` |
-| Source version | `1.1.0` (`VERSION`) |
-| Latest published release | `v1.1.0`, with the release asset and `sha256` recorded in `latest.json` on `main` |
+| Branch | `fix/openfetch-core`; patch release `v1.1.1` |
+| Source version | `1.1.1` (`VERSION`) |
+| Latest published release | `v1.1.1`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
-| Installed copy | `~/.dsh/skills`, version `1.1.0`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
+| Installed copy | `~/.dsh/skills`, version `1.1.1`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
 | Test suites | 304 pipeline tests; style and PDF suites report no failures |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
@@ -33,6 +33,9 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.0` notice from `1.0.0`; version, tag and checksum agree |
 | Release install | `install.sh --update` on the live install | Upgraded `1.0.0` → `1.1.0`; checksum verified; venv preserved; stamp is `v1.1.0` |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
+| Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
+| Third Television review | `reviews/sf-20261120-television-rerun-1.1.1` | 16/20 occurrences judged (12 Supports, 4 Qualified, 4 Not Judged); Category A 12, B 7; R10 landing only, R3 supplied file was the wrong work |
+| Delegated review run | provider content filter | Interrupted after retrieval and analysis; the report was assembled from the run's recorded judgments and texts, so its time and cost are not comparable |
 | CI | GitHub Actions run 44668057309 on `main` | success on Ubuntu, macOS and Windows, including the docs check |
 
 ## 3. Known limitations and risks
@@ -41,6 +44,9 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 |---|---|---|
 | `1.0.0` installs cannot self-update | `update_check.py` and the installer update flags first shipped in `1.1.0` | Tell `1.0.0` users to run the `1.1.0` installer once; later releases update normally |
 | Release archive has no git commit | An install updated from a release archive records an empty `commit`; the version and channel remain correct | Treat `installed.json` version as authoritative; use a checkout for commit-level reproducibility |
+| A provider content filter can interrupt a long delegated run | One review run failed twice with "Content Exists Risk" after reading the source texts; its artifacts were still usable | Keep source reads targeted; if a run fails, complete from the retrieved artifacts rather than re-reading |
+| The third Television run's time and cost are not clean | The report was completed outside the interrupted run | Compare its coverage, not its duration or cost, with earlier runs |
+| `sourcepack.py` heuristic can map the wrong book | R3 mapped to *The Cultural Industries* rather than *The media and social theory*; C6 is Not Judged | Adjudicate every mapping; use `--map R3=PATH` when the filename is ambiguous |
 | PowerShell installer paths unexecuted here | `install.ps1 -Check/-Update` reviewed but not runtime-tested (no PowerShell on this machine) | Run on Windows before announcing the release |
 | `openfetch.py` is best-effort | CORE's title search did not return the O'Connell article; a missed work is recorded as `no_candidate`, not absence | Treat it as a first pass; use the dossier and manual retrieval for gaps |
 | `sourcepack.py` maps by filename heuristic | Opaque names (`8.pdf`, `Archive.pdf`) do not map | Use `--map R3=PATH`; adjudicate the mapping |

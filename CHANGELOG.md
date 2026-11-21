@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 — November 21, 2026
 
 - **Open-access retrieval.** `openfetch.py` now searches CORE by the subtitle and
   the distinctive title words, decodes CORE's escaped apostrophes, treats an
