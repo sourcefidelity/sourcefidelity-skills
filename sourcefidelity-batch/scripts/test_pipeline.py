@@ -3622,14 +3622,25 @@ class OpenFetchFallbackTests(unittest.TestCase):
         self.assertEqual(of._core_unescape(r"O\u27Connell"), "O'Connell")
         self.assertEqual(of._core_unescape(r"O\\u27Connell"), "O'Connell")
 
-    def test_core_queries_lead_with_subtitle(self):
+    def test_core_queries_use_clean_phrase_then_author(self):
         parsed = rd.parse_reference(
             "Presburger, P., & Tyler, M. R. (1990). Television without Frontiers: "
             "Opportunity and Debate Created by the New European Community Directive. "
             "Hastings International and Comparative Law Review, 13, 495-510.")
         queries = of._core_queries(parsed)
-        self.assertTrue(queries[0].startswith(
-            'title:"Opportunity and Debate Created by the New European Community Directive"'))
+        self.assertIn('title:"Television without Frontiers Opportunity and Debate '
+                      'Created by the New European Community Directive"', queries)
+        self.assertTrue(any("authors:Presburger" in query for query in queries))
+
+    def test_core_queries_strip_colon_and_put_doi_first(self):
+        parsed = rd.parse_reference(
+            "Nenova, M. B. (2007). The Reform of the European Community Audiovisual "
+            "Media Regulation: Television Without Cultural Diversity. "
+            "International Journal of Cultural Property, 14(2), 169-204. "
+            "doi:10.1017/s0940739107070105")
+        queries = of._core_queries(parsed)
+        self.assertTrue(queries[0].startswith("doi:10.1017/s0940739107070105"))
+        self.assertFalse(any("Media Regulation:" in query for query in queries))
 
     def test_landing_page_is_not_a_copy(self):
         def fake_download(url, target, timeout=40):
@@ -3645,21 +3656,17 @@ class OpenFetchFallbackTests(unittest.TestCase):
         self.assertEqual(status, "landing")
         self.assertTrue(saved.endswith(".html"))
 
-    def test_core_fulltext_reads_outputs(self):
-        work = of.CORE_WORKS + "123"
-        output = of.CORE_OUTPUTS + "9"
+    def test_core_fulltext_reads_the_output_record(self):
+        output = of.CORE_OUTPUTS + "123"
 
         def fake_json(url, headers=None, timeout=25):
-            if url == work:
-                return {"fullText": "",
-                        "outputs": ["https://api.core.ac.uk/v3/outputs/9"]}
             if url == output:
                 return {"fullText": "source text " * 200}
             return {}
 
         with mock.patch.object(of, "_curl_json", side_effect=fake_json):
             text, route = of._core_fulltext({"id": 123, "fullText": ""}, "key")
-        self.assertEqual(route, "outputs/9")
+        self.assertEqual(route, "outputs/123")
         self.assertIn("source text", text)
 
 

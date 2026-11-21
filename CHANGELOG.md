@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.1.2 — November 21, 2026
+
+- **CORE retrieval aligned with the application adapter.** `openfetch.py` now
+  searches CORE's outputs endpoint with the punctuation-cleaned exact title
+  phrase, an author-clause variant, DOI-first queries and a word-level fallback;
+  it reads `sourceFulltextUrls`, `fullTextIdentifier` and the output record's
+  `fullText`. On the Television references this retrieves Harcourt, Middleton,
+  Nenova, O'Connell, Presburger & Tyler and Wilkins.
+
 ## 1.1.1 — November 21, 2026
 
 - **Open-access retrieval.** `openfetch.py` now searches CORE by the subtitle and

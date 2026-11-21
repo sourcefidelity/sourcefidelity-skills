@@ -38,8 +38,11 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 OPENALEX = "https://api.openalex.org/works"
 CORE_SEARCH = "https://api.core.ac.uk/v3/search/works/"
+CORE_OUTPUT_SEARCH = "https://api.core.ac.uk/v3/search/outputs/"
 CORE_WORKS = "https://api.core.ac.uk/v3/works/"
 CORE_OUTPUTS = "https://api.core.ac.uk/v3/outputs/"
+_PHRASE_UNSAFE = re.compile(r"[^\w\s'’-]")
+_MAX_TITLE_WORDS = 6
 CORE_STOP = {"the", "and", "for", "with", "from", "that", "this", "into",
              "its", "their", "between", "under", "during", "over", "about",
              "after", "before", "more", "than", "also", "such", "have", "has"}
@@ -89,36 +92,46 @@ def _core_words(parsed):
     return words
 
 
-def _core_queries(parsed):
-    """CORE title queries: the main title and the distinctive last words.
+def _clean_phrase(title):
+    """CORE phrase match ignores punctuation; a colon makes it answer 500."""
+    return " ".join(_PHRASE_UNSAFE.sub(" ", title or "").split())
 
-    CORE's title search is a phrase match, so a bag of significant words or a
-    truncated title phrase usually returns nothing. The main title before the
-    colon and the last five words (stopwords included) cover both the short
-    distinctive title and the subtitle that usually carries the topic.
+
+def _author_clause(parsed):
+    surname = (parsed.get("surname") or "").split(",")[0].strip()
+    surname = " ".join(re.findall(r"[^\W\d_]+(?:['’-][^\W\d_]+)*", surname))
+    if not surname:
+        return ""
+    return f'authors:"{surname}"' if " " in surname else f"authors:{surname}"
+
+
+def _core_queries(parsed):
+    """CORE title queries in the form the application adapter uses.
+
+    The DOI query comes first when a DOI is present. The exact phrase is the
+    cleaned title plus the author clause; the fallback requires each of the
+    first significant title words in the title field. Both are more reliable
+    than an unfielded keyword query, which searches full text and matches any
+    word.
     """
     title = (parsed.get("title") or "").strip().rstrip(".")
-    raw = re.findall(r"[A-Za-z][A-Za-z'’\-]*", title)
-    if not raw:
+    if not title:
         return []
-    queries, seen = [], set()
-
-    def add(query):
-        if query and query not in seen:
-            seen.add(query)
-            queries.append(query)
-
-    head, _, subtitle = title.partition(":")
-    head, subtitle = head.strip(), subtitle.strip()
-    if subtitle:
-        add(f'title:"{subtitle}"')
-    if len(raw) >= 5:
-        add('title:"%s"' % " ".join(raw[-5:]))
-    if subtitle:
-        add(f'title:"{head}"')
-    if len(raw) >= 4:
-        add('title:"%s"' % " ".join(raw[:4]))
-    return queries[:4]
+    queries = []
+    if parsed.get("doi"):
+        queries.append("doi:" + parsed["doi"].strip().lower())
+    phrase = _clean_phrase(title)
+    author = _author_clause(parsed)
+    if phrase:
+        queries.append(f'title:"{phrase}"')
+        if author:
+            queries.append(f'title:"{phrase}" AND {author}')
+    words = [word for word in re.findall(r"\w+", title)
+             if len(word) >= 4 and not word.isdigit()][:_MAX_TITLE_WORDS]
+    if len(words) >= 2:
+        queries.append(" AND ".join(
+            [f"title:{word}" for word in words] + ([author] if author else [])))
+    return list(dict.fromkeys(queries))[:4]
 
 
 def _core_unescape(value):
@@ -137,7 +150,7 @@ def _core(parsed, key):
     found = {}
     for query in _core_queries(parsed):
         data = _curl_json(
-            f"{CORE_SEARCH}?q={urllib.parse.quote(query)}&limit=10",
+            f"{CORE_OUTPUT_SEARCH}?q={urllib.parse.quote(query)}&limit=10",
             headers={"Authorization": "Bearer " + key})
         for item in data.get("results") or []:
             item["title"] = _core_unescape(item.get("title"))
@@ -149,19 +162,27 @@ def _core(parsed, key):
                 continue
             found.setdefault(item.get("id") or item.get("title"), item)
         time.sleep(0.4)
-        if found:
+        if any(len(_core_unescape(item.get("fullText") or "")) > 500
+               for item in found.values()):
             break
     return list(found.values())
 
 
 def _core_fulltext(item, key):
-    """CORE full text from the work, else from one of its outputs."""
+    """CORE full text from the output record, then its work and outputs."""
     if not key:
         return "", ""
     text = _core_unescape(item.get("fullText") or "")
     if len(text) > 500:
-        return text, "work"
-    work_id = item.get("id")
+        return text, "output"
+    output_id = item.get("id")
+    if output_id:
+        data = _curl_json(f"{CORE_OUTPUTS}{output_id}",
+                          headers={"Authorization": "Bearer " + key})
+        text = _core_unescape(data.get("fullText") or "")
+        if len(text) > 500:
+            return text, f"outputs/{output_id}"
+    work_id = item.get("workId") or item.get("work_id")
     if work_id:
         work = _curl_json(f"{CORE_WORKS}{work_id}",
                           headers={"Authorization": "Bearer " + key})
@@ -169,12 +190,12 @@ def _core_fulltext(item, key):
         if len(text) > 500:
             return text, f"works/{work_id}"
         for output in (work.get("outputs") or [])[:3]:
-            output_id = str(output).rstrip("/").rsplit("/", 1)[-1]
-            data = _curl_json(f"{CORE_OUTPUTS}{output_id}",
+            oid = str(output).rstrip("/").rsplit("/", 1)[-1]
+            data = _curl_json(f"{CORE_OUTPUTS}{oid}",
                               headers={"Authorization": "Bearer " + key})
             text = _core_unescape(data.get("fullText") or "")
             if len(text) > 500:
-                return text, f"outputs/{output_id}"
+                return text, f"outputs/{oid}"
     return "", ""
 
 
@@ -193,9 +214,11 @@ def _candidate_urls(openalex, core):
         if oa and not any(oa == seen[0] for seen in found):
             found.append((oa, "landing", "openalex"))
     for item in core:
-        url = item.get("downloadUrl") or ""
-        if url and not any(url == seen[0] for seen in found):
-            found.append((url, "pdf", "core"))
+        urls = [item.get("downloadUrl"), item.get("fullTextIdentifier"),
+                *(item.get("sourceFulltextUrls") or [])]
+        for url in urls:
+            if url and not any(url == seen[0] for seen in found):
+                found.append((url, "pdf", "core"))
     return found
 
 
@@ -213,8 +236,8 @@ def _fetch(url, target):
     state, status, _ctype, saved = fetch_helper.download(url, target)
     http_cache.host_note(url, state if state in ("blocked", "dead", "unreachable")
                          else "ok")
-    if saved and saved.endswith(".html"):
-        return "landing", _ctype or "html", saved
+    if saved and not saved.endswith(".pdf"):
+        return "landing", _ctype or "not-pdf", saved
     if saved:
         return "saved", _ctype or "pdf", saved
     return state, f"HTTP {status}" if status else state, ""
