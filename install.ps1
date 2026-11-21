@@ -120,9 +120,15 @@ if ($Check) {
         exit 1
     }
     $Result = $Raw | ConvertFrom-Json
-    if ($Result.notice) { Write-Host $Result.notice }
-    elseif ($Result.fetch_failed) { Write-Host "Could not check for updates (offline or latest.json unavailable)." }
-    else { Write-Host "SourceFidelity is up to date." }
+    if ($Result.fetch_failed) {
+        Write-Host "Could not check for updates (offline or latest.json unavailable)."
+        exit 1
+    }
+    if ($Result.notice) {
+        Write-Host ($Result.notice -replace 'install\.sh --update$', '.\install.ps1 -Update')
+    } else {
+        Write-Host "SourceFidelity is up to date."
+    }
     exit 0
 }
 

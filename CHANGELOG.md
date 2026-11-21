@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **PowerShell update check.** Show the PowerShell update command and return a
+  failure exit code when release metadata cannot be fetched.
+
 - **Citation inventory.** Recognize parenthetical citations with full-width or
   mixed-width delimiters while preserving the submitted marker and offsets.
 
