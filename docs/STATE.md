@@ -7,7 +7,7 @@
 
 | Item | Value |
 |---|---|
-| Branch | `fix/openfetch-core`; patch release `v1.1.1` |
+| Branch | `main`; release tag `v1.1.1` |
 | Source version | `1.1.1` (`VERSION`) |
 | Latest published release | `v1.1.1`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; the default update check reaches it |
@@ -30,8 +30,8 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Dual-client fetch | Middleton landing page (curl 403, urllib 200) and a remembered blocked host | Saved through urllib; blocked host refused without retry |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.0.0 (commit 1dc5304)` |
 | Deploy | `install.sh --target ~/.dsh/skills --no-venv --channel dev` | New scripts and `installed.json` written; venv preserved |
-| Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.0` notice from `1.0.0`; version, tag and checksum agree |
-| Release install | `install.sh --update` on the live install | Upgraded `1.0.0` → `1.1.0`; checksum verified; venv preserved; stamp is `v1.1.0` |
+| Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.1` notice from `1.1.0`; version, tag and checksum agree |
+| Release install | `install.sh --update` on the live install | Upgraded `1.0.0` → `1.1.0` and then `1.1.0` → `1.1.1`; checksums verified; venv preserved; stamp is `v1.1.1` |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
 | Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
 | Third Television review | `reviews/sf-20261120-television-rerun-1.1.1` | 16/20 occurrences judged (12 Supports, 4 Qualified, 4 Not Judged); Category A 12, B 7; R10 landing only, R3 supplied file was the wrong work |
