@@ -138,23 +138,46 @@ def bind_response(raw, request):
     return chosen
 
 
-def lexical_select(statement, request, limit=MAX_SELECTIONS):
-    """Deterministic fallback: rank sentences by distinctive shared terms."""
-    stop = {"that", "this", "with", "from", "their", "which", "have", "were",
-            "been", "into", "about", "also", "used", "using", "such", "these",
-            "they", "them", "then", "than", "over", "under", "between", "will",
-            "would", "could", "should", "there", "where", "when", "what", "while"}
-    terms = {word.casefold() for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", statement or "")
-             if word.casefold() not in stop}
+def _terms(text):
+    stop = {
+        "that", "this", "with", "from", "their", "which", "have", "were",
+        "been", "into", "about", "also", "used", "using", "such", "these",
+        "they", "them", "then", "than", "over", "under", "between", "will",
+        "would", "could", "should", "there", "where", "when", "what", "while",
+        "supports", "support", "expanding", "expand", "including", "include",
+        "general", "purposes", "purpose", "whose", "behalf", "what", "is",
+    }
+    return {word.casefold() for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", text or "")
+            if word.casefold() not in stop}
+
+
+def lexical_select(statement, request, limit=3):
+    """Conservative fallback: rank by distinctive shared terms, not generic overlap."""
+    terms = _terms(statement)
+    if not terms:
+        return []
+    sentence_terms = {}
+    document_frequency = {}
+    for ref in request.sentences.values():
+        words = _terms(ref.text)
+        sentence_terms[ref.alias] = words
+        for word in words:
+            document_frequency[word] = document_frequency.get(word, 0) + 1
     scored = []
     for ref in request.sentences.values():
-        words = {word.casefold() for word in re.findall(r"[A-Za-z][A-Za-z'-]{3,}", ref.text)}
-        score = len(terms & words)
-        if score:
-            scored.append((score, ref))
-    scored.sort(key=lambda pair: (-pair[0], pair[1].alias))
-    return [(ref, "bears_on_statement") for _score, ref in scored[:limit]]
-
+        text = ref.text.strip()
+        if len(text.split()) < 6 or text.endswith("?"):
+            continue
+        overlap = terms & sentence_terms[ref.alias]
+        if len(overlap) < 2:
+            continue
+        weight = sum(1.0 / document_frequency.get(word, 1) for word in overlap)
+        coverage = len(overlap) / len(terms)
+        if weight < 2.0 or coverage < 0.15:
+            continue
+        scored.append((weight, coverage, ref))
+    scored.sort(key=lambda pair: (-pair[0], -pair[1], pair[2].alias))
+    return [(ref, "bears_on_statement") for _weight, _coverage, ref in scored[:limit]]
 
 def select_evidence(statement, passages, *, call=None, cited_as="", max_input_tokens=MAX_INPUT_TOKENS):
     """Select evidence sentences; never raises for a model or budget problem."""

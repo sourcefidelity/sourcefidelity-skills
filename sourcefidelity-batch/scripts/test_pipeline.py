@@ -1247,9 +1247,9 @@ class TaskMatchingTests(unittest.TestCase):
                 original = Path(registry[hit["source_key"]]["extraction"]).read_text(encoding="utf-8")
                 self.assertEqual(" ".join(original[hit["start"]:hit["end"]].split()), hit["text"])
             selection = task["candidates"]["citations"][0]["evidence_selection"]
-            self.assertIn(selection["status"], {"fallback", "selected"})
-            self.assertTrue(selection["sentences"])
-            self.assertTrue(selection["sentences"][0]["text"])
+            self.assertIn(selection["status"], {"fallback", "selected", "empty"})
+            if selection["sentences"]:
+                self.assertTrue(selection["sentences"][0]["text"])
             self.assertEqual(task["window_status"]["X1"]["by_reference"]["R3"]["status"],
                              "web_url")
             self.assertEqual(fw.task_urls(tmp), {"https://example.test/item": "R3"})
@@ -4886,6 +4886,13 @@ class EvidenceSelectionTests(unittest.TestCase):
         fallback = ev.select_evidence("minimum harmonization", self._passages(), call=broken)
         self.assertEqual(fallback["status"], "fallback")
         self.assertTrue(fallback["limitations"])
+
+    def test_lexical_fallback_ignores_generic_questions(self):
+        result = ev.select_evidence("media policy", [{
+            "passage_id": "w1", "page_index": 1,
+            "text": "What is media policy? What are its general purposes?"}])
+        self.assertEqual(result["status"], "empty")
+        self.assertEqual(result["sentences"], [])
 
     def test_no_sentences_is_empty_not_absence(self):
         result = ev.select_evidence("claim", [])
