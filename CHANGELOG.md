@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Current-task calibration after normalization (R35).** 14 one-call
+  packets scored 10/14 exact against hidden manual verdicts. C2 was less
+  conservative than manual and still lacks decisive packet evidence; C7/C16/C20
+  were conservative/adjacent. Full paper: 14/20 judged, 6 Not Judged. No
+  Supports/Contradicts split; rerender hashes matched.
+
 - **Generic search normalization (R35).** Added an offset-preserving search
   view for Unicode/case/punctuation, smart quotes/dashes, hyphen and line-break
   repair, percent words, sentence completion, short-word phrases, US/UK
