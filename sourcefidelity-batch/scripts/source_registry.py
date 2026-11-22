@@ -813,6 +813,8 @@ def main():
     ap.add_argument("--prepare", action="store_true")
     ap.add_argument("--prepare-key", action="append", default=[],
                     help="prepare only this source_key (repeatable)")
+    ap.add_argument("--no-auto", action="store_true",
+                    help="map supplied files only through --map or --map-file")
     ap.add_argument("--map", action="append", default=[])
     ap.add_argument("--map-file", default="")
     ap.add_argument("--min-score", type=float, default=0.65)
@@ -944,7 +946,7 @@ def main():
             record["acquisition_route"] = route
             record["identity_status"] = "supplied_confirmed"
             record["verified_by"] = "explicit mapping"
-        elif supplied:
+        elif supplied and not args.no_auto:
             match_parsed = dict(parsed)
             if parsed["work_kind"] == "chapter_authored_book":
                 match_parsed["title"] = parsed["container_title"]

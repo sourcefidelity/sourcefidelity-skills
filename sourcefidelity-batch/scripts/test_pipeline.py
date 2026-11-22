@@ -4881,6 +4881,50 @@ class OnePaperOrchestrationTests(unittest.TestCase):
         self.assertIn("evidence_selection", citation)
         self.assertEqual(result["with_windows"], 1)
 
+    def test_single_and_batch_reject_surname_only_supplied_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            papers = root / "papers"
+            sources = root / "sources"
+            papers.mkdir()
+            sources.mkdir()
+            paper = papers / "paper.docx"
+            paragraphs = [
+                "A policy account of broadcasting (Hesmondhalgh, 2008).",
+                "References",
+                "Hesmondhalgh, D. (2008). The media and social theory. Routledge.",
+            ]
+            body = "".join(f"<w:p><w:r><w:t>{line}</w:t></w:r></w:p>" for line in paragraphs)
+            with zipfile.ZipFile(paper, "w") as archive:
+                archive.writestr("word/document.xml",
+                                 f'<w:document xmlns:w="{dt.W[1:-1]}"><w:body>'
+                                 f"{body}</w:body></w:document>")
+            (sources / "other.html").write_text(
+                "<html><body><h1>Neoliberalism and broadcasting</h1>"
+                "<p>Edited by David Hesmondhalgh</p></body></html>", encoding="utf-8")
+            batch_scripts = Path(__file__).parent
+            review_scripts = Path(op.__file__).parent
+
+            def run(script, *args):
+                result = subprocess.run([sys.executable, "-IB", str(script), *map(str, args)],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+            single = root / "single"
+            batch = root / "batch"
+            run(review_scripts / "one_paper.py", "--paper", paper, "--sources", sources,
+                "--out", single)
+            run(batch_scripts / "prepare_batch.py", "--papers", papers, "--out", batch)
+            run(batch_scripts / "source_registry.py", "--batch", batch, "--sources", sources)
+            for output in (single, batch):
+                registry = json.loads((output / "source_registry.json").read_text(encoding="utf-8"))
+                self.assertEqual(len(registry["works"]), 1)
+                record = next(iter(registry["works"].values()))
+                self.assertEqual(record["identity_status"], "unresolved")
+                self.assertFalse(record["supplied_file"])
+                self.assertFalse(record["extraction"])
+
+
 class SharedAssessmentTests(unittest.TestCase):
     def _task(self):
         return {"candidates": {"citations": [{"id": "C1", "marker": "(Smith, 2020)",

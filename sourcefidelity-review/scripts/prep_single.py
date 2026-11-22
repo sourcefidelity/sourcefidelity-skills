@@ -14,8 +14,7 @@ This is the single-paper entry point to the batch preparation pipeline. It:
    reference heading, or with corporate-author entries, defeats the extractor);
 3. adds author-year citations that the extractor left in `year_mentions` but
    did not promote to citations;
-4. runs `source_registry.py` against the supplied folder, maps the unresolved
-   references by author/title against the cached first pages, and extracts only
+4. uses the batch `source_registry.py` to match supplied files and extract only
    the mapped files (`prepare_source.py`);
 5. runs `make_task.py` to build `_work/<paper>/task.json` with bounded passage
    windows, and writes `prep_report.md`.
@@ -150,74 +149,8 @@ def add_missing_citations(cand):
     return added
 
 
-def score_maps(cand, cache, minimum=0.5, margin=0.1):
-    """Map references to supplied files by surname, title tokens and year.
-
-    The first pages of every supplied file are already cached by
-    `source_registry.py` in `_work/_file_identity.json`. A mapping is accepted
-    only when it clears `minimum` and beats the runner-up by `margin`; anything
-    ambiguous is left for the reviewer's `--map`.
-    """
-    mappings, details = {}, []
-    for ref in cand.get("references", []):
-        parsed = source_registry.parse_source({"source": ref.get("verbatim", "")})
-        surname = source_registry.surname_of(parsed.get("author", ""))
-        title_tokens = set(source_registry.tokens(parsed.get("title", "")))
-        scores = []
-        for path, record in cache.items():
-            text = source_registry.norm(record.get("text", ""))
-            if not text:
-                continue
-            score = 0.0
-            if surname and re.search(r"\b" + re.escape(surname) + r"\b", text):
-                score += 0.5
-            if title_tokens:
-                hits = sum(1 for token in title_tokens
-                           if re.search(r"\b" + re.escape(token) + r"\b", text))
-                score += 0.4 * hits / max(1, len(title_tokens))
-            if parsed.get("year") and parsed["year"] in text:
-                score += 0.1
-            if score > 0:
-                scores.append((round(score, 3), path))
-        scores.sort(reverse=True)
-        accepted = ""
-        reason = "no supplied file matched"
-        if scores:
-            best = scores[0]
-            runner = scores[1][0] if len(scores) > 1 else 0.0
-            if best[0] >= minimum and best[0] - runner >= margin:
-                accepted = best[1]
-                reason = f"author/title match ({best[0]:.2f}; next {runner:.2f})"
-            elif best[0] >= minimum:
-                reason = (f"ambiguous: {os.path.basename(best[1])} and "
-                          f"{os.path.basename(scores[1][1])} both score")
-        if accepted:
-            key = acquisition_list.key_from_entry(ref.get("verbatim", ""))
-            mappings[key] = accepted
-        details.append({
-            "r_id": ref.get("id", ""),
-            "key": acquisition_list.key_from_entry(ref.get("verbatim", "")),
-            "author": parsed.get("author", ""),
-            "year": parsed.get("year", ""),
-            "title": parsed.get("title", ""),
-            "file": accepted,
-            "reason": reason,
-            "top": scores[:3],
-        })
-    return mappings, details
-
-
-def parse_maps(values):
-    mappings = {}
-    for value in values or []:
-        key, _, path = value.partition("=")
-        if key and path:
-            mappings[key] = os.path.abspath(path)
-    return mappings
-
-
 def write_report(path, root, paper, pid, cand, entries, injected, added,
-                 map_details, mappings, prepared, task_path):
+                 map_details, prepared, task_path):
     lines = [
         "# Single-paper preparation report", "",
         f"Generated: {now()}", "",
@@ -314,46 +247,36 @@ def main(argv=None):
           f"(detected {len(entries)}, injected {injected}); "
           f"citations {len(cand.get('citations', []))} (added {added})", flush=True)
 
-    run([sys.executable, os.path.join(BATCH, "source_registry.py"),
-         "--batch", root, "--sources", sources], "source identity scan")
-    cache = load(os.path.join(root, "_work", "_file_identity.json"), {}) or {}
-    manual = parse_maps(args.map)
+    cmd = [sys.executable, os.path.join(BATCH, "source_registry.py"),
+           "--batch", root, "--sources", sources]
+    if args.no_auto:
+        cmd.append("--no-auto")
+    if not args.no_prepare:
+        cmd.append("--prepare")
+    for mapping in args.map:
+        cmd.extend(["--map", mapping])
     if args.map_file and os.path.isfile(args.map_file):
-        manual.update(load(args.map_file, {}) or {})
-    auto_maps, map_details = ({}, [])
-    if not args.no_auto:
-        auto_maps, map_details = score_maps(cand, cache)
-    mappings = {**auto_maps, **manual}
-    listed = {item.get("key") for item in map_details if item.get("file")}
-    for key, path in manual.items():
-        if key in listed:
-            continue
-        ref = next((r for r in cand.get("references", [])
-                    if acquisition_list.key_from_entry(r.get("verbatim", "")) == key), None)
-        parsed = source_registry.parse_source(
-            {"source": (ref or {}).get("verbatim", "")}) if ref else {}
-        map_details.append({
-            "r_id": (ref or {}).get("id", ""),
-            "key": key,
-            "author": parsed.get("author", ""),
-            "year": parsed.get("year", ""),
-            "title": parsed.get("title", ""),
-            "file": path,
-            "reason": "manual --map",
-            "top": [],
-        })
-
-    prepared = []
-    if mappings:
-        cmd = [sys.executable, os.path.join(BATCH, "source_registry.py"),
-               "--batch", root, "--sources", sources]
-        for key, path in mappings.items():
-            cmd += ["--map", f"{key}={path}"]
-        if not args.no_prepare:
-            cmd += ["--prepare"]
-            cmd += [item for key in mappings for item in ("--prepare-key", key)]
-        run(cmd, "source mapping" + (" and extraction" if not args.no_prepare else ""))
-        prepared = list(mappings) if not args.no_prepare else []
+        for key, path in (load(args.map_file, {}) or {}).items():
+            cmd.extend(["--map", f"{key}={path}"])
+    run(cmd, "source registry" if args.no_prepare else "source registry and extraction")
+    registry = load(os.path.join(root, "source_registry.json"))
+    works = registry["works"]
+    aliases = registry["aliases"]
+    map_details = []
+    for ref in cand.get("references", []):
+        key = acquisition_list.key_from_entry(ref.get("verbatim", ""))
+        record = works.get(aliases.get(key, key), {})
+        identity = record.get("identity") or {}
+        path = record.get("supplied_file") or ""
+        if path:
+            reason = record.get("verified_by") or "registry match"
+        else:
+            reason = record.get("notes") or "no supplied file matched"
+        map_details.append({"r_id": ref.get("id", ""), "author": identity.get("author", ""),
+                            "year": identity.get("year"), "file": path, "reason": reason})
+    mapped = sum(bool(record.get("supplied_file")) for record in works.values())
+    prepared = [key for key, record in works.items() if record.get("extraction")
+                and record.get("supplied_file") and not args.no_prepare]
 
     run([sys.executable, os.path.join(BATCH, "make_task.py"),
          "--batch", root, "--paper", pid,
@@ -372,12 +295,12 @@ def main(argv=None):
 
     report_path = os.path.join(work, "prep_report.md")
     write_report(report_path, root, paper, pid, cand, entries, injected, added,
-                 map_details, mappings, prepared, task_path)
+                 map_details, prepared, task_path)
     print(json.dumps({
         "paper": os.path.basename(paper),
         "references": len(cand.get("references", [])),
         "citations": len(cand.get("citations", [])),
-        "mapped": len(mappings),
+        "mapped": mapped,
         "prepared": len(prepared),
         "task": task_path,
         "report": report_path,
