@@ -4909,6 +4909,68 @@ class SharedAssessmentTests(unittest.TestCase):
         self.assertEqual(core_assessment.compare(left, right), [])
         self.assertEqual(core_assessment.compare(left, {**right, "R2": {}}) != [], True)
 
+class ParityCheckerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.command = [sys.executable, "-IB", str(Path(__file__).with_name("parity_check.py")),
+                        "--left-root", str(self.root / "left"), "--left-paper", "P1",
+                        "--right-root", str(self.root / "right"), "--right-paper", "P1"]
+
+    def write_run(self, side, *, copy_hash="copy", representation_hash="acquired", **window):
+        root = self.root / side
+        task_path = root / "_work" / "P1" / "task.json"
+        task_path.parent.mkdir(parents=True, exist_ok=True)
+        (root / "source_registry.json").write_text(json.dumps({"works": {"S1": {
+            "supplied_file": str(root / "book.pdf"),
+            "copy_observation": {"sha256": copy_hash},
+            "representations": [{"representation": "pdf", "source_hash": representation_hash}],
+        }}}), encoding="utf-8")
+        hit = {"source_key": "S1", "window_id": "C1:R1:1", "pdf_page": 5,
+               "printed_page": "63", "locator": "p. 63", "start": 10, "end": 20,
+               "text": "An excerpt"}
+        hit.update(window)
+        task_path.write_text(json.dumps({"candidates": {"citations": [{"id": "C1"}]},
+                                         "windows": {"C1": [hit]}}), encoding="utf-8")
+
+    def check(self, expected_status):
+        result = subprocess.run(self.command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, expected_status, result.stderr or result.stdout)
+        return json.loads(result.stdout)
+
+    def test_missing_and_invalid_artifacts_fail(self):
+        self.assertEqual(len(self.check(1)["artifact_errors"]), 4)
+        self.write_run("left")
+        self.write_run("right")
+        (self.root / "right" / "_work" / "P1" / "task.json").write_text("{}", encoding="utf-8")
+        errors = self.check(1)["artifact_errors"]
+        self.assertEqual([(error["side"], error["artifact"]) for error in errors],
+                         [("right", "task")])
+
+    def test_equivalent_runs_in_separate_directories_pass(self):
+        self.write_run("left")
+        self.write_run("right")
+        self.assertTrue(self.check(0)["parity"])
+
+    def test_different_copy_hashes_fail(self):
+        self.write_run("left")
+        for change in ({"copy_hash": "other"}, {"representation_hash": "other"}):
+            with self.subTest(change=change):
+                self.write_run("right", **change)
+                self.assertEqual(self.check(1)["source_differences"][0]["key"], "S1")
+
+    def test_same_source_with_different_evidence_fails(self):
+        self.write_run("left")
+        for change in ({"pdf_page": 6}, {"printed_page": "64"}, {"locator": "p. 64"},
+                       {"start": 11}, {"end": 21}, {"text": "A different excerpt"}):
+            with self.subTest(change=change):
+                self.write_run("right", **change)
+                differences = self.check(1)["window_differences"]
+                self.assertEqual(differences[0]["key"], "C1")
+                self.assertNotIn("An excerpt", json.dumps(differences))
+
+
 class SharedSourceUnderstandingTests(unittest.TestCase):
     def test_supplied_copy_outranks_acquired_and_web(self):
         record = {"representations": [

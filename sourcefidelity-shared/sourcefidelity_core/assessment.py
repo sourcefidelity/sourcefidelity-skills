@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from .evidence_select import select_evidence
 
 JUDGMENTS = ("Supports", "Qualified or Mixed", "Contradicts", "Not Supported",
@@ -48,10 +51,14 @@ def source_snapshot(registry):
     out = {}
     for key, record in sorted(works.items()):
         out[key] = {
-            "supplied_file": record.get("supplied_file", ""),
-            "extraction": record.get("extraction", ""),
+            "has_copy": bool(record.get("supplied_file")),
+            "has_extraction": bool(record.get("extraction")),
+            "copy_sha256": (record.get("copy_observation") or {}).get("sha256", ""),
+            "text_sha256": record.get("text_sha256", ""),
+            "pages_sha256": record.get("pages_sha256", ""),
             "representations": sorted(
-                (entry.get("representation", ""), entry.get("usable", True))
+                (entry.get("representation", ""), entry.get("usable", True),
+                 entry.get("source_hash") or "")
                 for entry in record.get("representations", []) or []),
         }
     return out
@@ -61,9 +68,19 @@ def task_snapshot(task):
     """Deterministic summary of citation windows for parity checks."""
     windows = task.get("windows") or {}
     citations = task.get("citations") or (task.get("candidates") or {}).get("citations", [])
-    return {citation.get("id"): sorted(
-        hit.get("source_key", "") for hit in windows.get(citation.get("id"), []))
-        for citation in citations}
+    fields = ("window_id", "r_id", "source_key", "source_object_key", "source_sha256",
+              "text_sha256", "page_map_sha256", "printed_page", "pdf_page", "locator",
+              "start", "end")
+    snapshots = {}
+    for cid in {citation["id"] for citation in citations} | windows.keys():
+        hits = []
+        for hit in windows.get(cid, []):
+            evidence = {field: hit[field] for field in fields if field in hit}
+            evidence["excerpt_sha256"] = hashlib.sha256(
+                (hit.get("text") or "").encode("utf-8")).hexdigest()
+            hits.append(evidence)
+        snapshots[cid] = sorted(hits, key=lambda hit: json.dumps(hit, sort_keys=True))
+    return snapshots
 
 
 def compare(left, right):

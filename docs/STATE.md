@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 429 pipeline tests. Style and PDF suites passed. |
+| Test suites | 433 pipeline tests, one skipped. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,7 +21,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 429 passed |
+| Pipeline regressions | `test_pipeline.py` | 432 passed, one skipped |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
@@ -56,7 +56,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
 | Shared supporting modules | Moved finding counts, academic checks and HTML/text/open-text preparers into `sourcefidelity_core`; compatibility shims and CLI forwarding tested | Review and batch import the same supporting code, including script-mode `prepare_html.py`; 429 tests pass |
 | One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |
-| Shared assessment primitives | Packet, judgment-check and snapshot fixtures; parity CLI on identical roots | Citation packets come from the shared selector; missing evidence/locator is rejected; snapshots compare source and window coverage; parity CLI reports true on identical roots |
+| Shared assessment and parity | Pipeline packet, judgment and parity CLI fixtures | Comparable runs in separate roots pass. Missing or invalid artifacts and differences in copy hashes, locators or spans fail. Full single/batch parity remains open. |
 | Shared source understanding | Moved `source_scope`, `kind_coverage`, `page_map`, `evidence_select` and `sentence_split` into `sourcefidelity_core` with review-skill compatibility shims; registry now records representations and applies supplied > acquired > web precedence | Both skills exercise the same scope/kind/page-map code; 425 tests pass; no worker parity run yet |
 | Shared acquisition baseline | `sourcefidelity-shared` package, installer inclusion, and a rebuilt Television batch root with CORE texts | Both skills import the shared core; fetched CORE text is staged under `_acquired/<source_key>/` and registered; task coverage rose from 2 mapped/4 windows to 8 mapped/11 windows; invalid challenge HTML is recorded as unusable, not mapped |
 | Shared acquisition plan | `docs/PLAN.md` R29–R34 | One acquired-source registry, one source-understanding layer, one assessment/rendering engine, thin single and batch interfaces, parity tests |

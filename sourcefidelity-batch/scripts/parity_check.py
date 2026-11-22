@@ -25,12 +25,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
 from sourcefidelity_core import assessment  # noqa: E402
 
 
-def load(path, default=None):
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, ValueError):
-        return default if default is not None else {}
+def load_snapshot(path, kind):
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("expected a JSON object")
+    if kind == "registry":
+        if not isinstance(payload.get("works"), dict):
+            raise ValueError("expected a works object")
+        return assessment.source_snapshot(payload)
+    citations = payload.get("citations")
+    if citations is None and isinstance(payload.get("candidates"), dict):
+        citations = payload["candidates"].get("citations")
+    if not isinstance(citations, list) or not isinstance(payload.get("windows"), dict):
+        raise ValueError("expected citations and windows")
+    return assessment.task_snapshot(payload)
 
 
 def main(argv=None):
@@ -40,14 +49,22 @@ def main(argv=None):
     ap.add_argument("--right-root", required=True)
     ap.add_argument("--right-paper", required=True)
     args = ap.parse_args(argv)
-    left_registry = load(os.path.join(args.left_root, "source_registry.json"))
-    right_registry = load(os.path.join(args.right_root, "source_registry.json"))
-    left_task = load(os.path.join(args.left_root, "_work", args.left_paper, "task.json"))
-    right_task = load(os.path.join(args.right_root, "_work", args.right_paper, "task.json"))
-    source_diff = assessment.compare(assessment.source_snapshot(left_registry),
-                                     assessment.source_snapshot(right_registry))
-    window_diff = assessment.compare(assessment.task_snapshot(left_task),
-                                     assessment.task_snapshot(right_task))
+    artifacts = {}
+    errors = []
+    for side, root, paper in (("left", args.left_root, args.left_paper),
+                              ("right", args.right_root, args.right_paper)):
+        for kind, path in (("registry", os.path.join(root, "source_registry.json")),
+                           ("task", os.path.join(root, "_work", paper, "task.json"))):
+            try:
+                artifacts[side, kind] = load_snapshot(path, kind)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                errors.append({"side": side, "artifact": kind, "path": path,
+                               "error": str(exc)})
+    if errors:
+        print(json.dumps({"parity": False, "artifact_errors": errors}, indent=1))
+        return 1
+    source_diff = assessment.compare(artifacts["left", "registry"], artifacts["right", "registry"])
+    window_diff = assessment.compare(artifacts["left", "task"], artifacts["right", "task"])
     result = {"source_differences": source_diff,
               "window_differences": window_diff,
               "parity": not source_diff and not window_diff}
