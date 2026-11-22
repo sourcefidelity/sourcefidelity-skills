@@ -4925,6 +4925,72 @@ class OnePaperOrchestrationTests(unittest.TestCase):
                 self.assertFalse(record["extraction"])
 
 
+class SingleReviewRenderingTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.output = self.root / "paper"
+        statement = "The rule sets a common standard."
+        marker = "(Smith, 2020)"
+        self.reference = {"id": "R1", "verbatim": "Smith, A. (2020). Broadcasting."}
+        citation = {"id": "X1", "paragraph_id": "P1", "marker": marker}
+        candidates = {"paragraphs": [{"id": "P1", "text": f"{statement} {marker}"},
+                                     {"id": "P2", "text": self.reference["verbatim"]}],
+                      "citations": [citation], "references": [self.reference]}
+        evidence = "The rule sets a common standard."
+        window = {"window_id": "X1:R1:1", "source_key": "smith", "r_id": "R1", "text": evidence}
+        self.write(self.work / "paper.json", {"paper_id": "paper", "path": "paper.docx",
+                                              "word_counts": {"total": 20, "text": 12, "references": 8}})
+        self.write(self.work / "candidates.json", candidates)
+        self.write(self.work / "task.json", {"candidates": candidates, "windows": {"X1": [window]}})
+        occurrence = {"id": "C1", **{key: citation[key] for key in ("paragraph_id", "marker")},
+                      "statement": statement, "cited_r_ids": ["R1"]}
+        self.inventory = {"occurrences": [occurrence], "references": [self.reference],
+                          "dispositions": {"X1": "confirmed_as:C1", "R1": "confirmed"},
+                          "coverage": {"paragraphs_scanned": ["P1", "P2"]}}
+        self.contribution = {"r_id": "R1", "source_key": "smith", "window_id": window["window_id"],
+                             "evidence": evidence, "locator": "printed p. 63"}
+        self.findings = {"occurrences": [dict(occurrence, judgment="Supports",
+                                              sources=[self.contribution])],
+                         "references": [dict(self.reference, source_key="smith")]}
+
+    def write(self, path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def render(self):
+        inv, findings = self.root / "inventory.json", self.root / "findings.json"
+        self.write(inv, self.inventory)
+        self.write(findings, self.findings)
+        return subprocess.run([sys.executable, "-IB", op.__file__, "--out", str(self.root),
+                               "--inventory", str(inv), "--findings", str(findings)],
+                              capture_output=True, text=True)
+
+    def test_renders_validated_judgments_and_counts(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["occurrences"]["supports"], 1)
+        self.assertTrue((self.output / "ledger.md").is_file())
+        self.assertTrue((self.output / "summary.json").is_file())
+        self.assertIn("printed p. 63", (self.output / "review.md").read_text())
+
+    def test_rejects_invalid_inventory_before_writing(self):
+        self.inventory["coverage"]["paragraphs_scanned"].remove("P2")
+        result = self.render()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("coverage does not list", result.stderr)
+        self.assertFalse(self.output.exists())
+
+    def test_rejects_evidence_outside_the_bound_window(self):
+        self.contribution["evidence"] = "A sentence absent from this window."
+        result = self.render()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("evidence is not in window", result.stderr)
+        self.assertFalse(self.output.exists())
+
+
 class SharedAssessmentTests(unittest.TestCase):
     def _task(self):
         return {"candidates": {"citations": [{"id": "C1", "marker": "(Smith, 2020)",

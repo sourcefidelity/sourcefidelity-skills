@@ -12,7 +12,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 434 pipeline tests, one skipped. Style and PDF suites passed. |
+| Test suites | 437 pipeline tests, one skipped. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,7 +21,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 433 passed, one skipped |
+| Pipeline regressions | `test_pipeline.py` | 436 passed, one skipped |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
@@ -53,6 +53,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Local HTML source | `prepare_html.py`, registry mapping and `make_task.py` on a real reference | Local `.html` scanned, matched, prepared as one labelled page and attached to a citation window; no worker pass yet |
 | Website-source batch | Angry Birds case study with COM151, 3 fetched URLs | 13 citations, 2 Supports, 5 Qualified, 1 Not Supported, 5 Not Judged; C6 used the cached SmileyWorld web page; strict inventory and render passed |
 | Television preparation parity | Default `one_paper.py` versus one-paper batch, checked with `parity_check.py` | Both left R3 unresolved, mapped the same Berry and Mirrlees PDFs, and produced 10 references, 20 candidates and eight identical windows. The regression reproduces the old surname-only R3 false match. |
+| Television rendering parity | `one_paper.py --inventory --findings` and `render_review.py --strict-inventory` on both prepared roots | Same abstention fixture produced 20 Not Judged and 10 references. Review Markdown matched byte for byte; ledger and summary differed only in paths. Regression tests exercise a bound Supports record and reject invalid inventory coverage or evidence. No reusable substantive Television judgment files were located. |
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
 | Shared supporting modules | Moved finding counts, academic checks and HTML/text/open-text preparers into `sourcefidelity_core`; compatibility shims and CLI forwarding tested | Review and batch import the same supporting code, including script-mode `prepare_html.py`; 429 tests pass |
 | One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |
@@ -97,7 +98,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Short papers will be slower under claim-level calls | Per-claim calls add fixed overhead compared with one large generation; speed gains require grouping and parallelism. | Group related claims and parallelize; record the envelope in R39 |
 | Batch and single review retrieve different sources | A one-paper batch registers only supplied-folder files unless acquired copies are ingested; the Television batch left fetched CORE PDFs in `_work` and produced 4 windows. | Land R30: canonical acquired-source staging and registration using the same acquisition engine as the single review |
 | The current single review cannot finish under the provider filter | Repeated long-context runs fail with `Content Exists Risk` before writing the review. | Move both paths to bounded per-citation assessment (R32); use another provider only as a fallback |
-| Single/batch judgment parity remains unverified | Default Television preparation passed source and window parity. | Compare validated judgments and rendered counts in both paths. |
+| Substantive Television judgment parity remains unverified | Both entry points rendered identical abstention findings. | Replay validated substantive Television judgments and compare outputs. |
 | Local HTML has no worker/render proof | Only preparation, matching and task windows were exercised. | Add one real local-HTML worker and render regression before release |
 | Docs check is mechanical | It catches links, budgets and version drift, not stale truth | Review `STATE.md` and `PLAN.md` at release and after structural changes |
 | No benchmark of the new speed helpers | The source pack and dossier were measured in isolation, not on a full review | Measure one full review before claiming a speed improvement |

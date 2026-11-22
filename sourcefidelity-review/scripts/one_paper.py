@@ -2,10 +2,11 @@
 """One-paper orchestration over the shared preparation and assessment core.
 
     python -I one_paper.py --paper PAPER --sources DIR --out ROOT [--map K=PATH]
+    python -I one_paper.py --out ROOT --inventory FILE --findings FILE
 
 Runs the existing `prep_single.py` pipeline, then attaches shared assessment
 packets to every citation in the task. The review still adjudicates the
-packets; this script does not make judgments.
+packets. Render mode validates the inventory and renders the supplied judgments.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 from sourcefidelity_core import assessment  # noqa: E402
 
 PREP = os.path.join(HERE, "prep_single.py")
+RENDER = os.path.join(SKILLS, "sourcefidelity-batch", "scripts", "render_review.py")
 
 
 def write_packets(task_path):
@@ -45,13 +47,25 @@ def write_packets(task_path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--paper", required=True)
-    ap.add_argument("--sources", required=True)
+    ap.add_argument("--paper")
+    ap.add_argument("--sources")
     ap.add_argument("--out", required=True)
     ap.add_argument("--map", action="append", default=[])
     ap.add_argument("--max-hits", type=int, default=2)
     ap.add_argument("--window", type=int, default=240)
+    ap.add_argument("--inventory", help="render the adjudicated inventory from this run")
+    ap.add_argument("--findings", help="render judgment records from this run")
     args = ap.parse_args(argv)
+    if args.inventory is not None or args.findings is not None:
+        if not args.inventory or not args.findings:
+            ap.error("rendering requires both --inventory and --findings")
+        if args.paper is not None or args.sources is not None or args.map:
+            ap.error("rendering uses an existing --out root")
+        return subprocess.run([sys.executable, "-I", RENDER, "--batch", args.out,
+                               "--paper", "paper", "--inventory", args.inventory,
+                               "--findings", args.findings, "--strict-inventory"]).returncode
+    if not args.paper or not args.sources:
+        ap.error("preparation requires --paper and --sources")
     command = [sys.executable, "-I", PREP, "--paper", args.paper,
                "--sources", args.sources, "--out", args.out,
                "--max-hits", str(args.max_hits), "--window", str(args.window)]

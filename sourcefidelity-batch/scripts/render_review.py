@@ -646,13 +646,19 @@ def main():
                     help="validated inventory.json to reconcile IDs against")
     ap.add_argument("--metrics", default="",
                     help="review_metrics.json to use instead of the sidecar")
+    ap.add_argument("--strict-inventory", action="store_true",
+                    help="validate the inventory against the prepared candidates")
     args = ap.parse_args()
+    if args.strict_inventory and not args.inventory:
+        ap.error("--strict-inventory requires --inventory")
     root = os.path.abspath(args.batch)
     work = batch_paths.artifact(os.path.join(root, "_work"), args.paper)
     paper = load(os.path.join(work, "paper.json"))
     if not paper:
         raise SystemExit("paper.json missing; run prepare_batch.py")
     findings = load(args.findings)
+    if args.strict_inventory and not isinstance(findings, dict):
+        fail("cannot read judgment records")
     # The coordinator may have run link_states.py; use its block when the
     # findings do not carry one, so the scope line shows the link states.
     _cached_links = None
@@ -669,6 +675,17 @@ def main():
         findings = findings["findings"]
     inventory = load(args.inventory, {}) if args.inventory else None
     task = load(os.path.join(work, "task.json"), {})
+    if args.strict_inventory:
+        from validate_inventory import validate as validate_inventory
+
+        candidates = load(os.path.join(work, "candidates.json"))
+        if not candidates or not task:
+            fail("candidates.json and task.json are required for strict rendering")
+        if not isinstance(inventory, dict) or not inventory:
+            fail("cannot read the adjudicated inventory")
+        result = validate_inventory(candidates, inventory, strict=True)
+        if not result["ok"]:
+            fail("inventory: " + "; ".join(result["errors"]))
     validate(findings, inventory, task)
     if args.inventory:
         reconcile(findings, inventory)

@@ -37,6 +37,8 @@ Both scripts find your harness skills directory, copy the three skills, check fo
 
 If Python is missing, the installer still copies the skills and explains prompt-only mode: a review still runs, but word counts, page mapping and the verbatim checks are unavailable. Install Python from https://www.python.org/downloads/ and run the installer again to enable them.
 
+For a prepared single review, pass the adjudicated inventory and judgment records to `one_paper.py --out REVIEW_ROOT --inventory FILE --findings FILE`. The shared renderer validates the records and writes the review, ledger and summary under `REVIEW_ROOT/paper/`.
+
 ### Development installs
 
 For work on the skills themselves, install the working tree without cutting a release:
