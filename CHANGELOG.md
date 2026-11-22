@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **15,000-word long-form fixture (R36).** An 18,061-word synthetic
+  single-reference-list paper with 140 citations and 140 references was
+  extracted and inventoried without truncation; `one_paper.py` completed
+  preparation against an empty source folder. Evidence-backed assessment and
+  rendering at this scale remain to be tested.
+
 - **Thesis structure first slice (R36).** Added `document_structure.py` to
   detect DOCX heading/outline chapters and extract footnotes/endnotes with
   stable IDs; `docx_text.py` now carries chapter and note structure. Chapter

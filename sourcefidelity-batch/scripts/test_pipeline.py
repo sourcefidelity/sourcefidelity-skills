@@ -4724,6 +4724,37 @@ class UpdateCheckTests(unittest.TestCase):
         self.assertIn("v2.3.4 (commit abc1234)", buf.getvalue())
 
 
+class LongFormTests(unittest.TestCase):
+    def test_15000_word_one_reference_list_paper_is_inventoried(self):
+        import string
+
+        def name(index):
+            first, second = divmod(index, 26)
+            return "Scholar" + string.ascii_uppercase[first] + string.ascii_uppercase[second]
+
+        body, refs = [], []
+        for index in range(140):
+            author = name(index)
+            year = 1900 + index
+            sentence = (f"According to {author} ({year}), the finding is robust and important. "
+                        + " ".join(["The analysis considers context, method and interpretation."] * 15))
+            body.append(f"<w:p><w:r><w:t>{sentence}</w:t></w:r></w:p>")
+            refs.append(f"<w:p><w:r><w:t>{author}, A. ({year}). A study of evidence and reporting. "
+                        "Journal of Testing, 1(1), 1-10.</w:t></w:r></w:p>")
+        xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+               "<w:body>" + "".join(body) + "<w:p><w:r><w:t>References</w:t></w:r></w:p>"
+               + "".join(refs) + "</w:body></w:document>")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "long-form.docx"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("word/document.xml", xml)
+            data = ec.build(str(path), "long")
+        self.assertGreaterEqual(data["words"], 15000)
+        self.assertEqual(len(data["citations"]), 140)
+        self.assertEqual(len(data["references"]), 140)
+        self.assertEqual(data["reference_heading"], "References")
+
+
 class DocumentStructureTests(unittest.TestCase):
     def test_heading_styles_create_chapters(self):
         paragraphs = [
