@@ -36,6 +36,7 @@ import acquisition_list as al  # noqa: E402
 import audit_tasks as at  # noqa: E402
 import authorship_signals as ats  # noqa: E402
 import batch_paths as bp  # noqa: E402
+import batch_status as bs  # noqa: E402
 import checkpoint as cp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
@@ -2749,6 +2750,24 @@ class ReappraiseCoverageTests(unittest.TestCase):
         self.assertEqual(observation["status"], "adequate")
         self.assertTrue(observation["absence_allowed"])
 
+
+class BatchStatusTests(unittest.TestCase):
+    def test_missing_artifact_fails_the_status_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            folder = root / "P1"
+            folder.mkdir()
+            (folder / "summary.json").write_text(json.dumps(
+                {"paper_id": "P1", "status": "complete",
+                 "occurrences": {"total": 2}}))
+            (folder / "review.md").write_text("review")
+            (folder / "ledger.md").write_text("ledger")
+            data = bs.status(str(root))
+            self.assertEqual(data["problems"], [])
+            (folder / "ledger.md").unlink()
+            data = bs.status(str(root))
+        self.assertEqual(data["papers"][0]["missing"], ["ledger.md"])
+        self.assertEqual(data["problems"][0], "P1: ledger.md")
 
 class SourceCoverageTests(unittest.TestCase):
     def test_identity_full_text_blocked_and_missing_are_separate(self):
