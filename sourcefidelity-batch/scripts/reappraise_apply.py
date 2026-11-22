@@ -419,6 +419,85 @@ def render_summary_data(data, task, judgments, day):
     return data
 
 
+def render_findings_data(data, summary_new, judgments, day):
+    """Keep findings.json judgments and counts in step with summary.json."""
+    data = json.loads(json.dumps(data)) if data else {}
+    by_id = {item.get("id"): item for item in data.get("occurrences", []) or []}
+    for change in judgments.get("changes", []):
+        item = by_id.get(change.get("id"))
+        if item is None:
+            continue
+        item["judgment"] = change.get("new", item.get("judgment"))
+        evidence = (change.get("evidence") or "").strip()
+        if evidence:
+            prior = item.get("note") or ""
+            item["note"] = (prior + " " if prior else "") + f"Reappraised {day}: {evidence}"
+    data["occurrence_counts"] = summary_new.get("occurrences", {})
+    data["reappraisal"] = summary_new.get("reappraisal", data.get("reappraisal"))
+    if summary_new.get("summary"):
+        data["summary"] = summary_new["summary"]
+    return data
+
+
+def repair_findings(folder):
+    """Rebuild findings.json from the saved summary reappraisal block."""
+    summary = load(os.path.join(folder, "summary.json"), {})
+    findings = load(os.path.join(folder, "findings.json"), {})
+    if not summary or not findings:
+        return {"repaired": False, "reason": "summary or findings missing"}
+    changes = (summary.get("reappraisal") or {}).get("changed") or []
+    if not changes:
+        return {"repaired": False, "reason": "no reappraisal changes recorded"}
+    updated = render_findings_data(findings, summary, {"changes": changes},
+                                   (summary.get("reappraisal") or {}).get("date", ""))
+    path = os.path.join(folder, "findings.json")
+    tmp = stage_text(path, json.dumps(updated, ensure_ascii=False, indent=1))
+    try:
+        os.replace(tmp, path)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    return {"repaired": True, "changes": len(changes),
+            "problems": artifact_problems(folder)}
+
+
+def artifact_problems(folder):
+    """Return mismatch messages between findings, summary and review counts."""
+    problems = []
+    findings = load(os.path.join(folder, "findings.json"), {})
+    summary = load(os.path.join(folder, "summary.json"), {})
+    if findings.get("occurrences"):
+        derived = {key: 0 for key in JUDGMENT_KEYS.values()}
+        derived["total"] = 0
+        for item in findings["occurrences"]:
+            key = JUDGMENT_KEYS.get(item.get("judgment", ""))
+            if key:
+                derived[key] += 1
+                derived["total"] += 1
+        for key, value in derived.items():
+            if int(summary.get("occurrences", {}).get(key, 0) or 0) != value:
+                problems.append(f"summary {key} does not match findings")
+    review_path = os.path.join(folder, "review.md")
+    try:
+        review = open(review_path, encoding="utf-8").read()
+    except OSError:
+        review = ""
+    if review and summary.get("occurrences"):
+        match = re.search(r"(?m)^Occurrences: (\d+) inventoried \(Supports (\d+); "
+                          r"Qualified or Mixed (\d+); Contradicts (\d+); "
+                          r"Not Supported (\d+); Not Judged (\d+)\)", review)
+        if match:
+            expected = tuple(int(x) for x in match.groups())
+            actual = (int(summary["occurrences"].get("total", 0) or 0),
+                      int(summary["occurrences"].get("supports", 0) or 0),
+                      int(summary["occurrences"].get("qualified", 0) or 0),
+                      int(summary["occurrences"].get("contradicts", 0) or 0),
+                      int(summary["occurrences"].get("not_supported", 0) or 0),
+                      int(summary["occurrences"].get("not_judged", 0) or 0))
+            if expected != actual:
+                problems.append("review occurrence line does not match summary")
+    return problems
+
+
 def apply_summary(path, task, judgments, day):
     """Rewrite one summary file in place (thin wrapper over render_summary_data)."""
     data = render_summary_data(load(path, {}), task, judgments, day)
@@ -461,8 +540,9 @@ def apply_all(folder, task, judgments, day, link_block=None):
     review_path = paths["review.md"]
     ledger_path = paths["ledger.md"]
     summary_path = paths["summary.json"]
+    findings_path = os.path.join(folder, "findings.json")
     originals = {path: Path(path).read_bytes() if os.path.exists(path) else None
-                 for path in (review_path, ledger_path, summary_path)}
+                 for path in (review_path, ledger_path, summary_path, findings_path)}
     changes = judgments.get("changes", [])
     summary_old = load(summary_path, {})
     review_old = originals[review_path].decode("utf-8")
@@ -477,6 +557,9 @@ def apply_all(folder, task, judgments, day, link_block=None):
             ledger_text, ledger_updated = render_ledger_text(
                 originals[ledger_path].decode("utf-8"), changes, day)
     summary_new = render_summary_data(summary_old, task, judgments, day)
+    findings_old = load(findings_path, {})
+    findings_new = (render_findings_data(findings_old, summary_new, judgments, day)
+                    if findings_old else None)
     if link_block:
         link_states.apply_observations(summary_new, link_block)
         lines = render_review.hyperlink_scope_lines(summary_new)
@@ -490,6 +573,8 @@ def apply_all(folder, task, judgments, day, link_block=None):
     if ledger_text is not None:
         staged[ledger_path] = ledger_text
     staged[summary_path] = json.dumps(summary_new, ensure_ascii=False, indent=1)
+    if findings_new is not None:
+        staged[findings_path] = json.dumps(findings_new, ensure_ascii=False, indent=1)
 
     items = []
     try:
@@ -499,6 +584,10 @@ def apply_all(folder, task, judgments, day, link_block=None):
             shutil.copy2(review_path, paths["review.pre-reappraisal.md"])
         try:
             commit_staged(items)
+            problems = artifact_problems(folder)
+            if problems:
+                raise RuntimeError("artifact parity failed after reappraisal: "
+                                   + "; ".join(problems))
         except Exception as error:
             rollback_errors = []
             for path in staged:
@@ -514,7 +603,8 @@ def apply_all(folder, task, judgments, day, link_block=None):
         for tmp, _ in items:
             Path(tmp).unlink(missing_ok=True)
     return {"changes": len(rows), "ledger_rows_updated": ledger_updated,
-            "summary": summary_new, "log": rows}
+            "summary": summary_new, "log": rows,
+            "findings_changed": findings_new is not None}
 
 
 def main():
@@ -523,6 +613,8 @@ def main():
     ap.add_argument("--task", required=True)
     ap.add_argument("--judgments", required=True)
     ap.add_argument("--date", default=date.today().isoformat())
+    ap.add_argument("--repair-findings", action="store_true",
+                    help="rebuild findings.json from the recorded reappraisal block")
     args = ap.parse_args()
 
     root = os.path.abspath(args.batch)
@@ -534,6 +626,10 @@ def main():
     if judgments.get("paper_id") not in (None, pid):
         raise SystemExit("judgments paper_id does not match the task")
     folder = batch_paths.paper_folder(root, pid)
+    if args.repair_findings:
+        result = repair_findings(folder)
+        print(json.dumps({"paper": pid, **result}, indent=1))
+        return 0 if result.get("repaired") and not result.get("problems") else 1
     review = batch_paths.artifact(folder, "review.md")
     if not os.path.exists(review):
         raise SystemExit(f"no review.md in {folder}")
@@ -576,6 +672,7 @@ def main():
         "occurrence_total": total, "occurrence_sum": summed,
         "counts_reconcile": total == summed,
         "flags": data.get("flags", {}),
+        "findings_changed": result.get("findings_changed", False),
         "log": [{"id": r[0], "prior": r[3], "new": r[4]} for r in result.get("log", [])],
     }, ensure_ascii=False, indent=1))
     return 0 if total == summed else 1

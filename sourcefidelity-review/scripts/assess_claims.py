@@ -129,6 +129,32 @@ def bounded_response(path):
         return core.parse_response(handle.read(core.MAX_RESPONSE_BYTES + 1))
 
 
+NOT_JUDGED_REASONS = ("source_missing", "source_unreadable", "identity_unresolved",
+                     "no_window", "over_budget", "model_abstained")
+
+
+def packet_failure_reason(task, occurrence):
+    """Classify why no packet could be built; source evidence outranks budget."""
+    cited = occurrence.get("cited_r_ids") or []
+    sources = task.get("sources", {}) or {}
+    windows = task.get("windows", {}) or {}
+    if not cited:
+        return "identity_unresolved"
+    for rid in cited:
+        source = sources.get(rid)
+        if not source:
+            return "source_missing"
+        if not source.get("identity_status") or source.get("identity_status") == "unresolved":
+            return "identity_unresolved"
+        if not source.get("extraction"):
+            return "source_unreadable"
+    if not any(windows.get(occurrence.get("candidate_id") or "", [])):
+        # Older inventories may key windows by citation ID; try both.
+        if not any(windows.get(cid, []) for cid in [occurrence.get("id", "")]):
+            return "no_window"
+    return "over_budget"
+
+
 def packets(task, inventory, plan):
     occurrences = {o["id"]: o for o in inventory.get("occurrences", [])}
     for cid, spec in core.claim_specs(inventory, plan):
@@ -139,26 +165,28 @@ def packets(task, inventory, plan):
 
 def get_result(work, cid, packet, limitation):
     if packet is None:
-        return "Not Judged", limitation, []
+        return "Not Judged", limitation, [], "packet_failure"
     record = claim_record(work, cid)
     exact = core.exact_quote_response(packet)
     if exact is not None:
         write_record(record, exact)
-        return exact["judgment"], exact["reason"], core.response_evidence(packet, exact)
+        return exact["judgment"], exact["reason"], core.response_evidence(packet, exact), ""
     samples = sample_records(work, cid)
     if samples:
-        return aggregate_samples(packet, samples)
+        judgment, reason, sources = aggregate_samples(packet, samples)
+        return judgment, reason, sources, ("model_abstained" if judgment == "Not Judged" else "")
     try:
         response = bounded_response(record)
         sources = core.response_evidence(packet, response)
         if (response["judgment"] in ("Supports", "Contradicts")
                 and not core.evidence_anchored(packet, sources)):
-            return "Not Judged", "The judgment has no claim-specific evidence anchor.", []
+            return "Not Judged", "The judgment has no claim-specific evidence anchor.", [], "model_abstained"
     except FileNotFoundError:
-        return "Not Judged", "No judgment was recorded for this claim.", []
+        return "Not Judged", "No judgment was recorded for this claim.", [], "model_abstained"
     except (OSError, ValueError):
-        return "Not Judged", "The saved judgment is invalid or bound to an earlier packet.", []
-    return response["judgment"], " ".join(response["reason"].split()), sources
+        return "Not Judged", "The saved judgment is invalid or bound to an earlier packet.", [], "model_abstained"
+    return response["judgment"], " ".join(response["reason"].split()), sources, (
+        "model_abstained" if response["judgment"] == "Not Judged" else "")
 
 
 def assemble(work, paper_id, task, inventory, prepared, metadata):
@@ -166,8 +194,9 @@ def assemble(work, paper_id, task, inventory, prepared, metadata):
         raise ValueError("report metadata must be an object without occurrence judgments")
     results = {o["id"]: [] for o in inventory.get("occurrences", [])}
     for cid, oid, packet, limitation in prepared:
-        judgment, reason, sources = get_result(work, cid, packet, limitation)
-        results[oid].append((judgment, f"{cid}: {judgment}. {reason}", sources))
+        judgment, reason, sources, code = get_result(work, cid, packet, limitation)
+        results[oid].append((judgment, f"{cid}: {judgment}. {reason}", sources, code,
+                             packet, limitation))
     annotations = metadata.get("occurrence_annotations", {})
     if not isinstance(annotations, dict) or set(annotations) - results.keys():
         raise ValueError("occurrence annotations must use validated occurrence IDs")
@@ -178,13 +207,30 @@ def assemble(work, paper_id, task, inventory, prepared, metadata):
         if (not isinstance(annotation, dict)
                 or set(annotation) - {"apa", "academic_practice", "summary_category"}):
             raise ValueError("occurrence annotations can only contain academic practice and APA findings")
+        combined = core.combined_judgment([row[0] for row in claims])
+        reason = ""
+        if combined == "Not Judged":
+            codes = [row[3] for row in claims if row[3]]
+            if "packet_failure" in codes:
+                reason = packet_failure_reason(task, occurrence)
+            elif codes:
+                reason = "model_abstained"
+            else:
+                reason = "model_abstained"
         occurrences.append({**occurrence, **annotation, "locator": occurrence["paragraph_id"],
-                            "judgment": core.combined_judgment([row[0] for row in claims]),
+                            "judgment": combined,
+                            "not_judged_reason": reason if combined == "Not Judged" else "",
                             "sources": [source for row in claims for source in row[2]],
                             "note": " ".join(row[1] for row in claims)
                             or "No atomic claim was selected for assessment."})
     findings = {key: value for key, value in metadata.items() if key != "occurrence_annotations"}
     findings.update(paper_id=paper_id, occurrences=occurrences)
+    reasons = {key: 0 for key in NOT_JUDGED_REASONS}
+    for occurrence in occurrences:
+        code = occurrence.get("not_judged_reason")
+        if occurrence.get("judgment") == "Not Judged":
+            reasons[code if code in reasons else "model_abstained"] += 1
+    findings["not_judged_reasons"] = reasons
     for key in ("references", "works", "uncited"):
         findings.setdefault(key, inventory.get(key, []))
     references = {ref["id"]: ref["verbatim"] for ref in inventory.get("references", [])}

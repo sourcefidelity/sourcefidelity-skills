@@ -2728,6 +2728,73 @@ class ReappraiseCoverageTests(unittest.TestCase):
         self.assertTrue(observation["absence_allowed"])
 
 
+class BatchIntegrityTests(unittest.TestCase):
+    def test_packet_failure_reasons_are_classified(self):
+        base = {"sources": {"R1": {"identity_status": "supplied_confirmed",
+                                   "extraction": "text"}},
+                "windows": {"X1": [{"window_id": "X1:R1:1"}]}}
+        occurrence = {"id": "C1", "candidate_id": "X1", "cited_r_ids": ["R1"]}
+        self.assertEqual(claims_cli.packet_failure_reason(base, occurrence), "over_budget")
+        missing = {"sources": {}, "windows": {}}
+        self.assertEqual(claims_cli.packet_failure_reason(missing, occurrence), "source_missing")
+        unresolved = {"sources": {"R1": {"identity_status": "unresolved"}}, "windows": {}}
+        self.assertEqual(claims_cli.packet_failure_reason(unresolved, occurrence),
+                         "identity_unresolved")
+        unreadable = {"sources": {"R1": {"identity_status": "supplied_confirmed",
+                                         "extraction": ""}}, "windows": {}}
+        self.assertEqual(claims_cli.packet_failure_reason(unreadable, occurrence),
+                         "source_unreadable")
+        no_window = {"sources": base["sources"], "windows": {}}
+        self.assertEqual(claims_cli.packet_failure_reason(no_window, occurrence), "no_window")
+
+    def test_repair_findings_from_the_reappraisal_block(self):
+        findings = {"occurrences": [{"id": "C1", "judgment": "Not Judged"}],
+                    "summary": {"category_a": [], "category_b": []}}
+        summary = {"occurrences": {"total": 1, "supports": 1, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 0},
+                   "reappraisal": {"date": "2026-11-22",
+                                   "changed": [{"id": "C1", "prior": "Not Judged",
+                                                "new": "Supports"}]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            json.dump(findings, open(os.path.join(tmp, "findings.json"), "w"))
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w"))
+            result = ra.repair_findings(tmp)
+            repaired = json.load(open(os.path.join(tmp, "findings.json")))
+        self.assertTrue(result["repaired"])
+        self.assertEqual(result["problems"], [])
+        self.assertEqual(repaired["occurrences"][0]["judgment"], "Supports")
+        self.assertEqual(repaired["occurrence_counts"]["supports"], 1)
+
+    def test_apply_all_syncs_findings_and_counts(self):
+        review = ("## 1. Findings, counts, and limitations\n\n"
+                  "**Citation occurrences.** 1 inventoried. Supports 0; Qualified or Mixed 0; "
+                  "Contradicts 0; Not Supported 0; Not Judged 1.\n\n"
+                  "## 2. Numbered citation entries, in paper order\n\n"
+                  "### C2 — ¶2 — (Jones, 2021)\n\n**Overall judgment: Not Judged.**\n\n"
+                  "Body.\n\n## 3. Bibliography review, in submitted order\n\n")
+        ledger = ("| C2 | ¶2 | marker | statement | R1 | old | old status | none |\n"
+                  "| R1 | entry | identity | link | status | old | searched | C2 | none |\n")
+        summary = {"occurrences": {"total": 1, "supports": 0, "qualified": 0,
+                                   "contradicts": 0, "not_supported": 0, "not_judged": 1}}
+        findings = {"occurrences": [{"id": "C2", "judgment": "Not Judged"}],
+                    "summary": {"category_a": [], "category_b": []}}
+        task = {"entries": [{"id": "C2", "prior": "Not Judged"}]}
+        judgments = {"changes": [{"id": "C2", "prior": "Not Judged",
+                                  "new": "Supports", "evidence": "quote",
+                                  "locator": "printed p. 2"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, body in (("review.md", review), ("ledger.md", ledger)):
+                open(os.path.join(tmp, name), "w", encoding="utf-8").write(body)
+            json.dump(summary, open(os.path.join(tmp, "summary.json"), "w"))
+            json.dump(findings, open(os.path.join(tmp, "findings.json"), "w"))
+            ra.apply_all(tmp, task, judgments, "2026-11-17")
+            data = json.load(open(os.path.join(tmp, "findings.json")))
+            summary_after = json.load(open(os.path.join(tmp, "summary.json")))
+            problems = ra.artifact_problems(tmp)
+        self.assertEqual(data["occurrences"][0]["judgment"], "Supports")
+        self.assertEqual(data["occurrence_counts"], summary_after["occurrences"])
+        self.assertEqual(problems, [])
+
 class ReappraiseApplyTests(unittest.TestCase):
     def test_bold_and_heading_sections(self):
         text = ("**C1 — ¶1**\nAssessed statement: “x”.\n**Not Judged.** old\n\n"
@@ -5337,6 +5404,15 @@ class ClaimAssessmentTests(unittest.TestCase):
         self.assertEqual(len(list((self.work / "claim-records").glob("*.json"))), 2)
         self.run_claims("render")
         self.assertEqual(report.read_bytes(), first)
+
+    def test_not_judged_reasons_are_aggregated(self):
+        task = json.loads((self.work / "task.json").read_text(encoding="utf-8"))
+        task["windows"] = {}
+        self.write(self.work / "task.json", task)
+        self.run_claims("render")
+        findings = json.loads((self.work / "claim-findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(findings["not_judged_reasons"]["source_unreadable"], 1)
+        self.assertEqual(findings["not_judged_reasons"]["model_abstained"], 0)
 
     def test_rejects_invalid_responses_and_abstains_on_stale_record(self):
         response = self.response()
