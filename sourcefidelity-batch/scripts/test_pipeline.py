@@ -5581,6 +5581,17 @@ class SearchNormalizationTests(unittest.TestCase):
         self.assertFalse(core_claim.evidence_anchored(packet, unrelated))
         self.assertTrue(core_claim.evidence_anchored(packet, related))
 
+    def test_paragraph_bm25_rescue_selects_a_matching_paragraph(self):
+        text = ("=== PDF p1 | printed p1 | native\nFirst paragraph about quotas.\n\n"
+                "Companies established themselves in Luxembourg.\n\n"
+                "Third paragraph about unrelated material.")
+        marks = [(0, 1, "1")]
+        hits = mt.paragraph_rescue(text, marks, {}, ["companies", "established", "luxembourg"],
+                                   100, None, 1, [])
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["fallback"], "paragraph_bm25")
+        self.assertIn("Luxembourg", hits[0]["text"])
+
     def test_sentence_completion_reaches_the_period(self):
         text = "Reality television grew quickly. It was cheap-to-produce."
         end = text.index("grew") + len("grew")

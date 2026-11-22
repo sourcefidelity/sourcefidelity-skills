@@ -464,6 +464,94 @@ def ranked_page_windows(text, marks, pages, terms, width, page_range, limit, use
         })
     return out
 
+def _paragraph_spans(text, marks):
+    spans = []
+    for start, end, _pdf, printed in _page_blocks(text, marks):
+        cursor = start
+        for match in re.finditer(r"\n\s*\n+", text[start:end]):
+            stop = start + match.start()
+            if stop > cursor:
+                spans.append((cursor, stop, printed))
+            cursor = start + match.end()
+        if cursor < end:
+            spans.append((cursor, end, printed))
+    return spans
+
+
+def _bm25_tokens(text):
+    return [token for token in normalise_query(text).split() if len(token) >= 3]
+
+
+def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used):
+    """BM25 over source paragraphs when coarse windows leave claim terms uncovered."""
+    if not terms or limit <= 0:
+        return []
+    view = SearchText(text)
+    query_terms = []
+    for term in terms:
+        value = normalise_query(term)
+        if value and value not in query_terms:
+            query_terms.extend(value.split())
+    query_terms = list(dict.fromkeys(query_terms))
+    folders = []
+    for start, end, printed in _paragraph_spans(text, marks):
+        if not text[start:end].strip() or not in_range(printed, page_range):
+            continue
+        tokens = _bm25_tokens(text[start:end])
+        if tokens:
+            folders.append((start, end, printed, tokens))
+    if not folders:
+        return []
+    avg = sum(len(tokens) for *_prefix, tokens in folders) / len(folders)
+    df = {term: sum(1 for *_prefix, tokens in folders if term in tokens)
+          for term in query_terms}
+    scores = []
+    for start, end, printed, tokens in folders:
+        score = 0.0
+        for term in query_terms:
+            tf = tokens.count(term)
+            if not tf:
+                continue
+            idf = (len(folders) + 1) / (df[term] + 1)
+            score += idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * len(tokens) / avg))
+        if score:
+            scores.append((score, start, end, printed))
+    out = []
+    for score, start, end, printed in sorted(scores, reverse=True):
+        if any(not (end <= old_start or start >= old_end) for old_start, old_end in used):
+            continue
+        best = None
+        for term in query_terms:
+            for _ns, _ne, pos, pos_end in view.find_all(term):
+                if start <= pos < end:
+                    bounds = evidence_window.bounded(text, pos, pos_end - pos, width,
+                                                     marks, page_range)
+                    if bounds is not None:
+                        best = bounds
+                        break
+            if best:
+                break
+        if not best:
+            continue
+        lo, hi = evidence_window.allowed_bounds(marks, page_range)
+        wstart, wend = best
+        wend = complete_sentence(text, wend, hi)
+        if any(not (wend <= old_start or wstart >= old_end)
+               for old_start, old_end in used):
+            continue
+        used.append((wstart, wend))
+        pdf, locator = page_at(marks, pages, wstart)
+        out.append({
+            "query": "paragraph BM25", "query_kind": "terms", "exact_quote": False,
+            "printed_page": locator, "pdf_page": pdf, "start": wstart, "end": wend,
+            "text": re.sub(r"\s+", " ", text[wstart:wend]).strip(),
+            "fallback": "paragraph_bm25",
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 def reference_members(citation, refs):
     """Resolve each explicit author-date member, leaving ambiguous matches open."""
     parsed = [(ref["id"], source_registry.parse_source({"source": ref["verbatim"]}))
@@ -553,6 +641,15 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
             hits.extend(ranked_page_windows(
                 text, marks, pages, terms, width, page_range,
                 limit - len(hits), used_pages))
+        if citation is not None:
+            terms = content_terms(citation)
+            covered_text = normalise_query(" ".join(hit.get("text", "") for hit in hits))
+            covered = sum(1 for term in terms if normalise_query(term) in covered_text)
+            if not hits or covered / max(1, len(terms)) < 0.55:
+                used = [(hit["start"], hit["end"]) for hit in hits]
+                hits.extend(paragraph_rescue(
+                    text, marks, pages, terms, width, page_range,
+                    max(1, limit - len(hits)), used))
         if not hits and extraction:
             identity = source.get("identity") or {}
             terms = (title_phrases(identity.get("title", "")) +

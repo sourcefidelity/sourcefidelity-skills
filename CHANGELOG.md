@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Paragraph BM25 rescue (R35).** Added a bounded sentence/paragraph BM25
+  fallback when coarse windows cover less than 55% of claim terms. It is tested
+  and does not affect the 14/14 benchmark, but it did not rescue C19's
+  Luxembourg passage; C19 remains Not Judged.
+
 - **Binding, notation and ranking repairs (R35).** Added year-variant
   citation binding (C3 now binds the 2004 working paper to the 2007 entry),
   Article/page notation variants, a claim-term evidence-anchor gate, and
