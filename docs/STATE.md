@@ -7,7 +7,7 @@
 
 | Item | Value |
 |---|---|
-| Branch | `codex/sourcefidelity-dev` at `e625747`; clean tree; stable `main` is `v1.1.2` |
+| Branch | `codex/sourcefidelity-dev`; clean tree; shared core at `b2e572c`; stable `main` is `v1.1.2` |
 | Source version | `1.1.2` (`VERSION`); dev branch, no new release tag |
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
