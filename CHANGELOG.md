@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Bounded model evidence rescue (R35).** Added `rescue_select.py` with
+  `emit`/`record`/`apply`: after deterministic retrieval fails, the host model
+  selects 0-3 numbered candidate paragraphs, IDs are validated, and rescue
+  windows are applied with priority. C19 selected the Luxembourg passage and
+  then judged Supports. Full paper: 16/20 judged, 4 Not Judged; calibration
+  12/16 exact.
+
 - **Paragraph BM25 rescue (R35).** Added a bounded sentence/paragraph BM25
   fallback when coarse windows cover less than 55% of claim terms. It is tested
   and does not affect the 14/14 benchmark, but it did not rescue C19's

@@ -107,12 +107,16 @@ def passages_for(task, inventory, occurrence):
             elif not locator and window.get("pdf_page") is not None:
                 locator = f"PDF p. {window['pdf_page']}"
             if locator and window.get("window_id") and window.get("text", "").strip():
-                yield {"passage_id": window["window_id"], "r_id": rid,
-                       "source_key": window["source_key"], "locator": locator,
-                       "text": window["text"], **{
-                           field: window[field] for field in ("source_sha256", "text_sha256",
-                                                             "page_map_sha256")
-                           if window.get(field)}}
+                packet_passage = {"passage_id": window["window_id"], "r_id": rid,
+                                  "source_key": window["source_key"], "locator": locator,
+                                  "text": window["text"]}
+                packet_passage.update({
+                    field: window[field] for field in ("source_sha256", "text_sha256",
+                                                       "page_map_sha256")
+                    if window.get(field)})
+                if window.get("fallback"):
+                    packet_passage["fallback"] = window["fallback"]
+                yield packet_passage
 
 
 def request_bytes(packet):
@@ -135,7 +139,10 @@ def packet_for(task, inventory, occurrence, claim_id, spec):
 
     def relevance(passage):
         words = set(re.findall(r"[a-z0-9]{4,}", passage.get("text", "").casefold()))
-        return len(claim_terms & words)
+        score = len(claim_terms & words)
+        if passage.get("fallback") == "model_rescue":
+            score += 10
+        return score
 
     candidates.sort(key=lambda passage: (-relevance(passage), passage.get("passage_id", "")))
     for passage in candidates:

@@ -62,6 +62,7 @@ import reappraise_apply as ra  # noqa: E402
 import redact_identity as ri  # noqa: E402
 import reappraise_prepare as rp  # noqa: E402
 import record_metrics as rec  # noqa: E402
+import rescue_select as rs  # noqa: E402
 import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
@@ -5597,6 +5598,38 @@ class SearchNormalizationTests(unittest.TestCase):
         end = text.index("grew") + len("grew")
         completed = mt.complete_sentence(text, end, len(text))
         self.assertEqual(text[completed - 1], ".")
+
+
+class RescueSelectTests(unittest.TestCase):
+    def test_candidates_include_the_matching_paragraph(self):
+        text = ("=== PDF p1 | printed p. 5 | native\nFirst paragraph about quotas.\n\n"
+                "A number of companies established themselves in Luxembourg.\n\n"
+                "Unrelated tail.")
+        request = rs.build_request(text, "companies established offices in Luxembourg")
+        self.assertTrue(any("Luxembourg" in row["text"] for row in request["paragraphs"]))
+
+    def test_record_rejects_invented_paragraph(self):
+        request = {"paragraphs": [{"id": "P1", "pdf_page": "1", "printed_page": "",
+                                   "start": 0, "end": 4, "text": "text"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "response.json"
+            path.write_text(json.dumps({"selected": [{"paragraph_id": "P9",
+                                                       "reason": "invented"}]}))
+            with self.assertRaises(ValueError):
+                rs.record(request, path)
+
+    def test_apply_adds_a_rescue_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_path = Path(tmp) / "task.json"
+            task_path.write_text(json.dumps({"windows": {"X1": []}}))
+            selection = Path(tmp) / "selection.json"
+            selection.write_text(json.dumps({"selected": [{
+                "paragraph_id": "P1", "reason": "useful", "pdf_page": "1",
+                "printed_page": "5", "start": 10, "end": 20, "text": "rescue text"}]}))
+            rs.apply(str(task_path), "X1", "R1", "source-key", str(selection), 360)
+            task = json.loads(task_path.read_text())
+        self.assertEqual(task["windows"]["X1"][0]["fallback"], "model_rescue")
+        self.assertEqual(task["windows"]["X1"][0]["start"], 10)
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):
