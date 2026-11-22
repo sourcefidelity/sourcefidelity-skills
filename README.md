@@ -37,7 +37,7 @@ Both scripts find your harness skills directory, copy the three skills, check fo
 
 If Python is missing, the installer still copies the skills and explains prompt-only mode: a review still runs, but word counts, page mapping and the verbatim checks are unavailable. Install Python from https://www.python.org/downloads/ and run the installer again to enable them.
 
-For a prepared single review, pass the adjudicated inventory and judgment records to `one_paper.py --out REVIEW_ROOT --inventory FILE --findings FILE`. The shared renderer validates the records and writes the review, ledger and summary under `REVIEW_ROOT/paper/`.
+For a prepared single review, pass the adjudicated inventory and judgment records to `one_paper.py --out REVIEW_ROOT --inventory FILE --findings FILE`. The shared renderer validates the records and writes the review, ledger and summary under `REVIEW_ROOT/paper/`. It reads saved hyperlink observations and review metrics. Hyperlink findings come from adjudicated records. Reappraisal applies any saved audit observations to the report and summary without fetching links.
 
 ### Development installs
 

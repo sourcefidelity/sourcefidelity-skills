@@ -279,18 +279,29 @@ def main():
     runs = data.get("runs") or []
     # Replace only this agent's record; a flagged paper legitimately has an
     # extraction run plus a judgment run, and both are review cost.
-    runs = [r for r in runs if r.get("agent_id") != run.get("agent_id")]
+    runs = [r for r in runs if (r.get("agent_id"), r.get("phase", "review"))
+            != (run.get("agent_id"), run.get("phase"))]
     runs.append(run)
     data["runs"] = runs
     data["updated_at"] = now()
     json.dump(data, open(sidecar, "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
 
-    if args.review:
-        updated = metrics.update_scope_line(os.path.abspath(args.review), data)
-    else:
-        review = os.path.join(os.path.abspath(args.batch), args.paper, "review.md")
+    review = (os.path.abspath(args.review) if args.review else
+              os.path.join(os.path.abspath(args.batch), args.paper, "review.md"))
+    updated = metrics.update_scope_line(review, data)
+    if not updated and not args.review:
         updated = metrics.update_review_block(review, data)
+    summary_path = os.path.join(os.path.dirname(review), "summary.json")
+    try:
+        with open(summary_path, encoding="utf-8") as handle:
+            summary = json.load(handle)
+    except (OSError, ValueError):
+        summary = None
+    if isinstance(summary, dict) and summary.get("paper_id") == args.paper:
+        summary["review_metrics"] = data
+        with open(summary_path, "w", encoding="utf-8") as handle:
+            json.dump(summary, handle, ensure_ascii=False, indent=1)
     print(json.dumps({
         "paper": args.paper, "phase": args.phase,
         "duration": metrics.format_duration(run.get("duration_ms")),

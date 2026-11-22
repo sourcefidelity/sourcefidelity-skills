@@ -22,18 +22,22 @@ as given; a later audit can test them against the shared extraction.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
 import shutil
 import sys
 from datetime import date
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import batch_paths  # noqa: E402
 import reappraise_prepare  # noqa: E402
+from reappraise_prepare import file_sha256  # noqa: E402
+import finding_counts  # noqa: E402
+import link_states  # noqa: E402
+import render_review  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -48,31 +52,13 @@ def _utf8_streams():
 _utf8_streams()
 
 
-JUDGMENT_KEYS = {
-    "Supports": "supports",
-    "Qualified or Mixed": "qualified",
-    "Contradicts": "contradicts",
-    "Not Supported": "not_supported",
-    "Not Judged": "not_judged",
-}
-
+JUDGMENT_KEYS = finding_counts.JUDGMENT_KEYS
 
 def load(path, default=None):
     try:
         return json.load(open(path, encoding="utf-8"))
     except (OSError, ValueError):
         return default
-
-
-def file_sha256(path):
-    digest = hashlib.sha256()
-    try:
-        with open(path, "rb") as handle:
-            for block in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(block)
-    except OSError:
-        return ""
-    return digest.hexdigest()
 
 
 def binding_problems(task, folder):
@@ -137,6 +123,9 @@ def shift_counts(counts, changes):
 
 def sync_occurrence_line(text, counts):
     """Rewrite the visible occurrence counts from the summary they must match."""
+    canonical = re.compile(r"(?m)^Occurrences: [^\n]*$")
+    if canonical.search(text):
+        return canonical.sub(finding_counts.occurrence_line(counts), text, count=1)
     line = (f"**Citation occurrences.** {int(counts.get('total', 0) or 0)} inventoried. "
             f"Supports {int(counts.get('supports', 0) or 0)}; "
             f"Qualified or Mixed {int(counts.get('qualified', 0) or 0)}; "
@@ -450,15 +439,14 @@ def commit_staged(items):
         os.replace(tmp, path)
 
 
-def _restore(path, text):
-    try:
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(text)
-    except OSError:
-        pass
+def _restore(path, original):
+    if original is None:
+        Path(path).unlink(missing_ok=True)
+    else:
+        Path(path).write_bytes(original)
 
 
-def apply_all(folder, task, judgments, day):
+def apply_all(folder, task, judgments, day, link_block=None):
     """Apply one set of judgments to review, ledger and summary together.
 
     Each artifact is rendered and validated in memory before any file is
@@ -473,53 +461,58 @@ def apply_all(folder, task, judgments, day):
     review_path = paths["review.md"]
     ledger_path = paths["ledger.md"]
     summary_path = paths["summary.json"]
-    review_old = open(review_path, encoding="utf-8").read()
-    ledger_old = (open(ledger_path, encoding="utf-8").read()
-                  if os.path.exists(ledger_path) else None)
-    summary_old = load(summary_path, {})
-    summary_old_text = (open(summary_path, encoding="utf-8").read()
-                        if os.path.exists(summary_path) else "")
+    originals = {path: Path(path).read_bytes() if os.path.exists(path) else None
+                 for path in (review_path, ledger_path, summary_path)}
     changes = judgments.get("changes", [])
-    counts = (shift_counts(summary_old["occurrences"], changes)
-              if summary_old.get("occurrences") else None)
-    review_text, rows = render_review_text(review_old, task, judgments, day, counts)
-    if ledger_old is None:
-        ledger_text, ledger_updated = None, []
-    else:
-        ledger_text, ledger_updated = render_ledger_text(ledger_old, changes, day)
+    summary_old = load(summary_path, {})
+    review_old = originals[review_path].decode("utf-8")
+    review_text, rows, ledger_updated = review_old, [], []
+    ledger_text = None
+    if changes:
+        counts = (shift_counts(summary_old["occurrences"], changes)
+                  if summary_old.get("occurrences") else None)
+        normalized = review_old.replace("\r\n", "\n")
+        review_text, rows = render_review_text(normalized, task, judgments, day, counts)
+        if originals[ledger_path] is not None:
+            ledger_text, ledger_updated = render_ledger_text(
+                originals[ledger_path].decode("utf-8"), changes, day)
     summary_new = render_summary_data(summary_old, task, judgments, day)
-    summary_text = json.dumps(summary_new, ensure_ascii=False, indent=1)
-
-    staged = [(review_path, review_text)]
+    if link_block:
+        link_states.apply_observations(summary_new, link_block)
+        lines = render_review.hyperlink_scope_lines(summary_new)
+        if lines:
+            review_text = link_states.update_scope(review_text, lines[0])
+    staged = {}
+    if review_text != review_old:
+        if "\r\n" in review_text:
+            review_text = review_text.replace("\r\n", "\n")
+        staged[review_path] = review_text
     if ledger_text is not None:
-        staged.append((ledger_path, ledger_text))
-    staged.append((summary_path, summary_text))
+        staged[ledger_path] = ledger_text
+    staged[summary_path] = json.dumps(summary_new, ensure_ascii=False, indent=1)
+
     items = []
     try:
-        for path, body in staged:
+        for path, body in staged.items():
             items.append((stage_text(path, body), path))
-    except Exception:
+        if changes:
+            shutil.copy2(review_path, paths["review.pre-reappraisal.md"])
+        try:
+            commit_staged(items)
+        except Exception as error:
+            rollback_errors = []
+            for path in staged:
+                try:
+                    _restore(path, originals[path])
+                except OSError as restore_error:
+                    rollback_errors.append(f"{path}: {restore_error}")
+            if rollback_errors:
+                raise RuntimeError("reappraisal rollback incomplete: "
+                                   + "; ".join(rollback_errors)) from error
+            raise
+    finally:
         for tmp, _ in items:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        raise
-    shutil.copy2(review_path, paths["review.pre-reappraisal.md"])
-    try:
-        commit_staged(items)
-    except Exception:
-        for tmp, _ in items:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        _restore(review_path, review_old)
-        if ledger_old is not None:
-            _restore(ledger_path, ledger_old)
-        if summary_old:
-            _restore(summary_path, summary_old_text)
-        raise
+            Path(tmp).unlink(missing_ok=True)
     return {"changes": len(rows), "ledger_rows_updated": ledger_updated,
             "summary": summary_new, "log": rows}
 
@@ -563,25 +556,14 @@ def main():
             return 0
         judgments = {**judgments, "changes": kept}
         changes = kept
+    block = link_states.load_cached(root, pid)
+    result = apply_all(folder, task, judgments, args.date, link_block=block)
     if not changes:
-        data = apply_summary(batch_paths.artifact(folder, "summary.json"),
-                             task, judgments, args.date)
         print(json.dumps({"paper": pid, "date": args.date, "changes": 0,
                           "unchanged": judgments.get("unchanged", []),
                           "note": "no judgment changed; source retrieval recorded",
-                          "flags": data.get("flags", {})}, indent=1))
+                          "flags": result["summary"].get("flags", {})}, indent=1))
         return 0
-    result = apply_all(folder, task, judgments, args.date)
-    # New sources change link states: re-run the audit from the cached report
-    # and refresh the summary block and the review's scope line.
-    try:
-        import link_states
-        _root = os.path.dirname(os.path.abspath(folder))
-        _block = link_states.reaudit_from_cache(_root, task.get("paper_id", ""))
-        if _block:
-            link_states.refresh(folder, _block)
-    except Exception:  # noqa: BLE001 - a refresh must not fail the reappraisal
-        pass
     rows = result["changes"]
     ledger_updated = result["ledger_rows_updated"]
     data = result["summary"]

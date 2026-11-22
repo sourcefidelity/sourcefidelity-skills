@@ -616,11 +616,9 @@ def scope_lines(report):
         lines.append(f"Full-text links unreachable from the review environment: "
                      f"{env_failures} (network restriction, not a link defect; access "
                      f"not verifiable, not HL).")
-    hl = absent + non_permanent + wrong
-    if hl:
-        lines.append(f"Hyperlink findings (HL): {hl} "
-                     f"({absent} absent, {non_permanent} not permanent, "
-                     f"{wrong} wrong work).")
+    if absent or non_permanent or wrong:
+        lines.append(f"Link observations for adjudication: {absent} absent, "
+                     f"{non_permanent} not permanent, {wrong} wrong work.")
     if report.get("cache"):
         lines.append(f"Cache: {report['cache']}.")
     if report.get("transport"):

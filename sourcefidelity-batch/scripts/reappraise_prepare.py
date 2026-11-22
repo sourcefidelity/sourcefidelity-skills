@@ -34,6 +34,7 @@ import source_registry  # noqa: E402
 import make_task  # noqa: E402
 import prepare_source as prepare_source_module  # noqa: E402
 import source_scope  # noqa: E402
+from file_digest import sha256_file  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -124,14 +125,6 @@ def window_hits(text_cache, citation, identity, container, page_range):
     return hits
 
 
-def sha256_file(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def run_prepare_source(path, out, key):
     """Extract one supplied copy; prepare_source reuses a matching hash."""
     subprocess.run([sys.executable, "-I",
@@ -188,14 +181,10 @@ def prepare_extraction(root, key, path):
 
 
 def file_sha256(path):
-    digest = hashlib.sha256()
     try:
-        with open(path, "rb") as handle:
-            for block in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(block)
+        return sha256_file(path)
     except OSError:
         return ""
-    return digest.hexdigest()
 
 
 def scope_for(extraction, page_range):

@@ -949,7 +949,7 @@ class ReportModeTests(unittest.TestCase):
                             rr.counts(self._findings()), {}, metrics)
         self.assertLess(text.index("## Review scope and counts"),
                         text.index("## Summary of academic-integrity findings"))
-        self.assertIn("Review time: 1m 5s; tokens: 1,200 in / 300 out.", text)
+        self.assertIn("Review time: 1m 05s; tokens: 1,200 prompt (0 cached + 1,200 uncached) / 300 output; cost: not recorded.", text)
 
     def test_scope_block_says_not_recorded_without_metrics(self):
         text = rr.render_md(self._paper(), self._findings(),
@@ -2841,7 +2841,8 @@ class ReappraiseApplyTests(unittest.TestCase):
         self.assertIn("## 4. Uncited substantive passages", text)
         self.assertIn("## 4. Uncited substantive passages", text)
         self.assertIn("Counts: Category A", text)
-        self.assertIn("Occurrences: 2 inventoried", text)
+        self.assertIn("Occurrences: 2 inventoried (Supports 2;", text)
+        self.assertIn("Not Judged 0).", text)
 
     def test_apply_review_refuses_to_write_a_truncated_review(self):
         """SF-01: a rewrite that loses a section must leave the file untouched."""
@@ -3745,7 +3746,8 @@ class HyperlinkAuditTests(unittest.TestCase):
         ]}
         lines = "\n".join(ha.scope_lines(report))
         self.assertIn("Excluded as non-linkable (traditional audio-visual media): 1", lines)
-        self.assertIn("Hyperlink findings (HL): 1", lines)
+        self.assertIn("1 not permanent, 0 wrong work", lines)
+        self.assertNotIn("Hyperlink findings (HL)", lines)
 
     def test_link_classes_separate_absence_from_permanence(self):
         self.assertEqual(ha.classify_link("https://pan.baidu.com/s/1abc?pwd=1234"),
@@ -3794,7 +3796,8 @@ class HyperlinkAuditTests(unittest.TestCase):
         self.assertIn("Full-text links to the work: 1", lines)
         self.assertIn("unreachable 1", lines)
         self.assertIn("unreachable from the review environment: 1", lines)
-        self.assertIn("Hyperlink findings (HL): 2", lines)
+        self.assertIn("1 absent, 1 not permanent", lines)
+        self.assertNotIn("Hyperlink findings (HL)", lines)
 
     def test_fetch_state_names_the_failure_kind(self):
         with mock.patch.object(ha.public_fetch, "transport",
@@ -3932,7 +3935,7 @@ class LinkStatesTests(unittest.TestCase):
         self.assertEqual(block["non_permanent"], 1)
         self.assertEqual(block["unreachable"], 1)
         self.assertEqual(block["verified"], 1)
-        self.assertEqual(block["hl_total"], 2)
+        self.assertNotIn("hl_total", block)
 
     def test_a_fetched_body_is_kept_as_a_source_copy(self):
         tmp = tempfile.TemporaryDirectory()
@@ -4975,6 +4978,111 @@ class SingleReviewRenderingTests(unittest.TestCase):
         self.assertTrue((self.output / "ledger.md").is_file())
         self.assertTrue((self.output / "summary.json").is_file())
         self.assertIn("printed p. 63", (self.output / "review.md").read_text())
+
+    def test_native_and_batch_link_audits_and_metrics_render_identically(self):
+        rows = [{"link_class": "absent"}, {"link_class": "wrong-work"},
+                {"link_class": "doi", "fetch": {"state": "dead"}},
+                {"link_class": "doi"}]
+        self.write(self.root / "_work" / "hyperlink-audit.json", {"rows": rows})
+        metrics = {"runs": [
+            {"phase": "review", "duration_ms": 1500, "usage": {
+                "input_tokens": 20, "output_tokens": 5, "cache_read_tokens": 10}},
+            {"phase": "reappraisal", "duration_ms": 9000}]}
+        self.write(self.work / "review_metrics.json", metrics)
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary = json.loads((self.output / "summary.json").read_text())
+        self.assertEqual(summary["hyperlinks"]["absent"], 1)
+        self.assertEqual(summary["hyperlinks"]["wrong_work"], 1)
+        self.assertEqual(summary["hyperlinks"]["dead"], 1)
+        self.assertEqual(summary["hyperlinks"]["unchecked"], 1)
+        self.assertEqual(summary["hyperlinks"]["full_text"], 0)
+        self.assertEqual(summary["hyperlinks"]["hl_total"], 0)
+        self.assertEqual(summary["references"]["link_states"], summary["hyperlinks"])
+        single_review = (self.output / "review.md").read_text()
+        self.assertIn(rm.scope_line(metrics), single_review)
+        self.assertIn("fetch failures (unreachable 0; blocked 0; dead 1)", single_review)
+        self.write(self.work / "hyperlinks.json", {"rows": rows, "hyperlinks": {"hl_total": 9}})
+        result = subprocess.run(
+            [sys.executable, "-IB", rr.__file__, "--batch", str(self.root), "--paper", "paper",
+             "--inventory", str(self.root / "inventory.json"),
+             "--findings", str(self.root / "findings.json"), "--strict-inventory"],
+            capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.output / "review.md").read_text(), single_review)
+        self.assertEqual(json.loads((self.output / "summary.json").read_text()), summary)
+
+    def test_record_metrics_preserves_phases_and_syncs_structured_report(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        command = [sys.executable, "-IB", rec.__file__, "--batch", str(self.root),
+                   "--paper", "paper", "--agent-id", "fixture",
+                   "--input-tokens", "20", "--output-tokens", "5"]
+        for phase, milliseconds in (("review", "2000"), ("reappraisal", "9000")):
+            run = subprocess.run(command + ["--phase", phase, "--duration-ms", milliseconds],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+        data = json.loads((self.work / "review_metrics.json").read_text())
+        self.assertEqual([r["phase"] for r in data["runs"]], ["review", "reappraisal"])
+        summary = json.loads((self.output / "summary.json").read_text())
+        self.assertEqual(summary["review_metrics"], data)
+        review = (self.output / "review.md").read_text()
+        self.assertEqual(review.count("Review time:"), 1)
+        self.assertIn(rm.scope_line(data), review)
+
+    def test_reappraisal_refreshes_observations_without_changing_adjudicated_hl(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        task = {"entries": [{"id": "C1", "prior": "Supports"}]}
+        binding = {"review_sha256": ra.file_sha256(self.output / "review.md"),
+                   "ledger_sha256": ra.file_sha256(self.output / "ledger.md"),
+                   "summary_sha256": ra.file_sha256(self.output / "summary.json")}
+        task["binding"] = binding
+        observations = {"absent": 2, "wrong_work": 1, "hl_total": 3}
+        changes = {"changes": [{"id": "C1", "prior": "Supports", "new": "Not Judged"}]}
+        updated = ra.apply_all(self.output, task, changes, "2026-11-22", link_block=observations)
+        summary = updated["summary"]
+        self.assertEqual(summary["hyperlinks"]["hl_total"], 0)
+        self.assertEqual(summary["references"]["link_states"], summary["hyperlinks"])
+        review = (self.output / "review.md").read_text()
+        self.assertIn("Not Judged 1).", review)
+        self.assertIn("1 wrong work", review)
+        self.assertIn("HL total: 0", review)
+
+    def test_reappraisal_rollback_preserves_exact_bytes(self):
+        self.assertEqual(self.render().returncode, 0)
+        paths = [self.output / name for name in ("review.md", "ledger.md", "summary.json")]
+        for path in paths:
+            path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+        before = [path.read_bytes() for path in paths]
+
+        def interrupt(items):
+            for temporary, path in items:
+                os.replace(temporary, path)
+            raise RuntimeError("interrupted after replacements")
+
+        task = {"entries": [{"id": "C1", "prior": "Supports"}]}
+        changes = {"changes": [{"id": "C1", "prior": "Supports", "new": "Not Judged"}]}
+        with mock.patch.object(ra, "commit_staged", side_effect=interrupt):
+            with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                ra.apply_all(self.output, task, changes, "2026-11-22", link_block={"dead": 1})
+        self.assertEqual([path.read_bytes() for path in paths], before)
+
+    def test_stale_no_change_reappraisal_refuses_to_update_summary(self):
+        result = self.render()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        summary_path = self.output / "summary.json"
+        summary = summary_path.read_bytes()
+        task = self.root / "reappraisal.json"
+        changes = self.root / "changes.json"
+        self.write(task, {"paper_id": "paper", "binding": {"review_sha256": "stale"}})
+        self.write(changes, {"paper_id": "paper", "changes": [], "unchanged": ["C1"]})
+        result = subprocess.run(
+            [sys.executable, "-IB", ra.__file__, "--batch", str(self.root), "--task", str(task),
+             "--judgments", str(changes)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale reappraisal task", result.stderr)
+        self.assertEqual(summary_path.read_bytes(), summary)
 
     def test_rejects_invalid_inventory_before_writing(self):
         self.inventory["coverage"]["paragraphs_scanned"].remove("P2")

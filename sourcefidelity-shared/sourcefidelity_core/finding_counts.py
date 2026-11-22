@@ -14,6 +14,16 @@ CATEGORIES = ("A", "B", "HL")
 SUMMARY_KEYS = {"A": "category_a", "B": "category_b", "HL": "hyperlinks_missing"}
 
 
+JUDGMENT_KEYS = {"Supports": "supports", "Qualified or Mixed": "qualified",
+                 "Contradicts": "contradicts", "Not Supported": "not_supported",
+                 "Not Judged": "not_judged"}
+
+
+def occurrence_line(counts):
+    parts = "; ".join(f"{label} {counts.get(key, 0)}" for label, key in JUDGMENT_KEYS.items())
+    return f"Occurrences: {counts.get('total', 0)} inventoried ({parts})."
+
+
 def _category(item, default=""):
     value = str(item.get("category") or item.get("summary_category") or default)
     return value if value in CATEGORIES else ""

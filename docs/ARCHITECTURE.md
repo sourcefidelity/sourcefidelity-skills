@@ -77,7 +77,7 @@ A source folder plus a folder of papers. Each supplied copy carries the shared `
 
 ### Reappraisal
 
-An existing review plus newly supplied sources. Matching identifies the affected references; only their entries are revised; the change log records every old and new judgment. A re-run that changes the instrument is a new review, not a reappraisal.
+An existing review plus newly supplied sources. Matching identifies the affected references; only their entries are revised; the change log records every old and new judgment. The same reappraisal transaction handles single and batch artifacts. It checks the prior artifact binding for every update and can apply saved link observations while preserving the adjudicated hyperlink count. A re-run that changes the instrument is a new review, not a reappraisal.
 
 ### Artifacts
 

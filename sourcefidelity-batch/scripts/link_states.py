@@ -27,12 +27,14 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                               "sourcefidelity-review", "scripts")
+sys.path.insert(0, HERE)
 if REVIEW_SCRIPTS not in sys.path:
     sys.path.insert(0, REVIEW_SCRIPTS)
 import hyperlink_audit as ha  # noqa: E402
+import batch_paths  # noqa: E402
 
 STATES = ("absent", "non_linkable", "non_permanent", "record_only", "full_text",
-          "unreachable", "blocked", "dead", "verified")
+          "unreachable", "blocked", "dead", "verified", "wrong_work", "unchecked")
 ENVIRONMENT = ("unreachable", "tls", "timeout")
 
 
@@ -50,6 +52,8 @@ def block_from_report(report):
             counts["non_permanent"] += 1
         elif state == "record-only":
             counts["record_only"] += 1
+        elif state == "wrong-work":
+            counts["wrong_work"] += 1
         elif state in ("full-text", "doi", "permanent"):
             if fetch in ENVIRONMENT:
                 counts["unreachable"] += 1
@@ -59,18 +63,21 @@ def block_from_report(report):
                 counts["dead"] += 1
             elif fetch == "ok":
                 counts["verified"] += 1
-            else:
+            elif state == "full-text":
                 counts["full_text"] += 1
-        else:
-            counts["absent"] += 1
-    counts["hl_total"] = counts["absent"] + counts["non_permanent"]
+            else:
+                counts["unchecked"] += 1
     return counts
 
 
 def audit_paper(paper_docx, fetch=True, timeout=15, delay=0.5, save_dir=None):
     """(report, block) for one paper; fetches links unless `fetch` is false."""
-    ha.SAVE_DIR = save_dir
-    report = ha.audit(paper_docx, fetch=fetch, timeout=timeout, delay=delay)
+    previous = ha.SAVE_DIR
+    try:
+        ha.SAVE_DIR = save_dir
+        report = ha.audit(paper_docx, fetch=fetch, timeout=timeout, delay=delay)
+    finally:
+        ha.SAVE_DIR = previous
     report["paper_path"] = os.path.abspath(paper_docx)
     return report, block_from_report(report)
 
@@ -107,14 +114,50 @@ def write(work_dir, report, block):
 
 
 def load_cached(root, paper_id):
-    """The block from a paper's cached link report, or None."""
-    path = os.path.join(root, "_work", paper_id, "hyperlinks.json")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    return data.get("hyperlinks") or None
+    """Classified observations from either workflow's saved audit."""
+    work = batch_paths.paper_folder(os.path.join(root, "_work"), paper_id)
+    paths = [os.path.join(work, "hyperlinks.json"),
+             os.path.join(work, "hyperlink-audit.json")]
+    if paper_id == "paper":
+        paths.append(os.path.join(root, "_work", "hyperlink-audit.json"))
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if isinstance(data.get("rows"), list) and (data["rows"] or "hyperlinks" not in data):
+            return block_from_report(data)
+        if isinstance(data.get("hyperlinks"), dict):
+            return data["hyperlinks"]
+    return None
+
+
+def update_scope(text, line):
+    """Replace either report layout's hyperlink scope line."""
+    pattern = re.compile(r"(?m)^Hyperlinks(?: missing)?: .*$")
+    if pattern.search(text):
+        return pattern.sub(lambda _match: line, text, count=1)
+    anchor = "## Summary of academic-integrity findings"
+    return text.replace(anchor, line + "\n\n" + anchor, 1)
+
+
+def apply_observations(summary, block):
+    """Refresh observations while retaining the adjudicated HL count."""
+    if not block:
+        return
+    refs = summary.get("references")
+    legacy_links = refs.get("link_states") if isinstance(refs, dict) else None
+    prior = summary.get("hyperlinks") or legacy_links or {}
+    hl = summary.get("finding_counts", {}).get("HL")
+    if hl is None:
+        hl = prior.get("hl_total", block.get("hl_total", 0))
+    links = {**block, "hl_total": hl}
+    summary["hyperlinks"] = links
+    if isinstance(summary.get("references"), dict):
+        summary["references"]["link_states"] = links
 
 
 def refresh(folder, block):
@@ -124,7 +167,8 @@ def refresh(folder, block):
     try:
         with open(summary_path, encoding="utf-8") as handle:
             summary = json.load(handle)
-        summary["hyperlinks"] = block
+        apply_observations(summary, block)
+        block = summary["hyperlinks"]
         with open(summary_path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(summary, handle, indent=1, ensure_ascii=False)
             handle.write("\n")
@@ -139,13 +183,7 @@ def refresh(folder, block):
         lines = []
     if lines:
         text = open(review_path, encoding="utf-8").read()
-        pattern = re.compile(r"(?m)^Hyperlinks(?: missing)?: .*$")
-        if pattern.search(text):
-            text = pattern.sub(lambda _match: lines[0], text, count=1)
-        else:
-            anchor = "## Summary of academic-integrity findings"
-            if anchor in text:
-                text = text.replace(anchor, lines[0] + "\n\n" + anchor, 1)
+        text = update_scope(text, lines[0])
         with open(review_path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(text)
         changed.append(review_path)

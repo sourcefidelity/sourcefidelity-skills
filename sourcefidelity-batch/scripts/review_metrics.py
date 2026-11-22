@@ -353,7 +353,7 @@ def _phase_lines(label, summary):
 def render_block(metrics):
     """Return Markdown lines for a metrics sidecar, or [] when empty."""
     runs = (metrics or {}).get("runs") or []
-    review = [r for r in runs if r.get("phase") == "review"]
+    review = [r for r in runs if r.get("phase", "review") == "review"]
     reappraisal = [r for r in runs if r.get("phase") == "reappraisal"]
     review_summary = summarize_runs(review)
     reappraisal_summary = summarize_runs(reappraisal)
@@ -401,8 +401,8 @@ SCOPE_LINE = re.compile(r"(?m)^Review time:.*$")
 
 
 def scope_line(metrics):
-    """The one scope-block line for a single-review layout, or ""."""
-    runs = [r for r in (metrics or {}).get("runs") or [] if r.get("phase") == "review"]
+    """The shared review scope line, or an empty string without review runs."""
+    runs = [r for r in (metrics or {}).get("runs") or [] if r.get("phase", "review") == "review"]
     if not runs:
         return ""
     summary = summarize_runs(runs)

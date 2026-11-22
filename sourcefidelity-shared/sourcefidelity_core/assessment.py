@@ -6,9 +6,9 @@ import hashlib
 import json
 
 from .evidence_select import select_evidence
+from .finding_counts import JUDGMENT_KEYS
 
-JUDGMENTS = ("Supports", "Qualified or Mixed", "Contradicts", "Not Supported",
-             "Not Judged")
+JUDGMENTS = tuple(JUDGMENT_KEYS)
 
 
 def citation_packet(task, citation):

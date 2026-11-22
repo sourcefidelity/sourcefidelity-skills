@@ -29,6 +29,7 @@ import file_digest  # noqa: E402
 import finding_counts  # noqa: E402
 import batch_paths  # noqa: E402
 import review_metrics  # noqa: E402
+import link_states  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -176,9 +177,7 @@ def hyperlink_breakdown(findings):
 
 def counts(findings):
     occ = findings.get("occurrences", [])
-    key = {"Supports": "supports", "Qualified or Mixed": "qualified",
-           "Contradicts": "contradicts", "Not Supported": "not_supported",
-           "Not Judged": "not_judged"}
+    key = finding_counts.JUDGMENT_KEYS
     out = {v: 0 for v in key.values()}
     for item in occ:
         if item.get("judgment") not in key:
@@ -237,9 +236,6 @@ def as_records(items, kind):
     return out
 
 
-LINK_STATES = ("absent", "non_linkable", "non_permanent", "record_only",
-               "full_text", "unreachable", "blocked", "dead", "verified")
-
 
 def hyperlink_scope_lines(summary):
     """Scope lines from classified link states, when the findings carry them.
@@ -248,7 +244,7 @@ def hyperlink_scope_lines(summary):
     findings render exactly as before.
     """
     links = (summary or {}).get("hyperlinks") or {}
-    counts = {key: int(links.get(key) or 0) for key in LINK_STATES}
+    counts = {key: int(links.get(key) or 0) for key in link_states.STATES}
     if not any(counts.values()) and not links.get("hl_total"):
         return []
     hl = links.get("hl_total")
@@ -256,13 +252,15 @@ def hyperlink_scope_lines(summary):
         # HL is an APA-requirement judgment supplied by the findings. Do not
         # infer it from link states: a print work with no DOI needs no URL.
         hl = 0
-    unreachable = (counts["unreachable"] + counts["blocked"] + counts["dead"])
     parts = [f"{counts['absent']} absent",
              f"{counts['non_linkable']} excluded as non-linkable",
              f"{counts['non_permanent']} not permanent",
              f"{counts['record_only']} record-only",
-             f"{counts['full_text']} full-text",
-             f"{unreachable} unreachable or blocked (environment)",
+             f"{counts['full_text']} full-text URL",
+             f"{counts['unchecked']} unresolved by fetch",
+             f"{counts['wrong_work']} wrong work",
+             (f"fetch failures (unreachable {counts['unreachable']}; "
+              f"blocked {counts['blocked']}; dead {counts['dead']})"),
              f"{counts['verified']} verified"]
     return ["Hyperlinks: " + "; ".join(parts) + f". HL total: {hl} (HL = distinct works missing a required DOI or URL under APA 7, or supplying a non-permanent or wrong-work one; counted once per work)."]
 
@@ -297,11 +295,7 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("Counts unavailable; see the extraction export.")
     elif wc.get("counts_available") == "unknown":
         lines.append("Counts come from the pypdf fallback and may be partial.")
-    lines.append(f"Occurrences: {occ_counts['total']} inventoried "
-                 f"(Supports {occ_counts['supports']}; Qualified or Mixed "
-                 f"{occ_counts['qualified']}; Contradicts {occ_counts['contradicts']}; "
-                 f"Not Supported {occ_counts['not_supported']}; "
-                 f"Not Judged {occ_counts['not_judged']}).")
+    lines.append(finding_counts.occurrence_line(occ_counts))
     lines.append(f"References: {len(findings.get('references', []))} entries. "
                  f"Works discussed: {len(findings.get('works', []))}.")
     lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
@@ -312,26 +306,8 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         missing, reasons = hyperlink_breakdown(findings)
         detail = f" ({'; '.join(reasons)})" if reasons else ""
         lines.append(f"Hyperlinks missing: {missing}{detail}.")
-    seconds = 0
-    tokens_in = tokens_out = 0
-    have_time = have_tokens = False
-    for run in (metrics or {}).get("runs", []):
-        if run.get("duration_ms"):
-            seconds += int(run["duration_ms"]) / 1000
-            have_time = True
-        usage = run.get("usage") or {}
-        if usage.get("input_tokens") is not None:
-            tokens_in += int(usage.get("input_tokens") or 0)
-            have_tokens = True
-        if usage.get("output_tokens") is not None:
-            tokens_out += int(usage.get("output_tokens") or 0)
-            have_tokens = True
-    minutes, remainder = divmod(int(seconds), 60)
-    time_text = (f"{minutes}m {remainder}s" if minutes else f"{remainder}s") \
-        if have_time else "not recorded"
-    token_text = f"{tokens_in:,} in / {tokens_out:,} out" if have_tokens \
-        else "not recorded"
-    lines.append(f"Review time: {time_text}; tokens: {token_text}.")
+    lines.append(review_metrics.scope_line(metrics)
+                 or "Review time: not recorded; tokens: not recorded.")
     lines.append("")
     lines.append("## Summary of academic-integrity findings")
     lines.append("")
@@ -659,20 +635,13 @@ def main():
     findings = load(args.findings)
     if args.strict_inventory and not isinstance(findings, dict):
         fail("cannot read judgment records")
-    # The coordinator may have run link_states.py; use its block when the
-    # findings do not carry one, so the scope line shows the link states.
-    _cached_links = None
-    try:
-        with open(os.path.join(root, "_work", paper["paper_id"], "hyperlinks.json"),
-                  encoding="utf-8") as _handle:
-            _cached_links = json.load(_handle).get("hyperlinks")
-    except (OSError, ValueError):
-        _cached_links = None
-    if _cached_links and not ((findings.get("summary") or {}).get("hyperlinks")):
-        findings.setdefault("summary", {})["hyperlinks"] = _cached_links
     if (isinstance(findings.get("findings"), dict)
             and "occurrences" not in findings):
         findings = findings["findings"]
+    summary = findings.setdefault("summary", {})
+    observations = summary.get("hyperlinks") or link_states.load_cached(root, args.paper)
+    if observations:
+        summary["hyperlinks"] = {**observations, "hl_total": finding_counts.render_counts(findings)["HL"]}
     inventory = load(args.inventory, {}) if args.inventory else None
     task = load(os.path.join(work, "task.json"), {})
     if args.strict_inventory:
