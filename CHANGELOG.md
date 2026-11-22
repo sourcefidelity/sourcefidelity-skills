@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Long-run checkpoint manifest (R37).** Added `checkpoint.py` to report
+  completed, pending, stale and no-evidence claim IDs from saved records; it
+  writes `_work/<paper>/checkpoint.json` for resume. Verified 0/140 on the
+  fresh 15k fixture and 16/5 on the partial Television task.
+
+- **15k evidence-backed long-form render (R36).** A synthetic 18,061-word
+  paper with 140 citations and 10 synthetic sources produced 140 evidence
+  windows and a complete 140-occurrence render/ledger in 0.22 s without model
+  records. R36 closes; large-scale model judgment and resume remain R37/R39.
+
 - **15,000-word long-form fixture (R36).** An 18,061-word synthetic
   single-reference-list paper with 140 citations and 140 references was
   extracted and inventoried without truncation; `one_paper.py` completed

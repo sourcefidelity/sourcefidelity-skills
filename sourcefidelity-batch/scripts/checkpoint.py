@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Write or inspect a per-claim checkpoint for a long review.
+
+    checkpoint.py --root ROOT --paper paper --inventory INV --claims PLAN [--write]
+
+A claim is complete only when its saved record still matches the current
+packet hash. Stale or missing records are reported as pending so a long run
+can resume without rerunning completed claims.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILLS = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-review", "scripts"))
+sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
+import assess_claims  # noqa: E402
+import batch_paths  # noqa: E402
+import validate_inventory  # noqa: E402
+from sourcefidelity_core import claim_assessment as core  # noqa: E402
+
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def status(root, paper, inventory, plan):
+    task = load(batch_paths.artifact(
+        batch_paths.paper_folder(os.path.join(root, "_work"), paper), "task.json"))
+    candidates = load(batch_paths.artifact(
+        batch_paths.paper_folder(os.path.join(root, "_work"), paper), "candidates.json"))
+    result = validate_inventory.validate(candidates, inventory, strict=True)
+    if not result["ok"]:
+        raise ValueError("inventory: " + "; ".join(result["errors"]))
+    complete, pending = [], []
+    for cid, _oid, packet, _limitation in assess_claims.packets(task, inventory, plan):
+        if packet is None:
+            pending.append({"claim_id": cid, "reason": "no eligible evidence"})
+            continue
+        path = assess_claims.claim_record(
+            batch_paths.paper_folder(os.path.join(root, "_work"), paper), cid)
+        try:
+            record = load(path)
+        except (OSError, ValueError):
+            pending.append({"claim_id": cid, "reason": "missing"})
+            continue
+        if record.get("packet_sha256") != core.digest(packet):
+            pending.append({"claim_id": cid, "reason": "stale"})
+            continue
+        complete.append(cid)
+    return {"paper": paper, "total": len(complete) + len(pending),
+            "complete": complete, "pending": pending,
+            "complete_count": len(complete), "pending_count": len(pending)}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", required=True)
+    parser.add_argument("--paper", default="paper")
+    parser.add_argument("--inventory", required=True)
+    parser.add_argument("--claims", required=True)
+    parser.add_argument("--write", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        state = status(args.root, args.paper, load(args.inventory), load(args.claims))
+        if args.write:
+            work = batch_paths.paper_folder(os.path.join(args.root, "_work"), args.paper)
+            path = os.path.join(work, "checkpoint.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, indent=1)
+            state["checkpoint"] = path
+        print(json.dumps(state, indent=1))
+        return 0 if state["complete_count"] else 2
+    except (OSError, ValueError) as exc:
+        print(f"checkpoint: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

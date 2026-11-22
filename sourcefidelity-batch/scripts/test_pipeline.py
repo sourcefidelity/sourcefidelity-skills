@@ -36,6 +36,7 @@ import acquisition_list as al  # noqa: E402
 import audit_tasks as at  # noqa: E402
 import authorship_signals as ats  # noqa: E402
 import batch_paths as bp  # noqa: E402
+import checkpoint as cp  # noqa: E402
 import batch_report as br  # noqa: E402
 import detect_structure as ds  # noqa: E402
 import docx_text as dt  # noqa: E402
@@ -4722,6 +4723,51 @@ class UpdateCheckTests(unittest.TestCase):
             with mock.patch.object(uc, "ROOT", tmp), redirect_stdout(buf):
                 uc.main(["--stamp"])
         self.assertIn("v2.3.4 (commit abc1234)", buf.getvalue())
+
+
+class CheckpointTests(unittest.TestCase):
+    def test_stale_or_missing_records_are_pending_then_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            ref = {"id": "R1", "verbatim": "Smith, A. (2020). Work."}
+            statement = "The rule creates a common market."
+            citation = {"id": "X1", "marker": "(Smith, 2020)", "paragraph_id": "P1",
+                        "sentence": statement, "reference_match": "R1",
+                        "reference_members": [{"marker": "(Smith, 2020)",
+                                               "candidate_r_ids": ["R1"], "r_id": "R1"}]}
+            task = {"candidates": {"citations": [citation], "references": [ref]},
+                    "sources": {"R1": {"source_key": "smith",
+                                       "identity_status": "supplied_confirmed",
+                                       "supplied_file": "source.txt"}},
+                    "windows": {"X1": [{"window_id": "X1:R1:1", "printed_page": 4,
+                                        "source_key": "smith", "r_id": "R1",
+                                        "text": statement}]}}
+            candidates = {"citations": [citation], "references": [ref],
+                          "paragraphs": [{"id": "P1", "text": statement + " (Smith, 2020)"},
+                                         {"id": "P2", "text": ref["verbatim"]}]}
+            inventory = {"occurrences": [{"id": "C1", "candidate_id": "X1",
+                                          "paragraph_id": "P1", "marker": "(Smith, 2020)",
+                                          "statement": statement, "cited_r_ids": ["R1"]}],
+                         "references": [ref], "works": [], "uncited": [],
+                         "dispositions": {"X1": "confirmed", "R1": "confirmed"},
+                         "coverage": {"paragraphs_scanned": ["P1", "P2"]}}
+            plan = [{"occurrence_id": "C1", "start": 0, "end": len(statement), "kind": "claim"}]
+            (work / "task.json").write_text(json.dumps(task))
+            (work / "candidates.json").write_text(json.dumps(candidates))
+            (root / "inventory.json").write_text(json.dumps(inventory))
+            (root / "claims.json").write_text(json.dumps(plan))
+            pending = cp.status(str(root), "paper", inventory, plan)
+            self.assertEqual(pending["pending_count"], 1)
+            packet = next(p[2] for p in cp.assess_claims.packets(task, inventory, plan))
+            (work / "claim-records").mkdir()
+            (work / "claim-records" / "C1.1.json").write_text(json.dumps({
+                "packet_sha256": cp.core.digest(packet), "judgment": "Not Judged",
+                "reason": "test", "evidence": []}))
+            complete = cp.status(str(root), "paper", inventory, plan)
+        self.assertEqual(complete["complete_count"], 1)
+        self.assertEqual(complete["pending_count"], 0)
 
 
 class LongFormTests(unittest.TestCase):
