@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Checkpoint/resume at long-form scale (R37).** Two bounded 5-claim model
+  batches resumed from the checkpoint manifest, moving the 140-claim synthetic
+  task from 0/140 to 10/130 complete without rerunning saved claims. The
+  synthetic fixture has mismatched source/reference years, so it is evidence
+  for orchestration only, not judgment quality.
+
 - **Long-run checkpoint manifest (R37).** Added `checkpoint.py` to report
   completed, pending, stale and no-evidence claim IDs from saved records; it
   writes `_work/<paper>/checkpoint.json` for resume. Verified 0/140 on the
