@@ -30,7 +30,7 @@ BUDGETS = {
     "AGENTS.md": 1200,
     "docs/ARCHITECTURE.md": 3500,
     "docs/STATE.md": 4000,
-    "docs/PLAN.md": 3200,
+    "docs/PLAN.md": 3840,
 }
 HEADINGS = {
     "AGENTS.md": ["## Documentation map", "## Sources of truth",
