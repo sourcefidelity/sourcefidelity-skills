@@ -74,6 +74,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sourcefidelity-sha
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
 from sourcefidelity_core import assessment as core_assessment  # noqa: E402
 from sourcefidelity_core import claim_assessment as core_claim  # noqa: E402
+from sourcefidelity_core import document_structure as docst  # noqa: E402
 from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
@@ -4721,6 +4722,33 @@ class UpdateCheckTests(unittest.TestCase):
             with mock.patch.object(uc, "ROOT", tmp), redirect_stdout(buf):
                 uc.main(["--stamp"])
         self.assertIn("v2.3.4 (commit abc1234)", buf.getvalue())
+
+
+class DocumentStructureTests(unittest.TestCase):
+    def test_heading_styles_create_chapters(self):
+        paragraphs = [
+            {"id": "P1", "style": "Heading1", "text": "Chapter One"},
+            {"id": "P2", "style": "Normal", "text": "Body one."},
+            {"id": "P3", "style": "Heading1", "text": "Chapter Two"},
+            {"id": "P4", "style": "Normal", "text": "Body two."},
+        ]
+        chapters = docst.detect_chapters(paragraphs)
+        self.assertEqual([c["title"] for c in chapters], ["Chapter One", "Chapter Two"])
+        self.assertEqual([p["chapter_id"] for p in paragraphs], ["CH1", "CH1", "CH2", "CH2"])
+
+    def test_docx_notes_are_extracted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "thesis.docx"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("word/document.xml", "<w:document/>")
+                archive.writestr(
+                    "word/footnotes.xml",
+                    '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    '<w:footnote w:id="1"><w:p><w:r><w:t>First note.</w:t></w:r></w:p></w:footnote>'
+                    "</w:footnotes>")
+            notes = docst.notes(path)
+        self.assertEqual(notes[0]["kind"], "FN")
+        self.assertEqual(notes[0]["text"], "First note.")
 
 
 class DocxFormattingTests(unittest.TestCase):

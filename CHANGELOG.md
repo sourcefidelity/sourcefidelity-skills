@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Thesis structure first slice (R36).** Added `document_structure.py` to
+  detect DOCX heading/outline chapters and extract footnotes/endnotes with
+  stable IDs; `docx_text.py` now carries chapter and note structure. Chapter
+  and note fixtures pass; per-chapter references and a full thesis render
+  remain open.
+
 - **Bounded model evidence rescue (R35).** Added `rescue_select.py` with
   `emit`/`record`/`apply`: after deterministic retrieval fails, the host model
   selects 0-3 numbered candidate paragraphs, IDs are validated, and rescue

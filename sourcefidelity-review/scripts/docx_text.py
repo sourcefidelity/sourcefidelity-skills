@@ -13,8 +13,11 @@ import argparse, json, os, re, sys, zipfile
 from xml.etree import ElementTree as ET
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "sourcefidelity-shared"))
 
 from word_count import _text  # noqa: E402
+from sourcefidelity_core import document_structure  # noqa: E402
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -42,6 +45,7 @@ def build(path):
         style = ""
         indent = {}
         align = ""
+        outline_level = None
         if props is not None:
             style_node = props.find(W + "pStyle")
             style = style_node.get(W + "val") if style_node is not None else ""
@@ -53,6 +57,12 @@ def build(path):
                         indent[key] = value
             jc = props.find(W + "jc")
             align = jc.get(W + "val") if jc is not None else ""
+            outline = props.find(W + "outlineLvl")
+            if outline is not None:
+                try:
+                    outline_level = int(outline.get(W + "val"))
+                except (TypeError, ValueError):
+                    outline_level = None
         runs, links = [], []
         for run in para.iter(W + "r"):
             body = _text(run)
@@ -71,9 +81,12 @@ def build(path):
         paragraphs.append({"id": f"P{len(paragraphs) + 1}", "style": style,
                            "align": align, "indent": indent, "runs": runs,
                            "links": links, "text": text,
+                           "outline_level": outline_level,
                            "words": len(re.findall(r"\S+", text))})
+    chapters = document_structure.detect_chapters(paragraphs)
     return {"source": os.path.abspath(path), "tables": tables,
-            "paragraphs": paragraphs}
+            "paragraphs": paragraphs, "chapters": chapters,
+            "notes": document_structure.notes(path)}
 
 
 def markdown(data):
