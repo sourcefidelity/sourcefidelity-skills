@@ -24,6 +24,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import review_metrics  # noqa: E402
+import source_coverage  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -143,6 +144,30 @@ def aggregate_review_metrics(rows):
         "reappraisal": reappraisal_summary,
         "wall_span_ms": wall_ms,
     }
+
+
+def write_coverage_section(w, root):
+    """Per-paper source availability, independent of judgment counts."""
+    try:
+        data = source_coverage.build(str(root))
+    except (OSError, ValueError):
+        return
+    papers = data.get("papers") or {}
+    if not papers:
+        return
+    w("## Source coverage\n")
+    w("| Paper | Works | Identity | Full text | Supplied | Blocked | Missing |")
+    w("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for pid, row in sorted(papers.items()):
+        w(f"| {pid} | {row['works']} | {row['identity']} | {row['full_text']} | "
+          f"{row['supplied']} | {row['blocked']} | {row['missing']} |")
+    total = data.get("totals") or {}
+    w(f"| **Total** | {total.get('works', 0)} | {total.get('identity', 0)} | "
+      f"{total.get('full_text', 0)} | {total.get('supplied', 0)} | "
+      f"{total.get('blocked', 0)} | {total.get('missing', 0)} |")
+    w("")
+    w("Full text means an extracted representation exists; identity-only "
+      "metadata and HTML shells are not counted.\n")
 
 
 def write_metrics_section(w, aggregate):
@@ -339,6 +364,8 @@ def main():
               f"{(sentences[0][:120] if sentences else '—')} | "
               f"{pair.get('shared_ngram_count', 0)} |")
         w("")
+
+    write_coverage_section(w, root)
 
     w("## Sources to acquire\n")
     acq_list = acq.get("acquirable", [])

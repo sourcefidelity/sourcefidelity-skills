@@ -71,6 +71,7 @@ import link_states as ls  # noqa: E402
 import refresh_pricing as pricing_refresh  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
+import source_coverage as sc  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sourcefidelity-shared"))
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
 from sourcefidelity_core import assessment as core_assessment  # noqa: E402
@@ -2748,6 +2749,32 @@ class ReappraiseCoverageTests(unittest.TestCase):
         self.assertEqual(observation["status"], "adequate")
         self.assertTrue(observation["absence_allowed"])
 
+
+class SourceCoverageTests(unittest.TestCase):
+    def test_identity_full_text_blocked_and_missing_are_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for pid in ("P1", "P2"):
+                (root / pid).mkdir()
+                (root / pid / "summary.json").write_text(json.dumps(
+                    {"paper_id": pid, "occurrences": {"total": 1}}))
+            (root / "source_registry.json").write_text(json.dumps({"works": {
+                "A": {"source_key": "A", "papers": ["P1"],
+                      "identity_status": "supplied_confirmed",
+                      "supplied_file": "a.pdf", "extraction": "a/text.txt"},
+                "B": {"source_key": "B", "papers": ["P1"],
+                      "identity_status": "unresolved"},
+                "C": {"source_key": "C", "papers": ["P2"],
+                      "identity_status": "resolved_external",
+                      "extraction": "c/text.txt", "notes": "blocked by paywall"},
+            }}))
+            data = sc.build(str(root))
+        self.assertEqual(data["papers"]["P1"]["identity"], 1)
+        self.assertEqual(data["papers"]["P1"]["full_text"], 1)
+        self.assertEqual(data["papers"]["P1"]["supplied"], 1)
+        self.assertEqual(data["papers"]["P1"]["missing"], 1)
+        self.assertEqual(data["papers"]["P2"]["blocked"], 1)
+        self.assertEqual(data["papers"]["P2"]["full_text"], 1)
 
 class BatchIntegrityTests(unittest.TestCase):
     def test_packet_failure_reasons_are_classified(self):
