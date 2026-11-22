@@ -172,6 +172,10 @@ def response_evidence(packet, response):
             or not isinstance(evidence, list) or len(evidence) > MAX_PASSAGES
             or bool(evidence) == (judgment == "Not Judged")):
         raise ValueError("invalid judgment, reason or evidence count")
+    # A bare verdict is not an evidential rationale, even if it matches.
+    label = " ".join(reason.split()).strip(" .!?\"'").casefold()
+    if label in {value.casefold() for value in VERDICTS}:
+        raise ValueError("reason must explain the judgment, not repeat a verdict label")
     passages = {p["passage_id"]: p for p in packet["passages"]}
     seen = set()
     sources = []

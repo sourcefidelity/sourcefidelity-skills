@@ -5190,6 +5190,20 @@ class ClaimAssessmentTests(unittest.TestCase):
         self.assertEqual(result["occurrences"]["qualified"], 1)
         self.assertIn("earlier packet", (self.root / "paper" / "review.md").read_text())
 
+    def test_verdict_label_as_reason_is_rejected_on_write_and_replay(self):
+        response = {**self.response(), "judgment": "Contradicts", "reason": " Not Judged. "}
+        path = self.root / "response.json"
+        self.write(path, response)
+        result = self.run_claims("record", "C1.1", str(path), status=1)
+        self.assertIn(b"reason must explain", result.stderr)
+        self.assertFalse((self.work / "claim-records").exists())
+        record = self.work / "claim-records" / "C1.1.json"
+        record.parent.mkdir()
+        self.write(record, response)
+        counts = json.loads(self.run_claims("render").stdout)["occurrences"]
+        self.assertEqual(counts["contradicts"], 0)
+        self.assertEqual(counts["qualified"], 1)
+
     def test_quote_bypass_refuses_ambiguous_or_unconfirmed_evidence(self):
         window = self.task["windows"]["X1"][0]
         window["text"] += f" {self.quote}"
