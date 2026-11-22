@@ -2111,6 +2111,27 @@ class PrepareFailureTests(unittest.TestCase):
             self.assertIn("extraction failed", task.stderr)
 
 
+class ExtractionCoverageGateTests(unittest.TestCase):
+    def test_zero_extraction_is_not_marked_prepared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            papers = Path(tmp) / "papers" / "participant-1"
+            papers.mkdir(parents=True)
+            body = ('<w:p><w:r><w:t>This paper has no reference list and no '
+                    'citation markers at all.</w:t></w:r></w:p>')
+            xml = ('<w:document xmlns:w="http://schemas.openxmlformats.org/'
+                   'wordprocessingml/2006/main"><w:body>' + body + "</w:body></w:document>")
+            with zipfile.ZipFile(papers / "P1.docx", "w") as archive:
+                archive.writestr("word/document.xml", xml)
+            out = Path(tmp) / "batch"
+            run = subprocess.run([sys.executable, "-I", os.path.join(HERE, "prepare_batch.py"),
+                                  "--papers", str(papers), "--out", str(out)],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            paper = json.load(open(out / "_work" / "P1" / "paper.json"))
+            summary = json.load(open(out / "prep_summary.json"))
+        self.assertEqual(paper["status"], "needs_manual_review")
+        self.assertIn("P1", summary["flagged_for_extraction"])
+
 class PaperIndexTests(unittest.TestCase):
     def _batch(self, tmp, ids, manifest=None):
         for pid in ids:
@@ -4836,6 +4857,33 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(complete["complete_count"], 1)
         self.assertEqual(complete["pending_count"], 0)
 
+
+class ExtractionFallbackTests(unittest.TestCase):
+    def test_numbered_reference_fallback(self):
+        paragraphs = [
+            {"id": "P1", "text": "Body paragraph without entries."},
+            {"id": "P2", "text": "Reference"},
+            {"id": "P3", "text": "1.Smith, A. (2020). A book. Press."},
+            {"id": "P4", "text": "2.Jones, B. (2021). Another book. Press."},
+        ]
+        entries = ec.fallback_references(paragraphs, 2)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["text"], "Smith, A. (2020). A book. Press.")
+
+    def test_unlabelled_tail_reference_start(self):
+        paragraphs = [
+            {"id": "P1", "text": "Body paragraph."},
+            {"id": "P2", "text": "Croteau, D., & Hoynes, W. (n.d.). Media giants. Press."},
+            {"id": "P3", "text": "Goldsmith, B. (2005). Policy. Journal, 1(1), 1-2."},
+        ]
+        self.assertEqual(ec.inferred_reference_start(paragraphs), 1)
+
+    def test_possessive_title_and_report_citations(self):
+        title = "Mirrlees’ Global Entertainment Media (2013) demonstrates the point."
+        report = "According to Marvel’s 2007 and 2008 annual reports, the line grew."
+        self.assertTrue(ec.POSSESSIVE_TITLE_YEAR.search(title))
+        self.assertTrue(ec.POSSESSIVE_REPORT.search(report))
+        self.assertTrue(ec.MULTI_NARRATIVE.search("Croteau and Hoynes (2006) argue this."))
 
 class LongFormTests(unittest.TestCase):
     def test_15000_word_one_reference_list_paper_is_inventoried(self):

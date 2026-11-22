@@ -246,6 +246,13 @@ def main(argv=None):
     print(f"[prep] references {len(cand.get('references', []))} "
           f"(detected {len(entries)}, injected {injected}); "
           f"citations {len(cand.get('citations', []))} (added {added})", flush=True)
+    paper_path = os.path.join(work, "paper.json")
+    paper_record = load(paper_path, {}) or {}
+    if (paper_record.get("status") == "needs_manual_review"
+            and cand.get("citations") and cand.get("references")):
+        paper_record["status"] = "prepared"
+        with open(paper_path, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(paper_record, handle, ensure_ascii=False, indent=1)
 
     cmd = [sys.executable, os.path.join(BATCH, "source_registry.py"),
            "--batch", root, "--sources", sources]

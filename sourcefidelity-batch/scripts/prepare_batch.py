@@ -131,6 +131,19 @@ def main():
                       ensure_ascii=False, indent=1)
         except Exception as exc:
             metadata = {"error": str(exc)}
+        counts_candidate = {
+            "references": len(candidates.get("references", [])),
+            "citations": len(candidates.get("citations", [])),
+        }
+        ambiguity = candidates.setdefault("ambiguity", {})
+        if not counts_candidate["citations"]:
+            ambiguity["flags"] = list(dict.fromkeys(
+                (ambiguity.get("flags") or []) + ["no_citation_candidates"]))
+            ambiguity["needs_extraction_pass"] = True
+        if not counts_candidate["references"]:
+            ambiguity["flags"] = list(dict.fromkeys(
+                (ambiguity.get("flags") or []) + ["no_reference_entries"]))
+            ambiguity["needs_extraction_pass"] = True
         paper = {
             "paper_id": pid,
             "path": path,
@@ -152,7 +165,9 @@ def main():
             },
             "reference_heading": candidates.get("reference_heading", ""),
             "ambiguity": candidates.get("ambiguity", {}),
-            "status": "extraction_failed" if pid in failed else "prepared",
+            "status": ("extraction_failed" if pid in failed else
+                       "needs_manual_review" if not counts_candidate["citations"]
+                       or not counts_candidate["references"] else "prepared"),
         }
         json.dump(paper, open(os.path.join(folder, "paper.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)

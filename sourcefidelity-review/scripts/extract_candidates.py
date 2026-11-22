@@ -196,6 +196,65 @@ def entry_like(text):
             and bool(re.match(r"[A-Z]", text.strip())))
 
 
+_REF_NUMBER = re.compile(r"^\s*(?:\[\d+\]|\d+[.)])\s*")
+POSSESSIVE_REPORT = re.compile(
+    r"(?i)(?:according\s+to\s+)?([A-Z][A-Za-z'’\-]+)(?:[’']s)\s+"
+    r"((?:19|20)\d{2})(?:\s+and\s+((?:19|20)\d{2}))?\s+"
+    r"(?:annual\s+)?(?:reports?|filings?|financial\s+statements?|10-K)")
+
+
+MULTI_NARRATIVE = re.compile(
+    r"\b([A-Z][A-Za-z'’\-]+)(?:\s*(?:,|and|&)\s*)([A-Z][A-Za-z'’\-]+)"
+    r"\s*\(((?:19|20)\d{2})[a-z]?\)")
+
+
+POSSESSIVE_TITLE_YEAR = re.compile(
+    r"([A-Z][A-Za-z'’\-]*[A-Za-z])(?:[’']s|[’'])\s+([^()]{2,120}?)\s*"
+    r"\(((?:19|20)\d{2})\)")
+
+
+def _unstripped_entry(text):
+    """A trailing reference paragraph, stricter than a body sentence."""
+    stripped = _REF_NUMBER.sub("", text).strip()
+    has_year = bool(re.search(r"\((?:n\.d\.|(?:19|20)\d{2})", stripped)
+                    or "http" in stripped.lower() or "doi" in stripped.lower())
+    if not has_year:
+        return False
+    author_initial = re.match(r"^[A-Z][A-Za-z'’\-]+,\s*[A-Z]\.", stripped)
+    corporate_period = re.match(
+        r"^[A-Z][A-Za-z'’\-]+(?:\s+[A-Z][A-Za-z'’\-]+)+\.", stripped)
+    return bool(author_initial or corporate_period)
+
+
+def inferred_reference_start(paragraphs):
+    """First paragraph of a trailing, unlabelled reference list."""
+    for start in range(max(0, len(paragraphs) // 3), len(paragraphs) - 1):
+        if len(paragraphs) - start < 2:
+            continue
+        if all(_unstripped_entry(p["text"]) for p in paragraphs[start:]):
+            return start
+    return None
+
+
+def fallback_references(paragraphs, start):
+    """Reference entries from numbered or unlabelled trailing paragraphs."""
+    entries = []
+    for paragraph in paragraphs[start:]:
+        raw = paragraph["text"]
+        text = _REF_NUMBER.sub("", raw).strip()
+        if not entry_like(text):
+            continue
+        entries.append({
+            "id": f"R{len(entries) + 1}",
+            "paragraph_id": paragraph.get("id", ""),
+            "text": text,
+            "segments": [{"paragraph_id": paragraph.get("id", ""),
+                          "start": raw.find(text), "end": raw.find(text) + len(text),
+                          "text": text}],
+        })
+    return entries
+
+
 def reference_heading_index(paragraphs):
     """Explicit heading, else infer one from consecutive entry-like paragraphs."""
     explicit = [i for i, p in enumerate(paragraphs) if REF_HEAD_RE.match(p["text"])]
@@ -295,12 +354,18 @@ def build(path, paper_id):
     heading_index = reference_heading_index(paragraphs)
     explicit_heading = (heading_index is not None
                         and bool(REF_HEAD_RE.match(paragraphs[heading_index]["text"])))
+    if heading_index is None:
+        inferred = inferred_reference_start(paragraphs)
+        if inferred is not None:
+            heading_index = inferred
     reference_input = []
     for p in paragraphs:
         if reference_input and APPENDIX_RE.match(p["text"]):
             break
         reference_input.append(p)
     entries = ha.reference_entries(reference_input) if heading_index is not None else []
+    if not entries and heading_index is not None:
+        entries = fallback_references(paragraphs, heading_index + 1)
     references = []
     for entry in entries:
         references.append({
@@ -321,7 +386,8 @@ def build(path, paper_id):
     for p in paragraphs[: heading_index if heading_index is not None else len(paragraphs)]:
         text = p["text"]
         taken = []
-        def add(start, end, marker, cite_kind, parts=None, confidence="high"):
+        def add(start, end, marker, cite_kind, parts=None, confidence="high",
+                allow_unmatched=False):
             if any(s < end and start < e for s, e in taken):
                 return
             taken.append((start, end))
@@ -344,7 +410,8 @@ def build(path, paper_id):
             if cite_kind == "narrative":
                 name_part = marker.split("(", 1)[0]
                 name_part = re.sub(r"[’']s\s*$", "", name_part.strip())
-                words = re.findall(r"[A-Z][A-Za-z'’\-]+", name_part)
+                words = [re.sub(r"[’']s?$", "", word) for word in
+                         re.findall(r"[A-Z][A-Za-z'’\-]+", name_part)]
                 year = YEAR_RE.search(inner)
                 year = year.group(0) if year else ""
                 lowered = {word.casefold() for word in words}
@@ -353,6 +420,10 @@ def build(path, paper_id):
                               and (not year or key["year"] == year)), None)
                 if match:
                     match_id = match["id"]
+                elif (allow_unmatched
+                      and any(key["surname"] in lowered for key in ref_keys)):
+                    confidence = "low"
+                    flags.append("no_matching_reference")
                 elif len(words) > 1 or re.search(r"\b(?:of|to|the|and|in|on|de|van)\b",
                                                  name_part, re.I):
                     year_mentions.append({"paragraph_id": p["id"], "marker": marker})
@@ -376,6 +447,14 @@ def build(path, paper_id):
                 "flags": flags,
                 **({"reference_match": match_id} if match_id else {}),
             })
+        for m in POSSESSIVE_REPORT.finditer(text):
+            add(m.start(), m.end(), m.group(0), "narrative", [], "medium",
+                allow_unmatched=True)
+        for m in MULTI_NARRATIVE.finditer(text):
+            add(m.start(), m.end(), m.group(0), "narrative", [], "medium",
+                allow_unmatched=True)
+        for m in POSSESSIVE_TITLE_YEAR.finditer(text):
+            add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
         for m in ETAL_RE.finditer(text):
             add(m.start(), m.end(), m.group(0), "narrative", [], "medium")
         for m in NARRATIVE_RE.finditer(text):
