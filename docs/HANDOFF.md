@@ -10,14 +10,14 @@
 |---|---|
 | Repository | `/Users/michaelhigh/Documents/deepseek-harness/default-workspace/sourcefidelity-skills-work` |
 | Branch | `codex/sourcefidelity-dev` |
-| Last pushed commit | `7548728` — *Import local HTML supplied sources* |
-| Remote branch | `origin/codex/sourcefidelity-dev` is at `7548728` |
-| Uncommitted work | Yes: `sourcefidelity-shared/` plus its integrations, tests and docs |
-| Installed profile | `~/.dsh/skills`, channel `dev`, stamp `7548728`; it contains the uncommitted working-tree code |
+| Last pushed commit | `b2e572c` — *Share acquisition, source understanding and assessment core* |
+| Remote branch | `origin/codex/sourcefidelity-dev` is at `b2e572c` |
+| Uncommitted work | None; the tree is clean at this commit |
+| Installed profile | `~/.dsh/skills`, channel `dev`; it contains the shared-core commit |
 | Stable release | `1.1.2` on `main`; no release was made for this work |
 | Tests | 429 pipeline tests pass; style/PDF suites and docs check pass |
 
-**Critical before switching machines:** the shared-core work is uncommitted. Commit and push it first. On the same machine, the installed profile already contains it even though git does not.
+**Handoff state:** the shared-core work is committed and pushed at `b2e572c`. Clone this branch on the new harness, or use the existing local checkout; the installed profile already contains it on this machine.
 
 ## 2. What changed last day
 
@@ -59,7 +59,7 @@ Details:
 | `07dd188` | `open_text_pages.py` for CORE/open raw text page reconstruction. |
 | `7548728` | Local `.html` supplied-source import plus HTML scanning/preparation. |
 
-### Uncommitted shared-core work
+### Shared-core work (committed in `b2e572c`)
 
 A fourth sibling directory now exists:
 
@@ -79,7 +79,7 @@ sourcefidelity-shared/sourcefidelity_core/
   understanding.py     representation precedence: supplied > acquired > web
 ```
 
-Integrations in the working tree:
+Integrations committed with the shared core:
 
 - `install.sh` installs `sourcefidelity-shared`.
 - `source_registry.py` scans supplied, acquired, `_work/open` and legacy fetched files; stages matched acquired copies; rejects invalid PDFs; records representations.
@@ -124,7 +124,7 @@ The plan and state were updated with:
 ## 6. How to continue on another harness
 
 1. Read `AGENTS.md`, `docs/STATE.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md`, then this file.
-2. Check `git status`; commit/push the shared-core work before switching machines.
+2. Check `git status`; the shared-core work is already committed and pushed at `b2e572c`.
 3. Ensure Python 3.12 and `pypdf` are available. The installed profile's venv is at `~/.dsh/skills/sourcefidelity-review/.venv`.
 4. Install the working tree:
 

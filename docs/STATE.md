@@ -7,11 +7,11 @@
 
 | Item | Value |
 |---|---|
-| Branch | `codex/sourcefidelity-dev` at `7548728` plus uncommitted shared-core work; stable `main` is `v1.1.2` |
+| Branch | `codex/sourcefidelity-dev` at `b2e572c`; clean tree; stable `main` is `v1.1.2` |
 | Source version | `1.1.2` (`VERSION`); dev branch, no new release tag |
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
-| Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`, stamp `7548728`; includes the uncommitted shared core; shared venv intact |
+| Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
 | Test suites | 429 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
