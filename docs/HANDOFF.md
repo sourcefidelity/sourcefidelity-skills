@@ -10,14 +10,14 @@
 |---|---|
 | Repository | `/Users/michaelhigh/Documents/deepseek-harness/default-workspace/sourcefidelity-skills-work` |
 | Branch | `codex/sourcefidelity-dev` |
-| Last pushed commit | `b2e572c` — *Share acquisition, source understanding and assessment core* |
-| Remote branch | `origin/codex/sourcefidelity-dev` is at `b2e572c` |
+| Last pushed commit | `e625747` — *Record shared-core commit in handoff and state*; shared-core implementation is `b2e572c` |
+| Remote branch | `origin/codex/sourcefidelity-dev` is at `e625747` |
 | Uncommitted work | None; the tree is clean at this commit |
 | Installed profile | `~/.dsh/skills`, channel `dev`; it contains the shared-core commit |
 | Stable release | `1.1.2` on `main`; no release was made for this work |
 | Tests | 429 pipeline tests pass; style/PDF suites and docs check pass |
 
-**Handoff state:** the shared-core work is committed and pushed at `b2e572c`. Clone this branch on the new harness, or use the existing local checkout; the installed profile already contains it on this machine.
+**Handoff state:** the shared-core work is committed and pushed at `e625747` (shared core `b2e572c`). Clone this branch on the new harness, or use the existing local checkout; the installed profile already contains it on this machine.
 
 ## 2. What changed last day
 
@@ -124,7 +124,7 @@ The plan and state were updated with:
 ## 6. How to continue on another harness
 
 1. Read `AGENTS.md`, `docs/STATE.md`, `docs/PLAN.md`, `docs/ARCHITECTURE.md`, then this file.
-2. Check `git status`; the shared-core work is already committed and pushed at `b2e572c`.
+2. Check `git status`; the shared-core work is already committed and pushed (shared core `b2e572c`, handoff `e625747`).
 3. Ensure Python 3.12 and `pypdf` are available. The installed profile's venv is at `~/.dsh/skills/sourcefidelity-review/.venv`.
 4. Install the working tree:
 
