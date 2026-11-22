@@ -184,6 +184,26 @@ NUMBER_WORDS = {
 }
 
 
+def notation_phrases(citation):
+    """Locator/article notation variants that search normalization cannot infer."""
+    sentence = citation.get("sentence") or citation.get("marker", "")
+    out = []
+    for match in re.finditer(r"\b(?:Article|Art\.?)\s+(\d+[A-Za-z]?)(?:\(([A-Za-z])\))?", sentence, re.I):
+        number, letter = match.groups()
+        if letter:
+            variants = [f"Article {number}({letter})", f"Article {number}{letter}",
+                        f"Art. {number}({letter})", f"Art. {number}{letter}"]
+        else:
+            variants = [f"Article {number}", f"Art. {number}"]
+        out.extend(variants)
+    for match in re.finditer(r"\bpp?\.\s*(\d+)(?:\s*[–-]\s*(\d+))?", sentence, re.I):
+        first, last = match.groups()
+        out.append(f"p. {first}")
+        if last:
+            out.extend([f"pp. {first}-{last}", f"pages {first}-{last}"])
+    return list(dict.fromkeys(out))[:20]
+
+
 def number_phrases(citation):
     """Search both digit and word forms of quantities (12 Member States)."""
     sentence = citation.get("sentence") or citation.get("marker", "")
@@ -470,9 +490,29 @@ def reference_members(citation, refs):
                     approximate.append(rid)
         best = max((score for score, _ in exact), default=0)
         candidates = [rid for score, rid in exact if score == best] if exact else approximate
+        year_variant = False
+        if not candidates and not date:
+            year_variant = True
+        if not candidates:
+            # A unique surname with a differing year is an edition/year binding,
+            # not an unresolvable citation. C3/C19 (Harcourt 2004 -> R2 2007)
+            # are the motivating case.
+            names = set(source_registry.norm(part).split())
+            by_surname = []
+            for rid, ref in parsed:
+                surname = source_registry.surname_of(ref["author"])
+                if surname and (f" {surname} " in f" {source_registry.norm(part)} "
+                                or any(source_registry.close_surname(word, surname)
+                                       for word in names)):
+                    by_surname.append(rid)
+            if len(set(by_surname)) == 1:
+                candidates = [by_surname[0]]
+                year_variant = True
         member = {"marker": part.strip(), "candidate_r_ids": candidates}
         if len(candidates) == 1:
             member["r_id"] = candidates[0]
+            if year_variant:
+                member["binding"] = "year_variant"
         members.append(member)
     return members
 
@@ -648,8 +688,8 @@ def main():
         likely = list(dict.fromkeys(member["r_id"] for member in members if "r_id" in member))
         cit["likely_r_ids"] = likely
         cit["search_terms"] = search_terms(cit)
-        phrases = (number_phrases(cit) + phrases_for(cit) + spelling_phrases(cit)
-                   + surface_phrases(cit.get("sentence", "")))
+        phrases = (notation_phrases(cit) + number_phrases(cit) + phrases_for(cit)
+                   + spelling_phrases(cit) + surface_phrases(cit.get("sentence", "")))
         found, per_ref = [], {}
         for rid in likely:
             src = sources[rid]

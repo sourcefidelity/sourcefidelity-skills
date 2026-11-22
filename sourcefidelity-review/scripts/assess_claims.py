@@ -151,6 +151,9 @@ def get_result(work, cid, packet, limitation):
     try:
         response = bounded_response(record)
         sources = core.response_evidence(packet, response)
+        if (response["judgment"] in ("Supports", "Contradicts")
+                and not core.evidence_anchored(packet, sources)):
+            return "Not Judged", "The judgment has no claim-specific evidence anchor.", []
     except FileNotFoundError:
         return "Not Judged", "No judgment was recorded for this claim.", []
     except (OSError, ValueError):

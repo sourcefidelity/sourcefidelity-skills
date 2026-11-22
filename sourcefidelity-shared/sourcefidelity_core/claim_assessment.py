@@ -224,6 +224,22 @@ def exact_quote_response(packet):
                           "contribution": "Exact wording at the observed source locator."}]}
 
 
+_ANCHOR_STOP = {"that", "this", "with", "from", "their", "which", "have", "were",
+                "been", "into", "about", "also", "used", "using", "such", "these",
+                "they", "them", "then", "than", "over", "under", "between"}
+
+
+def evidence_anchored(packet, sources):
+    """A Supports/Contradicts response must share claim-specific words with evidence."""
+    claim = packet.get("claim", "")
+    terms = {word for word in re.findall(r"[A-Za-z][A-Za-z'’\-]{3,}", claim.casefold())
+             if word not in _ANCHOR_STOP}
+    if len(terms) < 2:
+        return True
+    text = " ".join(source.get("evidence", "") for source in sources).casefold()
+    return sum(1 for term in terms if term in text) >= 1
+
+
 def combined_judgment(results):
     values = set(results)
     if not values or values == {"Not Judged"}:

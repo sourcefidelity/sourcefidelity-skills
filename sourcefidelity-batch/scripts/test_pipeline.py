@@ -5561,6 +5561,26 @@ class SearchNormalizationTests(unittest.TestCase):
         self.assertIn("WHO", mt.acronym_phrases(source, citation))
         self.assertEqual(mt.acronym_phrases(source, {"sentence": "Other text."}), [])
 
+    def test_year_variant_binding_is_unique_surname_only(self):
+        refs = [{"id": "R2", "verbatim": "Harcourt, A. J. (2007). Article. Journal, 1(1), 1-2."},
+                {"id": "R3", "verbatim": "Other, B. (2007). Article. Journal."}]
+        citation = {"marker": "(Harcourt, 2004)", "sentence": "This clause (Harcourt, 2004)."}
+        self.assertEqual(mt.match_refs(citation, refs), ["R2"])
+        ambiguous = refs + [{"id": "R4", "verbatim": "Harcourt, C. (2009). Other. Book."}]
+        self.assertEqual(mt.match_refs(citation, ambiguous), [])
+
+    def test_notation_phrases_cover_article_and_page_forms(self):
+        phrases = mt.notation_phrases({"sentence": "Article 2(a) and pp. 12–14."})
+        self.assertIn("Article 2a", phrases)
+        self.assertIn("pp. 12-14", phrases)
+
+    def test_anchor_gate_rejects_unrelated_evidence(self):
+        packet = {"claim": "The directive creates a common market."}
+        unrelated = [{"evidence": "Completely unrelated material."}]
+        related = [{"evidence": "The common market is created by the directive."}]
+        self.assertFalse(core_claim.evidence_anchored(packet, unrelated))
+        self.assertTrue(core_claim.evidence_anchored(packet, related))
+
     def test_sentence_completion_reaches_the_period(self):
         text = "Reality television grew quickly. It was cheap-to-produce."
         end = text.index("grew") + len("grew")

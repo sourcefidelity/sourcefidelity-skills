@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Binding, notation and ranking repairs (R35).** Added year-variant
+  citation binding (C3 now binds the 2004 working paper to the 2007 entry),
+  Article/page notation variants, a claim-term evidence-anchor gate, and
+  source-formulation labels for C2. Current benchmark: 14/14 decisive hits,
+  0.929 coverage, zero wrong-source. Current calibration: 11/16 exact,
+  15/20 judged; C19 remains an evidence-retrieval miss.
+
 - **Current-task calibration after normalization (R35).** 14 one-call
   packets scored 10/14 exact against hidden manual verdicts. C2 was less
   conservative than manual and still lacks decisive packet evidence; C7/C16/C20
