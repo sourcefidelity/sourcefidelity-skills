@@ -15,7 +15,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILLS=(sourcefidelity-review sourcefidelity-batch sourcefidelity-reappraise)
+SKILLS=(sourcefidelity-review sourcefidelity-batch sourcefidelity-reappraise sourcefidelity-shared)
 TARGET=""
 DRY_RUN="0"
 WITH_VENV="1"

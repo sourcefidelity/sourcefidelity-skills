@@ -38,11 +38,15 @@ from collections import defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.dirname(os.path.dirname(HERE))
 REVIEW_SCRIPTS = os.path.join(SKILLS, "sourcefidelity-review", "scripts")
+SHARED_PACKAGE = os.path.join(SKILLS, "sourcefidelity-shared")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
+sys.path.insert(0, SHARED_PACKAGE)
 
 import acquisition_list  # noqa: E402
 import prepare_html  # noqa: E402
+from sourcefidelity_core import acquired as core_acquired  # noqa: E402
+from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import detect_structure  # noqa: E402
 import source_scope  # noqa: E402
 
@@ -320,6 +324,12 @@ def first_pages_text(path, pages=3):
     if str(path).lower().endswith((".html", ".htm")):
         _title, text = prepare_html.html_text(path)
         return text[:6000]
+    if str(path).lower().endswith((".txt", ".md")):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                return handle.read(6000)
+        except OSError:
+            return ""
     parts = []
     try:
         from pypdf import PdfReader
@@ -493,6 +503,24 @@ def source_candidates(sources):
 def pdf_candidates(sources):
     """Backward-compatible alias for the old PDF-only scanner."""
     return source_candidates(sources)
+
+
+def _under(path, directory):
+    if not directory:
+        return False
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(directory)]) == os.path.abspath(directory)
+    except ValueError:
+        return False
+
+
+def _stage_if_needed(root, key, path, sources):
+    """Canonicalise a fetched/mapped copy; supplied-folder paths stay put."""
+    if _under(path, sources) or os.path.basename(os.path.dirname(path)) == key and "_acquired" in path:
+        return path, ""
+    entry = core_acquired.stage(root, key, path, route="acquired")
+    return entry["path"], "acquired"
+
 
 
 def resolve_chapters(registry):
@@ -806,6 +834,8 @@ def main():
     supplied = []
     if args.sources and os.path.isdir(args.sources):
         supplied = source_candidates(args.sources)
+    supplied.extend(path for path in core_acquired.candidate_files(root)
+                    if path not in supplied)
     cache_path = os.path.join(root, "_work", "_file_identity.json")
     cache = {}
     if os.path.exists(cache_path):
@@ -889,6 +919,7 @@ def main():
             "citation_count": data["citations"],
             "aliases": sorted(k for k, v in aliases.items() if v == key),
             "supplied_file": "",
+            "representations": [],
             "extraction": "",
             "page_map": "",
             "identity_status": "unresolved",
@@ -904,7 +935,13 @@ def main():
                 if field in {"work_kind", "container_title", "editors"}:
                     record["identity"][field] = value
         if key in manual:
-            record["supplied_file"] = manual[key]
+            staged, route = _stage_if_needed(root, key, manual[key], args.sources)
+            record["representations"].append({
+                "path": staged, "representation": "supplied" if not route else "acquired",
+                "route": route or "manual", "usable": True, "limitation": ""})
+            chosen = core_understanding.choose_representation(record)
+            record["supplied_file"] = chosen.get("path", staged)
+            record["acquisition_route"] = route
             record["identity_status"] = "supplied_confirmed"
             record["verified_by"] = "explicit mapping"
         elif supplied:
@@ -938,7 +975,13 @@ def main():
                     candidates.sort(key=lambda c: c[0], reverse=True)
                 best = candidates[0]
             if best:
-                record["supplied_file"] = best[2]
+                staged, route = _stage_if_needed(root, key, best[2], args.sources)
+                record["representations"].append({
+                    "path": staged, "representation": "supplied" if not route else "acquired",
+                    "route": route or "supplied", "usable": True, "limitation": ""})
+                chosen = core_understanding.choose_representation(record)
+                record["supplied_file"] = chosen.get("path", staged)
+                record["acquisition_route"] = route
                 record["match"] = {"score": best[0], **best[3]}
                 strong_id = best[3].get("doi") or best[3].get("isbn")
                 corroborated = (best[3].get("year")
@@ -1014,9 +1057,13 @@ def main():
                         and (not args.prepare_key or key in args.prepare_key))
         if prepare_this:
             out_dir = os.path.join(root, "_sources", key)
-            if str(record["supplied_file"]).lower().endswith((".html", ".htm")):
+            supplied_lower = str(record["supplied_file"]).lower()
+            if supplied_lower.endswith((".html", ".htm")):
                 cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_html.py"),
                        "--html", record["supplied_file"], "--out", out_dir, "--key", key]
+            elif supplied_lower.endswith((".txt", ".md")):
+                cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_text.py"),
+                       "--text", record["supplied_file"], "--out", out_dir, "--key", key]
             else:
                 cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
                        "--pdf", record["supplied_file"], "--out", out_dir, "--key", key]

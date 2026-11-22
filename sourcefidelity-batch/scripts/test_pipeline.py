@@ -53,6 +53,7 @@ import benchmark_retrieval as bm  # noqa: E402
 import make_task as mt  # noqa: E402
 import prepare_html as ph  # noqa: E402
 import prepare_source as ps  # noqa: E402
+import prepare_text as pt  # noqa: E402
 import page_map  # noqa: E402
 import pdf_quality as pq  # noqa: E402
 import paper_index as pi  # noqa: E402
@@ -67,6 +68,10 @@ import link_states as ls  # noqa: E402
 import refresh_pricing as pricing_refresh  # noqa: E402
 import safe_fetch as sf  # noqa: E402
 import source_registry as sr  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sourcefidelity-shared"))
+from sourcefidelity_core import acquired as core_acquired  # noqa: E402
+from sourcefidelity_core import assessment as core_assessment  # noqa: E402
+from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
@@ -80,6 +85,7 @@ import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
 import sourcepack as sp  # noqa: E402
+import one_paper as op  # noqa: E402
 import open_text_pages as otp  # noqa: E402
 import openfetch as of  # noqa: E402
 import fetch as fetch_helper  # noqa: E402
@@ -4840,6 +4846,123 @@ class KindCoverageTests(unittest.TestCase):
         budget = kc.assess("article", ["crossref", "openalex"], [], True)
         self.assertFalse(budget["complete"])
 
+
+class PrepareTextTests(unittest.TestCase):
+    def test_raw_text_becomes_one_labelled_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "source.txt")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("The article begins here. A second sentence follows.")
+            out = os.path.join(tmp, "extract")
+            pt.write_extraction(path, out, "R1")
+            text = open(os.path.join(out, "text.txt"), encoding="utf-8").read()
+            meta = json.load(open(os.path.join(out, "meta.json"), encoding="utf-8"))
+        self.assertIn("The article begins here", text)
+        self.assertEqual(meta["extractor_version"], "prepare-text-v1")
+        self.assertIn("no printed page", " ".join(meta["gaps"]))
+
+
+class OnePaperOrchestrationTests(unittest.TestCase):
+    def test_packets_are_written_to_each_citation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_path = os.path.join(tmp, "task.json")
+            task = {"candidates": {"citations": [{
+                "id": "C1", "marker": "(Smith, 2020)",
+                "sentence": "The directive creates a single market."}]},
+                "windows": {"C1": [{"window_id": "C1:R1:1", "pdf_page": 3,
+                                    "text": "The directive creates a single market. "
+                                            "It also sets minimum rules."}]}}
+            with open(task_path, "w", encoding="utf-8") as handle:
+                json.dump(task, handle)
+            result = op.write_packets(task_path)
+            updated = json.load(open(task_path, encoding="utf-8"))
+        citation = updated["candidates"]["citations"][0]
+        self.assertIn("assessment_packet", citation)
+        self.assertIn("evidence_selection", citation)
+        self.assertEqual(result["with_windows"], 1)
+
+class SharedAssessmentTests(unittest.TestCase):
+    def _task(self):
+        return {"candidates": {"citations": [{"id": "C1", "marker": "(Smith, 2020)",
+                                              "sentence": "The directive creates a single market."}]},
+                "windows": {"C1": [{"window_id": "C1:R1:1", "pdf_page": 3,
+                                    "source_key": "smith",
+                                    "text": "The directive creates a single market. It also sets minimum rules."}]}}
+
+    def test_packet_uses_selected_evidence(self):
+        task = self._task()
+        packet = core_assessment.citation_packet(task, task["candidates"]["citations"][0])
+        self.assertEqual(packet["citation_id"], "C1")
+        self.assertIn(packet["selection"]["status"], {"fallback", "selected"})
+        self.assertTrue(packet["selection"]["sentences"])
+
+    def test_missing_evidence_or_locator_is_rejected(self):
+        errors = core_assessment.judgment_errors(
+            {"id": "C1", "judgment": "Supports",
+             "sources": [{"evidence": "", "locator": ""}]})
+        self.assertTrue(any("evidence" in error for error in errors))
+        self.assertTrue(any("locator" in error for error in errors))
+
+    def test_snapshots_and_compare(self):
+        left = {"R1": {"supplied_file": "a", "extraction": "x", "representations": []}}
+        right = {"R1": {"supplied_file": "a", "extraction": "x", "representations": []}}
+        self.assertEqual(core_assessment.compare(left, right), [])
+        self.assertEqual(core_assessment.compare(left, {**right, "R2": {}}) != [], True)
+
+class SharedSourceUnderstandingTests(unittest.TestCase):
+    def test_supplied_copy_outranks_acquired_and_web(self):
+        record = {"representations": [
+            {"representation": "web", "path": "w", "usable": True},
+            {"representation": "acquired", "path": "a", "usable": True},
+            {"representation": "supplied", "path": "s", "usable": True},
+        ]}
+        self.assertEqual(core_understanding.choose_representation(record)["path"], "s")
+
+    def test_unusable_copy_is_not_chosen(self):
+        record = {"representations": [
+            {"representation": "invalid", "path": "bad", "usable": False,
+             "limitation": "not_a_pdf"},
+            {"representation": "acquired", "path": "good", "usable": True},
+        ]}
+        self.assertEqual(core_understanding.choose_representation(record)["path"], "good")
+        self.assertEqual(core_understanding.representation_limitation(record), "not_a_pdf")
+
+class SharedAcquisitionTests(unittest.TestCase):
+    def test_staging_hashes_and_records_one_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "copy.pdf")
+            with open(source, "wb") as handle:
+                handle.write(b"%PDF-1.4 test")
+            entry = core_acquired.stage(tmp, "smith-2020", source,
+                                        route="openalex", url="https://example.org/x.pdf")
+            self.assertEqual(entry["representation"], "pdf")
+            self.assertTrue(entry["path"].startswith(os.path.join(tmp, "_acquired", "smith-2020")))
+            self.assertEqual(core_acquired.representations(tmp, "smith-2020")[0]["route"],
+                             "openalex")
+            self.assertIn(entry["path"], core_acquired.candidate_files(tmp))
+
+    def test_legacy_loose_fetch_is_a_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = os.path.join(tmp, "_work", "_fetched_supplied_url")
+            os.makedirs(legacy)
+            path = os.path.join(legacy, "article.pdf")
+            with open(path, "wb") as handle:
+                handle.write(b"%PDF-1.4 legacy")
+            self.assertIn(path, core_acquired.candidate_files(tmp))
+
+    def test_invalid_download_is_recorded_not_usable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "challenge.pdf")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("<!DOCTYPE html><title>Just a moment...</title>")
+            entry = core_acquired.stage(tmp, "blocked", source, route="open")
+            self.assertFalse(entry["usable"])
+            self.assertEqual(entry["limitation"], "not_a_pdf")
+            self.assertFalse(core_acquired.candidate_files(tmp))
+
+    def test_review_and_batch_import_the_shared_core(self):
+        self.assertEqual(sp.core_contracts.CORE_VERSION, "sourcefidelity-core-v1")
+        self.assertTrue(hasattr(sr, "core_acquired"))
 
 class PrepareHtmlTests(unittest.TestCase):
     def test_local_html_becomes_a_bounded_page(self):

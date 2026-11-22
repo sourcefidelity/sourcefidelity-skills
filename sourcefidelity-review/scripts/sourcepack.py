@@ -26,12 +26,15 @@ import sys
 import unicodedata
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 
 import hyperlink_audit as ha  # noqa: E402
 import pdf_quality  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import source_scope  # noqa: E402
+from sourcefidelity_core import contracts as core_contracts  # noqa: E402
 
 PREPARE = os.path.join(HERE, "prepare_source.py")
 DOC_TYPES = (".pdf",)
@@ -197,6 +200,7 @@ def _observe(entry, result, why=""):
     if observation.get("status") in {"unresolved", "inadequate"}:
         unknowns.append(observation.get("reason") or "copy coverage unresolved")
     observation.update({
+        "schema": core_contracts.CORE_VERSION,
         "source_file": meta.get("source_file", ""),
         "source_hash": meta.get("sha256", ""),
         "mapping": why,

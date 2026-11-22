@@ -1,18 +1,18 @@
 # Current state
 
-**Last updated:** November 21, 2026
+**Last updated:** November 22, 2026
 **Authority:** This file owns current truth: what is implemented, what was verified, and what remains limited or risky. It is a snapshot, not a session log. Work order is `docs/PLAN.md`; design is `docs/ARCHITECTURE.md`; release history is `CHANGELOG.md`.
 
 ## 1. Current status
 
 | Item | Value |
 |---|---|
-| Branch | `main`; release tag `v1.1.2` |
-| Source version | `1.1.2` (`VERSION`) |
+| Branch | `codex/sourcefidelity-dev` at `7548728` plus uncommitted shared-core work; stable `main` is `v1.1.2` |
+| Source version | `1.1.2` (`VERSION`); dev branch, no new release tag |
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
-| `latest.json` availability | On `main`; the default update check reaches it |
-| Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `stable`, shared venv intact; the release archive has no git commit, so the record's `commit` is empty |
-| Test suites | 418 pipeline tests. Style and PDF suites passed. |
+| `latest.json` availability | On `main`; stable `1.1.2` only |
+| Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`, stamp `7548728`; includes the uncommitted shared core; shared venv intact |
+| Test suites | 429 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -21,7 +21,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 418 passed |
+| Pipeline regressions | `test_pipeline.py` | 429 passed |
 | Identity request budget and cache, development branch | Three live paired cold-cache runs on the same 25 consent-paper references. Four workers, identity and contents checks, keys disabled, isolated caches, run order before/after, after/before, before/after. | Before → patched: 23.19 → 24.61 s, 30.02 → 23.91 s, 29.10 → 22.95 s. Median 29.10 → 23.91 s. Verdict and DOI agreement: 25/25, 22/25, 24/25. In pair 2, provider failures in the baseline changed the outcome for two book editions and one article. In pair 3, the patch reported an incomplete search after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed the same book, *Heavenly Bodies: Film Stars and Society*, in all six runs (title score 1.0). The settings for the historical 176–233 s run remain unverified. |
 | R3 identity response replay | Both resolvers processed the same 25 references offline against 55 freshly recorded HTTP responses, with fresh caches and elapsed waits disabled. The live benchmark had saved resolver outputs only. Two additional replays applied the same simulated failure conditions to both resolvers at the earlier divergent references. | Verdict and DOI agreed for 24/25 references in every replay, with no missing fixtures. The two book-edition differences and one article difference from the live pairs disappeared under shared responses. The remaining reference changed from `unlocated_after_search` to `search_incomplete` after OpenAlex rate limiting and an empty Crossref volume listing. K10plus confirmed *Heavenly Bodies: Film Stars and Society* in both resolvers in all three replays. |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
@@ -50,6 +50,16 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Real batch chapter | Television paper with the supplied COM151 Berry book through `prep_single.py` | R1 is `chapter_edited_collection`, page range [57,82], scope `adequate` (1.0), source hash and mapping recorded; edition remains unknown |
 | Kind coverage | Mocked resolver and batch provider sets, cache replay | Article requires Crossref + OpenAlex; book/chapter requires Open Library plus an article index; resolver marks incomplete `search_incomplete`, batch marks it `partial`, and neither counts as a completed miss |
 | Copy-scope observation | Unit cases, supplied chapter, batch and reappraisal | pp. 57–82 adequate; previews/incomplete scans unresolved; edition observation separates later/translation copies and reappraisal rejects absence from them |
+| Local HTML source | `prepare_html.py`, registry mapping and `make_task.py` on a real reference | Local `.html` scanned, matched, prepared as one labelled page and attached to a citation window; no worker pass yet |
+| Website-source batch | Angry Birds case study with COM151, 3 fetched URLs | 13 citations, 2 Supports, 5 Qualified, 1 Not Supported, 5 Not Judged; C6 used the cached SmileyWorld web page; strict inventory and render passed |
+| One-paper batch parity | Television with the batch skill, `batch-20261122-0130` | Only 2 supplied sources mapped and 4 windows; 10 fetched/open PDFs remained under `_work/_fetched_supplied_url` and were never registered; 16 of 20 occurrences Not Judged |
+| Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
+| Shared supporting modules | Moved finding counts, academic checks and HTML/text/open-text preparers into `sourcefidelity_core`; compatibility shims and CLI forwarding tested | Review and batch import the same supporting code, including script-mode `prepare_html.py`; 429 tests pass |
+| One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |
+| Shared assessment primitives | Packet, judgment-check and snapshot fixtures; parity CLI on identical roots | Citation packets come from the shared selector; missing evidence/locator is rejected; snapshots compare source and window coverage; parity CLI reports true on identical roots |
+| Shared source understanding | Moved `source_scope`, `kind_coverage`, `page_map`, `evidence_select` and `sentence_split` into `sourcefidelity_core` with review-skill compatibility shims; registry now records representations and applies supplied > acquired > web precedence | Both skills exercise the same scope/kind/page-map code; 425 tests pass; no worker parity run yet |
+| Shared acquisition baseline | `sourcefidelity-shared` package, installer inclusion, and a rebuilt Television batch root with CORE texts | Both skills import the shared core; fetched CORE text is staged under `_acquired/<source_key>/` and registered; task coverage rose from 2 mapped/4 windows to 8 mapped/11 windows; invalid challenge HTML is recorded as unusable, not mapped |
+| Shared acquisition plan | `docs/PLAN.md` R29–R34 | One acquired-source registry, one source-understanding layer, one assessment/rendering engine, thin single and batch interfaces, parity tests |
 | Docs check | `python scripts/check_docs.py` | ok, no warnings |
 | Development install | `install.sh --dev` and `--link` on temp targets | `--dev` copied the working tree and recorded channel `dev`; `--link` created symlinks; no version or `latest.json` change |
 | Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
@@ -80,12 +90,21 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | `sourcepack.py` automatic matches need adjudication | Scans without usable first-page text and ambiguous matches can remain unmapped. First-page evidence may leave the edition unresolved. | Inspect the unmapped PDFs and record a confirmed match using `--map`. |
 | Review artifacts are snapshots | Earlier reviews (for example the Television review) are not retroactively corrected | Correct only with an explicit logged edit or a reappraisal |
 | Review method is long | `REVIEW_PROTOCOL.md` is ~10.7k words and is read on every review | Keep it canonical; do not duplicate it in `ARCHITECTURE.md` |
+| Single review fails at the final model turn | Repeated long-context runs end with `Content Exists Risk` while finalizing; some runs have already written complete review/ledger files but are marked failed. | R35 and R38: bounded per-claim assessment and a short file-authoritative final response |
+| The single review is monolithic | The paper, full source texts and draft review accumulate in one context; no per-claim prompt budget or persisted claim records. | Port the app's bounded judgment contract (R35) and shared assessment engine (R32) |
+| Thesis structure is unsupported | `extract_candidates.py` assumes one reference heading and has no chapter, footnote or endnote model; no thesis fixture exists. | R36: chapter/reference/note topology with global IDs |
+| Long documents are untested | No supported word/citation envelope or resumable checkpoint exists; the app caps paper text at 2,000,000 chars and judges one claim against at most three passages, while the skill does not. | R37/R39: scheduling, resumability, synthetic and real thesis acceptance |
+| Short papers will be slower under claim-level calls | Per-claim calls add fixed overhead compared with one large generation; speed gains require grouping and parallelism. | Group related claims and parallelize; record the envelope in R39 |
+| Batch and single review retrieve different sources | A one-paper batch registers only supplied-folder files unless acquired copies are ingested; the Television batch left fetched CORE PDFs in `_work` and produced 4 windows. | Land R30: canonical acquired-source staging and registration using the same acquisition engine as the single review |
+| The current single review cannot finish under the provider filter | Repeated long-context runs fail with `Content Exists Risk` before writing the review. | Move both paths to bounded per-citation assessment (R32); use another provider only as a fallback |
+| Batch one-paper quality is not yet verified | The only Television batch run was dominated by unsupplied sources. | Rebuild the same paper through both paths after R30 and compare acquired works, windows, counts and judgments |
+| Local HTML has no worker/render proof | Only preparation, matching and task windows were exercised. | Add one real local-HTML worker and render regression before release |
 | Docs check is mechanical | It catches links, budgets and version drift, not stale truth | Review `STATE.md` and `PLAN.md` at release and after structural changes |
 | No benchmark of the new speed helpers | The source pack and dossier were measured in isolation, not on a full review | Measure one full review before claiming a speed improvement |
 
 ## 4. Maintenance
 
 - Update this file after a verified change in status, test counts, release state or limitations. Replace the affected row; do not append a dated entry.
-- Keep the file under 2,667 words. If a row grows into a narrative, move the detail to `ARCHITECTURE.md` or `docs/PLAN.md`.
+- Keep the file under 3,500 words. If a row grows into a narrative, move the detail to `ARCHITECTURE.md` or `docs/PLAN.md`.
 - The version here must match `VERSION` and `latest.json`; `scripts/check_docs.py` enforces that.
 - Last verified commands: the three suites plus `python scripts/check_docs.py` from the repository root.

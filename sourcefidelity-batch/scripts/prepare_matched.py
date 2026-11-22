@@ -102,9 +102,13 @@ def main():
 
     for key, path, records in items:
         out_dir = os.path.join(root, "_sources", key)
-        if str(path).lower().endswith((".html", ".htm")):
+        lower = str(path).lower()
+        if lower.endswith((".html", ".htm")):
             cmd = [sys.executable, "-I", os.path.join(REVIEW, "prepare_html.py"),
                    "--html", path, "--out", out_dir, "--key", key]
+        elif lower.endswith((".txt", ".md")):
+            cmd = [sys.executable, "-I", os.path.join(REVIEW, "prepare_text.py"),
+                   "--text", path, "--out", out_dir, "--key", key]
         else:
             cmd = [sys.executable, "-I", os.path.join(REVIEW, "prepare_source.py"),
                    "--pdf", path, "--out", out_dir, "--key", key,

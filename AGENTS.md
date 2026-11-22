@@ -6,7 +6,7 @@ Prompt-driven skills plus Python helpers for checking what a cited source actual
 
 Each `sourcefidelity-*/` directory is one skill: `SKILL.md` is its entry point, with protocols and worker contracts beside it and helpers in `scripts/`.
 
-The three directories must stay siblings with these exact names: batch scripts resolve `../sourcefidelity-review/scripts` from their own path (`prepare_batch.py`, `render_review.py`) and import `detect_structure` and `page_map` from there, so moving, renaming or nesting a skill directory breaks those imports.
+The three skill directories must stay siblings with these exact names; `sourcefidelity-shared` must also be a sibling so both skills can import `sourcefidelity_core`. Batch scripts resolve `../sourcefidelity-review/scripts` from their own path and `prepare_batch.py`/`render_review.py` import `detect_structure` and `page_map` from there, so moving, renaming or nesting a directory breaks those imports.
 
 ## Documentation map
 
@@ -16,6 +16,7 @@ Read the document that owns the question; do not reconstruct it from code or mem
 |---|---|---|
 | `docs/ARCHITECTURE.md` | System design: skill boundaries, data flow, invariants, verification, release, extension points | Before changing a component or proposing a competing mechanism |
 | `docs/STATE.md` | Current truth: version, branch, test counts, release and install status, verified results, limitations | At the start of substantial work |
+| `docs/HANDOFF.md` | Cross-harness continuation state: last day's changes, failures, uncommitted work and next steps | When switching harnesses, machines or agents |
 | `docs/PLAN.md` | Active work order, acceptance rules, superseded and deferred work | Before choosing what to do next |
 | `REVIEW_PROTOCOL.md` in each skill | The method for that skill | Before a review or a protocol change |
 | `README.md` | User-facing installation and usage | Before changing user-visible behaviour |
@@ -72,7 +73,7 @@ Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Un
 ## Documentation maintenance
 
 - Update a document when its owned fact changes: `STATE.md` for status, test counts, measured results or limitations; `ARCHITECTURE.md` for a design decision or a changed boundary; `PLAN.md` for work order, acceptance or a superseded row; `CHANGELOG.md` and the release files for a release.
-- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 2,667 words.
+- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 3,500 words.
 - Maintain in place. Do not prepend dated overrides or leave two competing instructions; rewrite the owning section and let git carry the history.
 - Do not mark work complete because code exists. Record the command and the observed result.
 - Run `python scripts/check_docs.py` after a substantive documentation change. It checks links, budgets, required headings, version agreement between `VERSION`, `latest.json` and `CHANGELOG.md`, and referenced repo paths. Passing it does not establish that the text is true.

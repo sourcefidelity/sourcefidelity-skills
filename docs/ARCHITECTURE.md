@@ -13,7 +13,7 @@ Three sibling skills ship together:
 
 They are instruction packages, not a service. There is no server, no upload, no background daemon and no shared database. `SKILL.md` is the agent's entry point; `REVIEW_PROTOCOL.md` is the canonical review method; `scripts/` holds deterministic helpers for counting, extraction, identity, link state, caching and metrics. The host agent interprets the protocol and makes the judgments; scripts supply measured facts and never decide a finding.
 
-The three directories must remain siblings with these exact names. Batch and reappraisal scripts resolve `../sourcefidelity-review/scripts` from their own path and import `detect_structure` and `page_map` from the review skill, so moving, renaming or nesting a skill directory breaks those imports.
+The three skill directories must remain siblings with these exact names; `sourcefidelity-shared` must be their sibling too. Batch and reappraisal scripts resolve `../sourcefidelity-review/scripts` from their own path and import `detect_structure` and `page_map` from the review skill, so moving, renaming or nesting a directory breaks those imports.
 
 One shared Python 3.12 virtual environment is built beside `sourcefidelity-review/.venv` by the installer and is used by all three skills. A skill that has its own `.venv` keeps using it first. Without Python the skills run in prompt-only mode and must say which checks are unavailable.
 
@@ -55,6 +55,8 @@ fetch cache.
 `match_sources.py` and `scope.py` identify which references the new sources affect; `reappraise_apply.py` updates only those entries in the existing review and ledger and logs every changed judgment. It never re-runs a whole review silently. Reappraisal tasks carry the shared copy-scope observation, and the apply step rejects a judgment from an inadequate or unresolved copy.
 
 ### Shared helpers
+
+`sourcefidelity-shared/sourcefidelity_core` owns the versioned source contracts, canonical acquired-copy staging, source scope/kind coverage, page maps, evidence selection, assessment packets and parity snapshots. `one_paper.py` is the thin one-paper orchestration over that shared preparation. Finding counts, academic checks and HTML/text preparation are also shared core modules with compatibility shims at the old skill paths. The review skill keeps compatibility shims where old script paths are imported; supplied copies outrank acquired copies, which outrank bounded web text. Every fetched or mapped PDF/HTML/text copy is hashed under `_acquired/<source_key>/` and registered; failed downloads are recorded as unusable rather than mapped. The shared package must not import a skill, a database or a model provider.
 
 `http_cache.py` owns the page cache and host-state memory. `user_settings.py` reads optional keys from the user's DSH home or environment and never prints them. `page_map.py`, `prepare_source.py` and `detect_structure.py` provide the extraction layer. `prepare_source.py` binds an extraction to the source hash, extractor version, options and text/page-map hashes; consumers carry those fields with each window.
 
