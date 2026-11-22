@@ -46,6 +46,13 @@ this policy. DNS uses the system resolver. Fixed provider metadata APIs keep
 their own pacing and transport. Only complete DOI downloads enter the new
 fetch cache.
 
+The bounded assessment path takes atomic spans from the adjudicated inventory.
+It emits up to three bound evidence windows per claim and validates response
+offsets against those windows. It saves one digest-bound record per claim.
+The existing renderer assembles the cited-occurrence findings from those
+records. Quotation presence can be checked locally. The host supplies semantic
+judgments through the request/response files.
+
 ### batch
 
 `prepare_batch.py` and `prep_single.py` inventory a paper, extract references, map supplied sources, build passage windows and write `_work/<paper>/task.json`. `redact_identity.py` masks labelled identity values before the agent sees the paper. `record_metrics.py` and `review_metrics.py` write the scope line. `render_review.py` and `validate_batch.py` render and validate findings against the batch schema; `batch_report.py` and `audit_*` produce the cohort report and its audit trail. Batch imports the review skill's extraction helpers; the single-review record path uses the batch validator and renderer through `one_paper.py`.

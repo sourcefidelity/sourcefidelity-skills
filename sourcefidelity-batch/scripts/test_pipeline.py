@@ -5099,6 +5099,134 @@ class SingleReviewRenderingTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
 
+class ClaimAssessmentTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.quote = "A common rule applies across borders"
+        self.claim = "The rule creates a common market."
+        statement = f"{self.claim} “{self.quote}”"
+        ref = {"id": "R1", "verbatim": "Smith, A. (2020). Broadcasting."}
+        marker = "(Smith, 2020)"
+        occurrence = {"id": "C1", "paragraph_id": "P1", "marker": marker,
+                      "statement": statement, "cited_r_ids": ["R1"]}
+        candidates = {"paragraphs": [{"id": "P1", "text": f"{statement} {marker}"},
+                                     {"id": "P2", "text": ref["verbatim"]}],
+                      "citations": [{"id": "X1", "paragraph_id": "P1", "marker": marker}],
+                      "references": [ref]}
+        self.text = f"{self.quote}. {self.claim}"
+        self.task = {"candidates": candidates, "sources": {"R1": {
+            "identity_status": "supplied_confirmed", "source_key": "smith"}},
+            "windows": {"X1": [{"window_id": "X1:R1:1", "text": self.text, "printed_page": 5,
+                                "source_key": "smith", "r_id": "R1"}]}}
+        self.write(self.work / "task.json", self.task)
+        self.write(self.work / "candidates.json", candidates)
+        self.write(self.work / "paper.json", {"paper_id": "paper", "path": "paper.docx",
+                                              "word_counts": {"total": 20, "text": 12, "references": 8}})
+        self.write(self.root / "inventory.json", {"occurrences": [occurrence], "references": [ref],
+            "dispositions": {"X1": "confirmed_as:C1", "R1": "confirmed"},
+            "coverage": {"paragraphs_scanned": ["P1", "P2"]}})
+        self.plan = [{"occurrence_id": "C1", "start": 0, "end": len(self.claim), "kind": "claim"},
+                     {"occurrence_id": "C1", "start": len(self.claim) + 1,
+                      "end": len(statement), "kind": "quotation"}]
+        self.write(self.root / "claims.json", self.plan)
+        self.command = [sys.executable, "-IB", str(Path(op.__file__).with_name("assess_claims.py")),
+                        "--root", str(self.root), "--inventory", str(self.root / "inventory.json"),
+                        "--claims", str(self.root / "claims.json")]
+
+    def write(self, path, data):
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def run_claims(self, *args, status=0):
+        run = subprocess.run(self.command + list(args), capture_output=True)
+        self.assertEqual(run.returncode, status, run.stderr.decode())
+        return run
+
+    def response(self):
+        packet = json.loads(self.run_claims("emit", "C1.1").stdout)
+        return {"packet_sha256": packet["packet_sha256"], "judgment": "Supports",
+                "reason": "The passage explicitly confirms the claim.",
+                "evidence": [{"passage_id": "X1:R1:1",
+                              "start": self.text.index(self.claim), "end": len(self.text),
+                              "contribution": "States the effect of the rule."}]}
+
+    def test_persist_and_render_multiple_claims_with_local_quote_bypass(self):
+        response = self.response()
+        path = self.root / "response.json"
+        self.write(path, response)
+        self.run_claims("record", "C1.1", str(path))
+        self.assertEqual(json.loads(self.run_claims("emit", "C1.2").stdout)["judgment"], "Supports")
+        result = self.run_claims("render")
+        self.assertEqual(json.loads(result.stdout)["occurrences"]["supports"], 1)
+        report = self.root / "paper" / "review.md"
+        first = report.read_bytes()
+        self.assertIn(b"printed p. 5", first)
+        self.assertIn(b"Exact wording", first)
+        self.assertEqual(len(list((self.work / "claim-records").glob("*.json"))), 2)
+        self.run_claims("render")
+        self.assertEqual(report.read_bytes(), first)
+
+    def test_rejects_invalid_responses_and_abstains_on_stale_record(self):
+        response = self.response()
+        path = self.root / "response.json"
+        self.write(path, response)
+        self.run_claims("record", "C1.1", str(path))
+        record = self.work / "claim-records" / "C1.1.json"
+        original = record.read_bytes()
+        for bad in ({**response, "extra": True}, {**response, "reason": "x" * 1700},
+                    {**response, "evidence": [dict(response["evidence"][0], passage_id="invented")]},
+                    {**response, "evidence": [dict(response["evidence"][0], start=True)]}):
+            self.write(path, bad)
+            self.run_claims("record", "C1.1", str(path), status=1)
+            self.assertEqual(record.read_bytes(), original)
+        path.write_bytes(original[:-1] + b',"reason":"duplicate"}')
+        self.run_claims("record", "C1.1", str(path), status=1)
+        self.task["windows"]["X1"][0]["printed_page"] = 6
+        self.write(self.work / "task.json", self.task)
+        result = json.loads(self.run_claims("render").stdout)
+        self.assertEqual(result["occurrences"]["qualified"], 1)
+        self.assertIn("earlier packet", (self.root / "paper" / "review.md").read_text())
+
+    def test_quote_bypass_refuses_ambiguous_or_unconfirmed_evidence(self):
+        window = self.task["windows"]["X1"][0]
+        window["text"] += f" {self.quote}"
+        self.write(self.work / "task.json", self.task)
+        result = json.loads(self.run_claims("emit", "C1.2").stdout)
+        self.assertEqual(result["kind"], "quotation")
+        self.assertFalse((self.work / "claim-records" / "C1.2.json").exists())
+        self.task["sources"]["R1"]["identity_status"] = "supplied_edition_mismatch"
+        self.write(self.work / "task.json", self.task)
+        self.assertIn(b"No eligible evidence", self.run_claims("emit", "C1.2", status=1).stderr)
+
+    def test_passage_and_request_limits_abstain_without_hiding_other_claims(self):
+        hits = self.task["windows"]["X1"]
+        hits.extend(dict(hits[0], window_id=f"X1:R1:{n}", text="Other evidence.")
+                    for n in range(2, 8))
+        self.write(self.work / "task.json", self.task)
+        result = self.run_claims("emit", "C1.1")
+        self.assertEqual(len(json.loads(result.stdout)["passages"]), 3)
+        self.assertLessEqual(len(result.stdout), 4000)
+        inventory_path = self.root / "inventory.json"
+        inventory = json.loads(inventory_path.read_text())
+        long_claim = "界" * 1500
+        occurrence = inventory["occurrences"][0]
+        occurrence["statement"] = long_claim + occurrence["statement"]
+        candidates = self.task["candidates"]
+        candidates["paragraphs"][0]["text"] = long_claim + candidates["paragraphs"][0]["text"]
+        self.write(inventory_path, inventory)
+        self.write(self.work / "candidates.json", candidates)
+        quote = self.plan[1]
+        self.write(self.root / "claims.json",
+                   [dict(self.plan[0], end=len(long_claim)),
+                    dict(quote, start=quote["start"] + len(long_claim),
+                         end=quote["end"] + len(long_claim))])
+        self.assertIn(b"budget", self.run_claims("emit", "C1.1", status=1).stderr)
+        self.assertEqual(json.loads(self.run_claims("render").stdout)["occurrences"]["qualified"], 1)
+
+
 class SharedAssessmentTests(unittest.TestCase):
     def _task(self):
         return {"candidates": {"citations": [{"id": "C1", "marker": "(Smith, 2020)",

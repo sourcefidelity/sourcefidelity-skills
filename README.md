@@ -39,6 +39,21 @@ If Python is missing, the installer still copies the skills and explains prompt-
 
 For a prepared single review, pass the adjudicated inventory and judgment records to `one_paper.py --out REVIEW_ROOT --inventory FILE --findings FILE`. The shared renderer validates the records and writes the review, ledger and summary under `REVIEW_ROOT/paper/`. It reads saved hyperlink observations and review metrics. Hyperlink findings come from adjudicated records. Reappraisal applies any saved audit observations to the report and summary without fetching links.
 
+For bounded claim assessment, run `sourcefidelity-review/scripts/assess_claims.py`
+against the prepared root and adjudicated inventory. Supply a JSON array of
+`occurrence_id`, `start`, `end`, and `kind` objects. The offsets select an atomic
+claim within the occurrence’s exact statement, in Unicode characters with an
+exclusive end. Use `kind: "quotation"` for the literal quotation including its
+quotation marks. Use `kind: "claim"` for a semantic assertion.
+
+Use `list` for claim IDs, `emit ID` for one request, `record ID RESPONSE.json`
+to persist a validated response, and `render` to write the report. Each request
+carries its response contract and at most three evidence passages. The CLI caps
+requests at 4,000 UTF-8 bytes and responses at 1,600 bytes. The host must also
+enforce its model's token limits, including any wrapper prompt. Keep the files
+local under the review workspace. Missing or stale judgments render as
+explicit limitations. See `render --help` for optional report metadata.
+
 ### Development installs
 
 For work on the skills themselves, install the working tree without cutting a release:
