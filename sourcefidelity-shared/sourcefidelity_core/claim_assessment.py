@@ -69,8 +69,10 @@ def passages_for(task, inventory, occurrence):
     """Bind windows to the final occurrence and its exact submitted references."""
     dispositions = inventory.get("dispositions", {})
     candidates = (task.get("candidates") or {})
-    refs = {r["id"]: r["verbatim"] for r in inventory.get("references", [])}
-    task_refs = {r["id"]: r["verbatim"] for r in candidates.get("references", [])}
+    def normalise(value):
+        return " ".join(str(value or "").split())
+    refs = {r["id"]: normalise(r["verbatim"]) for r in inventory.get("references", [])}
+    task_refs = {r["id"]: normalise(r["verbatim"]) for r in candidates.get("references", [])}
     sources = task.get("sources", {})
     cited = set(occurrence.get("cited_r_ids", []))
     for candidate in candidates.get("citations", []):
@@ -128,7 +130,15 @@ def packet_for(task, inventory, occurrence, claim_id, spec):
     if len(text) > MAX_CLAIM_CHARS or len(request_bytes(packet)) > MAX_REQUEST_BYTES:
         return None, "Claim exceeds the request budget."
     seen = set()
-    for passage in passages_for(task, inventory, occurrence):
+    candidates = list(passages_for(task, inventory, occurrence))
+    claim_terms = {word for word in re.findall(r"[a-z0-9]{4,}", text.casefold())}
+
+    def relevance(passage):
+        words = set(re.findall(r"[a-z0-9]{4,}", passage.get("text", "").casefold()))
+        return len(claim_terms & words)
+
+    candidates.sort(key=lambda passage: (-relevance(passage), passage.get("passage_id", "")))
+    for passage in candidates:
         pid = passage["passage_id"]
         if pid in seen:
             continue

@@ -75,7 +75,10 @@ def validate(findings, inventory=None, task=None):
     inventory_occurrences = {occ["id"]: occ for occ in (inventory or {}).get("occurrences", [])}
     task = task or {}
     task_citations = {cite["id"]: cite for cite in task.get("candidates", {}).get("citations", [])}
-    task_refs = {ref["id"]: ref["verbatim"] for ref in task.get("candidates", {}).get("references", [])}
+    def normalise(value):
+        return " ".join(str(value or "").split())
+    task_refs = {ref["id"]: normalise(ref["verbatim"])
+                 for ref in task.get("candidates", {}).get("references", [])}
     dispositions = (inventory or {}).get("dispositions", {})
     task_windows = {window["window_id"]: (candidate_id, window)
                     for candidate_id, windows in task.get("windows", {}).items()
@@ -112,7 +115,7 @@ def validate(findings, inventory=None, task=None):
                 else:
                     occurrence_matches = disposition == "confirmed"
                 if (not window or not occurrence_matches
-                        or task_refs.get(window["r_id"]) != ref.get("verbatim")
+                        or task_refs.get(window["r_id"]) != normalise(ref.get("verbatim"))
                         or window["source_key"] != src.get("source_key")
                         or candidate.get("marker") != marker
                         or candidate.get("paragraph_id") != paragraph):

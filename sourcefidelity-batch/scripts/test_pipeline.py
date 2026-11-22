@@ -42,6 +42,7 @@ import docx_text as dt  # noqa: E402
 import source_scope as scope  # noqa: E402
 import kind_coverage as kc  # noqa: E402
 import enrich_registry as er  # noqa: E402
+import evidence_benchmark as eb  # noqa: E402
 import evidence_select as ev  # noqa: E402
 import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
@@ -71,6 +72,7 @@ import source_registry as sr  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sourcefidelity-shared"))
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
 from sourcefidelity_core import assessment as core_assessment  # noqa: E402
+from sourcefidelity_core import claim_assessment as core_claim  # noqa: E402
 from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
@@ -85,6 +87,7 @@ import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
 import sourcepack as sp  # noqa: E402
+import assess_claims as claims_cli  # noqa: E402
 import one_paper as op  # noqa: E402
 import open_text_pages as otp  # noqa: E402
 import openfetch as of  # noqa: E402
@@ -1187,6 +1190,29 @@ class CanonicalFieldTests(unittest.TestCase):
         self.assertEqual(rr.canonical_outcome("weird_outcome"), "search_incomplete")
         self.assertEqual(rr.canonical_retrieval("retrieved_shared_window"), "retrieved")
         self.assertEqual(rr.canonical_retrieval("weird"), "not_retrieved")
+
+
+class PageFallbackTests(unittest.TestCase):
+    def test_dense_unused_page_is_added_when_phrase_hits_are_thin(self):
+        text = ("=== PDF p1 | printed p1 | native\nintro\n"
+                "=== PDF p2 | printed p2 | native\n"
+                "Neoliberal ideology posits minimal government and free market policy. "
+                "The state supports markets.")
+        marks = [(0, 1, "1"), (text.index("=== PDF p2"), 2, "2")]
+        hits = mt.ranked_page_windows(
+            text, marks, {}, ["neoliberal", "minimal", "government", "free", "market"],
+            360, None, 1, {(1, "1")})
+        self.assertEqual([hit["printed_page"] for hit in hits], ["2"])
+        self.assertIn("minimal government", hits[0]["text"])
+
+    def test_wider_window_reaches_the_following_sentence(self):
+        text = ("=== PDF p1 | printed p1 | native\n"
+                "scholars point to reality television as a popular form. "
+                "Deregulation made relatively cheap-to-produce programming attractive.")
+        marks = [(0, 1, "1")]
+        hits = mt.windows(text, marks, {}, ["reality television"], 360, None, limit=1)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("cheap-to-produce", hits[0]["text"])
 
 
 class TaskMatchingTests(unittest.TestCase):
@@ -4865,6 +4891,35 @@ class PrepareTextTests(unittest.TestCase):
         self.assertIn("no printed page", " ".join(meta["gaps"]))
 
 
+class ClaimSampleTests(unittest.TestCase):
+    def test_three_samples_use_the_majority(self):
+        judgment, reason = claims_cli.majority_judgment(
+            ["Supports", "Supports", "Qualified or Mixed"])
+        self.assertEqual(judgment, "Supports")
+        self.assertIn("supports 2", reason)
+
+    def test_opposite_direction_split_is_not_majority(self):
+        judgment, reason = claims_cli.majority_judgment(
+            ["Supports", "Supports", "Contradicts"])
+        self.assertEqual(judgment, "Not Judged")
+        self.assertIn("opposite directions", reason)
+
+    def test_a_tie_is_not_judged(self):
+        judgment, reason = claims_cli.majority_judgment(
+            ["Supports", "Qualified or Mixed", "Not Judged"])
+        self.assertEqual(judgment, "Not Judged")
+
+    def test_samples_are_ordered_by_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            (work / "claim-records").mkdir()
+            for number in (2, 10, 1):
+                (work / "claim-records" / f"C1.sample-{number}.json").write_text("{}")
+            paths = claims_cli.sample_records(work, "C1")
+        self.assertEqual([path.name for path in paths],
+                         ["C1.sample-1.json", "C1.sample-2.json", "C1.sample-10.json"])
+
+
 class OnePaperOrchestrationTests(unittest.TestCase):
     def test_packets_are_written_to_each_citation(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -5152,6 +5207,14 @@ class ClaimAssessmentTests(unittest.TestCase):
                 "evidence": [{"passage_id": "X1:R1:1",
                               "start": self.text.index(self.claim), "end": len(self.text),
                               "contribution": "States the effect of the rule."}]}
+
+    def test_reference_whitespace_does_not_hide_eligible_evidence(self):
+        inventory = json.loads((self.root / "inventory.json").read_text(encoding="utf-8"))
+        inventory["references"][0]["verbatim"] += " "
+        self.write(self.root / "inventory.json", inventory)
+        packet = json.loads(self.run_claims("emit", "C1.1").stdout)
+        self.assertEqual(packet["claim_id"], "C1.1")
+        self.assertTrue(packet["passages"])
 
     def test_persist_and_render_multiple_claims_with_local_quote_bypass(self):
         response = self.response()
@@ -5442,6 +5505,109 @@ class OpenTextPageTests(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(tmp, "pages.csv")))
             self.assertIn("PDF p2", open(os.path.join(tmp, "text.txt"),
                                           encoding="utf-8").read())
+
+
+class PassageRankingTests(unittest.TestCase):
+    def test_packet_prefers_the_window_with_more_claim_overlap(self):
+        task = {
+            "candidates": {
+                "citations": [{"id": "X1", "marker": "(Smith, 2020)", "paragraph_id": "P1"}],
+                "references": [{"id": "R1", "verbatim": "Smith, A. (2020). Work."}],
+            },
+            "sources": {"R1": {"source_key": "smith", "identity_status": "supplied_confirmed",
+                               "supplied_file": "source.txt"}},
+            "windows": {"X1": [
+                {"window_id": "X1:R1:1", "text": "unrelated background about archives",
+                 "printed_page": 1, "source_key": "smith", "r_id": "R1"},
+                {"window_id": "X1:R1:2", "text": "the single market for media services applies",
+                 "printed_page": 1, "source_key": "smith", "r_id": "R1"},
+            ]},
+        }
+        statement = "The directive creates a single market for media services."
+        inventory = {
+            "occurrences": [{"id": "C1", "candidate_id": "X1", "paragraph_id": "P1",
+                             "marker": "(Smith, 2020)", "statement": statement,
+                             "cited_r_ids": ["R1"]}],
+            "references": [{"id": "R1", "verbatim": "Smith, A. (2020). Work."}],
+            "dispositions": {"X1": "confirmed"},
+        }
+        packet = core_claim.packet_for(task, inventory, inventory["occurrences"][0],
+                                       "C1.1", {"occurrence_id": "C1", "start": 0,
+                                                "end": len(statement), "kind": "claim"})
+        self.assertEqual(packet[0]["passages"][0]["text"],
+                         "the single market for media services applies")
+
+
+class SearchNormalizationTests(unittest.TestCase):
+    def test_normalization_preserves_original_offsets(self):
+        text = "The govern-\nment used “12%” here."
+        view = mt.SearchText(text)
+        matches = view.find_all("government")
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(text[matches[0][2]:matches[0][3]], "govern-\nment")
+        self.assertTrue(view.find_all("12 percent"))
+
+    def test_surface_phrases_keep_short_words(self):
+        phrases = mt.surface_phrases("Companies drive them out of business.")
+        self.assertIn("out of business", phrases)
+
+    def test_inflection_and_possessive_variants(self):
+        self.assertIn("company", mt.word_variants("companies"))
+        self.assertIn("state", mt.word_variants("state's"))
+
+    def test_acronym_expands_only_from_the_named_source(self):
+        source = {"identity": {"title": "World Health Organization"}}
+        citation = {"sentence": "The WHO sets guidance."}
+        self.assertIn("WHO", mt.acronym_phrases(source, citation))
+        self.assertEqual(mt.acronym_phrases(source, {"sentence": "Other text."}), [])
+
+    def test_sentence_completion_reaches_the_period(self):
+        text = "Reality television grew quickly. It was cheap-to-produce."
+        end = text.index("grew") + len("grew")
+        completed = mt.complete_sentence(text, end, len(text))
+        self.assertEqual(text[completed - 1], ".")
+
+
+class EvidenceBenchmarkTests(unittest.TestCase):
+    def test_decisive_phrase_and_source_are_scored(self):
+        packet = {"passages": [{"text": "the minimum level of partial harmonization applies",
+                                "source_key": "R1", "locator": "printed p. 171"}]}
+        row = eb.evaluate(packet, {"required_phrases": ["partial harmonization"],
+                                   "source_keys": ["R1"]})
+        self.assertTrue(row["decisive_hit"])
+        self.assertFalse(row["wrong_source"])
+        self.assertEqual(row["coverage"], 1.0)
+
+    def test_wrong_source_and_missing_phrase_fail(self):
+        packet = {"passages": [{"text": "unrelated context", "source_key": "R2"}],
+                  "passages_extra": []}
+        row = eb.evaluate(packet, {"required_phrases": ["drive them out of business"],
+                                   "source_keys": ["R1"]})
+        self.assertFalse(row["decisive_hit"])
+        self.assertTrue(row["wrong_source"])
+
+    def test_generic_spelling_variants_are_generated(self):
+        self.assertIn("liberalisation", mt.spelling_variants("liberalization"))
+        self.assertIn("globalising", mt.spelling_variants("globalizing"))
+        self.assertIn("catalogue", mt.spelling_variants("catalog"))
+        self.assertEqual(mt.spelling_variants("television"), ())
+
+
+    def test_number_words_are_searchable(self):
+        citation = {"sentence": "The proportion increased in 12 member states."}
+        phrases = mt.number_phrases(citation)
+        self.assertIn("12 member", phrases)
+        self.assertIn("twelve member", phrases)
+
+
+    def test_longer_claim_ngrams_are_available_to_window_search(self):
+        citation = {"sentence": "It might also threaten local culture, as privatized media "
+                                "companies focus heavily on maximizing profits, often leading "
+                                "them to favor inexpensive, widely appealing foreign programs, "
+                                "which will drive small companies out of business."}
+        phrases = mt.phrases_for(citation)
+        self.assertIn("foreign programs", phrases)
+        self.assertIn("companies business", phrases)
 
 
 class EvidenceSelectionTests(unittest.TestCase):

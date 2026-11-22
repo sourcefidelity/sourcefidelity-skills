@@ -149,7 +149,7 @@ def validate(cand, inv, strict=False):
 
     for ref in references:
         rid = ref.get("id", "?")
-        verbatim = ref.get("verbatim", "")
+        verbatim = (ref.get("verbatim") or "").strip()
         if not verbatim:
             fail(errors, f"{rid}: empty verbatim entry")
         elif not any(verbatim in text for text in paragraphs.values()):

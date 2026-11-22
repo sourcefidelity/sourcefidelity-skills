@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Emit one bounded request, record its judgment, or assemble a review locally."""
+"""Emit one bounded request, record its judgment, or assemble a review locally.
+
+Production is one validated response per claim. `record --sample N` stores
+explicit calibration samples separately; render uses their majority only when
+such samples exist. A tie or a Supports/Contradicts split becomes Not Judged.
+"""
 
 from __future__ import annotations
 
@@ -43,6 +48,82 @@ def claim_record(work, claim_id):
     return Path(batch_paths.artifact(folder, claim_id + ".json"))
 
 
+def sample_record(work, claim_id, sample):
+    folder = batch_paths.paper_folder(work, "claim-records")
+    return Path(batch_paths.artifact(folder, f"{claim_id}.sample-{sample}.json"))
+
+
+def sample_records(work, claim_id):
+    """Explicit calibration samples, ordered by number; production stays one record."""
+    folder = Path(batch_paths.paper_folder(work, "claim-records"))
+    if not folder.exists():
+        return []
+    paths = []
+    for path in folder.glob(claim_id + ".sample-*.json"):
+        try:
+            number = int(path.name.split(".sample-", 1)[1].split(".", 1)[0])
+        except (IndexError, ValueError):
+            continue
+        paths.append((number, path))
+    return [path for _number, path in sorted(paths)]
+
+
+_SAMPLE_CATEGORY = {"Supports": "supports", "Qualified or Mixed": "qualified",
+                    "Contradicts": "contradicts", "Not Judged": "undecided"}
+
+
+def majority_judgment(judgments):
+    """Majority over samples; opposite-direction splits are not resolved.
+
+    Returns (judgment, reason). A tie, fewer than two valid samples, or a
+    Supports/Contradicts split is Not Judged with an explicit reason. A
+    2/1 Supports-vs-Qualified result still uses the majority and reports the
+    dissent in the caller.
+    """
+    valid = [j for j in judgments if j in _SAMPLE_CATEGORY]
+    if len(valid) < 2:
+        return "Not Judged", "fewer than two valid samples"
+    counts = {}
+    for judgment in valid:
+        category = _SAMPLE_CATEGORY[judgment]
+        counts[category] = counts.get(category, 0) + 1
+    ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    category, votes = ranked[0]
+    if votes < 2 or (len(ranked) > 1 and ranked[1][1] == votes):
+        return "Not Judged", "samples split with no majority"
+    if category in ("supports", "contradicts") and any(
+            other in ("supports", "contradicts") and other != category
+            for other, _count in ranked[1:]):
+        return "Not Judged", "samples split in opposite directions"
+    return {"supports": "Supports", "qualified": "Qualified or Mixed",
+            "contradicts": "Contradicts", "undecided": "Not Judged"}[category], (
+        "majority " + "/".join(f"{name} {count}" for name, count in ranked))
+
+
+def aggregate_samples(packet, paths):
+    """Validate sample responses and return the majority result, if any."""
+    records = []
+    for path in paths:
+        try:
+            response = bounded_response(path)
+            core.response_evidence(packet, response)
+        except (OSError, ValueError):
+            continue
+        records.append(response)
+    if not records:
+        return "Not Judged", "no valid sample response", []
+    judgment, reason = majority_judgment([response["judgment"] for response in records])
+    if judgment == "Not Judged":
+        return judgment, reason, []
+    chosen = next(response for response in records if response["judgment"] == judgment)
+    sources = core.response_evidence(packet, chosen)
+    dissent = [response["judgment"] for response in records
+               if response["judgment"] != judgment]
+    if dissent:
+        reason += "; dissent: " + ", ".join(dissent)
+    return judgment, reason, sources
+
+
 def bounded_response(path):
     with open(path, "rb") as handle:
         return core.parse_response(handle.read(core.MAX_RESPONSE_BYTES + 1))
@@ -64,6 +145,9 @@ def get_result(work, cid, packet, limitation):
     if exact is not None:
         write_record(record, exact)
         return exact["judgment"], exact["reason"], core.response_evidence(packet, exact)
+    samples = sample_records(work, cid)
+    if samples:
+        return aggregate_samples(packet, samples)
     try:
         response = bounded_response(record)
         sources = core.response_evidence(packet, response)
@@ -129,6 +213,8 @@ def main(argv=None):
     record = modes.add_parser("record", help="validate and persist one response")
     record.add_argument("claim")
     record.add_argument("response")
+    record.add_argument("--sample", type=int,
+                        help="store calibration sample N instead of the production record")
     modes.add_parser("render", help="render reports from the saved records").add_argument("--metadata")
     args = parser.parse_args(argv)
 
@@ -168,7 +254,10 @@ def main(argv=None):
             raise ValueError("quotation is handled locally; use emit or render")
         response = exact if exact is not None else bounded_response(args.response)
         core.response_evidence(packet, response)
-        write_record(claim_record(work, args.claim), response)
+        sample = getattr(args, "sample", None)
+        target = (sample_record(work, args.claim, sample)
+                  if sample is not None else claim_record(work, args.claim))
+        write_record(target, response)
         print(json.dumps({"claim_id": args.claim, "recorded": True, "judgment": response["judgment"]}))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as exc:

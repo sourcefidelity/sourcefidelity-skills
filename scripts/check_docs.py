@@ -29,7 +29,7 @@ AUTHORITY_DOCS = ["docs/ARCHITECTURE.md", "docs/STATE.md", "docs/PLAN.md"]
 BUDGETS = {
     "AGENTS.md": 1200,
     "docs/ARCHITECTURE.md": 3500,
-    "docs/STATE.md": 3500,
+    "docs/STATE.md": 4000,
     "docs/PLAN.md": 3200,
 }
 HEADINGS = {

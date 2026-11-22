@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- **Generic search normalization (R35).** Added an offset-preserving search
+  view for Unicode/case/punctuation, smart quotes/dashes, hyphen and line-break
+  repair, percent words, sentence completion, short-word phrases, US/UK
+  spelling, inflection/plural variants and source-derived acronyms. Evidence
+  offsets remain original. Current benchmark: 13/14 decisive hits; C2 remains
+  the accepted field-vocabulary miss.
+
+- **C17 evidence repair (R35).** Added number-word query expansion (12 ↔
+  twelve) and found the missing "increased in twelve Member States" evidence;
+  the strengthened benchmark still scores 14/14 and C17 now renders Supports
+  on the current packet.
+
+- **Current-task broad calibration (R35).** After synonym expansion,
+  same-page windows and claim-overlap ranking, 14 one-call Television claims
+  scored 11/14 exact against hidden manual verdicts; the three differences are
+  conservative/adjacent, with no directional split or unsupported evidence.
+  Full paper: 14/20 judged, 6 Not Judged.
+
+- **Evidence-selection benchmark (R35).** Added `evidence_benchmark.py` with
+  hidden adjudicator labels. APA-only scope: 13/14 decisive-evidence hits,
+  0.893 coverage, zero wrong-source packets. C2 is the accepted generic-
+  vocabulary miss; C16 is hit through generic windows.
+
+- **Broad one-call claim calibration (R35).** Fourteen Television claims were
+  judged once each with DeepSeek-V4.1-Flash and compared to hidden manual
+  verdicts: 10 exact, four adjacent/abstention differences, no directional
+  opposites. Reference comparison now tolerates trailing whitespace in
+  inventory/task entries, recovering nine claims that had been hidden.
+
+- **One-call claim assessment policy (R35).** Production uses one validated
+  model response per claim. `assess_claims.py record --sample N` stores optional
+  calibration samples separately, and render uses a 2/3 majority only when they
+  exist; ties and Supports/Contradicts splits become Not Judged. Three samples
+  are calibration, not the default, because they triple token spend.
+
+- **Bounded claim packet coverage (R35).** `make_task.py` now defaults to a
+  360-character window and adds a weighted page-term fallback when phrase or
+  quotation hits do not cover the claim. Two packet repairs restored the
+  Television C8 minimal-government and C13 cheap-to-produce evidence; the
+  pipeline suite reached 449 tests and the host model agreed on 3 of 4
+  model-bound verdicts.
+
 - **Documentation budgets.** Raised `STATE.md` to 2,667 words and `PLAN.md` to
   2,000 words, one third above the previous limits, and updated the maintenance
   instructions to match.

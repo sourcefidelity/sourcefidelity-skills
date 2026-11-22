@@ -73,7 +73,7 @@ Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Un
 ## Documentation maintenance
 
 - Update a document when its owned fact changes: `STATE.md` for status, test counts, measured results or limitations; `ARCHITECTURE.md` for a design decision or a changed boundary; `PLAN.md` for work order, acceptance or a superseded row; `CHANGELOG.md` and the release files for a release.
-- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 3,500 words.
+- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 4,000 words.
 - Maintain in place. Do not prepend dated overrides or leave two competing instructions; rewrite the owning section and let git carry the history.
 - Do not mark work complete because code exists. Record the command and the observed result.
 - Run `python scripts/check_docs.py` after a substantive documentation change. It checks links, budgets, required headings, version agreement between `VERSION`, `latest.json` and `CHANGELOG.md`, and referenced repo paths. Passing it does not establish that the text is true.

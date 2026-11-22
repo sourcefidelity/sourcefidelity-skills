@@ -28,6 +28,11 @@ REVIEW_SCRIPTS = os.path.join(os.path.dirname(os.path.dirname(HERE)),
 sys.path.insert(0, REVIEW_SCRIPTS)
 import evidence_select  # noqa: E402
 import evidence_window  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                                "sourcefidelity-shared"))
+from sourcefidelity_core.search_normalize import (  # noqa: E402
+    SearchText, normalise_query, surface_phrases, word_variants,
+)
 import source_registry  # noqa: E402
 import web_cache  # noqa: E402
 
@@ -129,7 +134,73 @@ def phrases_for(citation):
             phrase = " ".join(words[i:i + size])
             if phrase.lower() not in [p.lower() for p in out]:
                 out.append(phrase)
-    return out[:14]
+    return out[:50]
+
+
+def spelling_variants(word):
+    """Orthographic variants common to US/UK academic English, no field lexicon."""
+    word = word.lower()
+    variants = []
+    for suffix, replacement in (
+            ("ization", "isation"), ("izing", "ising"), ("ized", "ised"),
+            ("ize", "ise"), ("yzing", "ysing"), ("yzed", "ysed"),
+            ("yze", "yse"), ("catalog", "catalogue"), ("dialog", "dialogue"),
+            ("program", "programme"), ("center", "centre"), ("meter", "metre"),
+    ):
+        if word.endswith(suffix):
+            candidate = word[:-len(suffix)] + replacement
+            if candidate != word and candidate not in variants:
+                variants.append(candidate)
+    return tuple(variants)
+
+
+def spelling_phrases(citation):
+    """Two-word phrases with US/UK spelling variants; no synonym expansion."""
+    sentence = citation.get("sentence") or citation.get("marker", "")
+    stop = {"that", "this", "with", "from", "their", "which", "have", "were",
+            "been", "into", "about", "also", "used", "using", "such", "these",
+            "they", "them", "then", "than", "over", "under", "between"}
+    words = [word.lower() for word in WORD_RE.findall(sentence)
+             if word.lower() not in stop]
+    variants = [(word, *spelling_variants(word)) for word in words]
+    out = []
+    for index in range(len(words)):
+        for other in range(index + 1, min(index + 4, len(words))):
+            for first in variants[index]:
+                for second in variants[other]:
+                    phrase = f"{first} {second}"
+                    if phrase not in out:
+                        out.append(phrase)
+    return out[:30]
+
+
+NUMBER_WORDS = {
+    "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+    "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+    "10": "ten", "11": "eleven", "12": "twelve", "13": "thirteen",
+    "14": "fourteen", "15": "fifteen", "16": "sixteen", "17": "seventeen",
+    "18": "eighteen", "19": "nineteen", "20": "twenty", "30": "thirty",
+    "40": "forty", "50": "fifty", "100": "hundred",
+}
+
+
+def number_phrases(citation):
+    """Search both digit and word forms of quantities (12 Member States)."""
+    sentence = citation.get("sentence") or citation.get("marker", "")
+    tokens = re.findall(r"[A-Za-z][A-Za-z'’\-]{2,}|\d+", sentence)
+    out = []
+    for index, token in enumerate(tokens):
+        word = NUMBER_WORDS.get(token)
+        if not word or index + 1 >= len(tokens):
+            continue
+        following = tokens[index + 1]
+        if not re.match(r"[A-Za-z]", following):
+            continue
+        for value in (token, word):
+            phrase = f"{value} {following}".lower()
+            if phrase not in out:
+                out.append(phrase)
+    return out
 
 
 def search_terms(citation):
@@ -187,61 +258,94 @@ def web_windows(root, url_entries, phrases, width, limit=2):
     return out
 
 
+def complete_sentence(text, end, limit, max_extra=400):
+    """Extend a window to the next sentence end without crossing its page."""
+    cap = len(text) if limit is None else limit
+    for index in range(end, min(cap, end + max_extra)):
+        if text[index] in ".?!" and (index + 1 == len(text) or text[index + 1].isspace()):
+            return index + 1
+    return end
+
+
+def acronym_phrases(source, citation):
+    """Expand acronyms only from the named source identity, never a glossary."""
+    identities = [source.get("identity") or {}, source]
+    titles = []
+    for identity in identities:
+        for field in ("title", "container_title"):
+            value = identity.get(field)
+            if value:
+                titles.append(value)
+    sentence = (citation.get("sentence") or "").casefold()
+    out = []
+    for title in titles:
+        words = [word for word in WORD_RE.findall(title)
+                 if word.casefold() not in {"the", "and", "for", "with", "from"}]
+        acronym = "".join(word[0] for word in words).upper()
+        if 2 <= len(acronym) <= 6 and acronym.casefold() in sentence:
+            for phrase in (acronym, title):
+                if phrase not in out:
+                    out.append(phrase)
+    return out
+
+
 def windows(text, marks, pages, phrases, width, page_range=None,
             limit=2, body_only=False, allow_single=False, quotes=None):
     out = []
-    seen_pages = set()
-    quote_set = {re.sub(r"\s+", " ", quote).strip().lower()
-                 for quote in (quotes or [])}
+    seen_spans = []
+    search = SearchText(text)
+    quote_set = {normalise_query(quote) for quote in (quotes or [])}
     for phrase in phrases:
-        needle = re.sub(r"\s+", " ", phrase).strip().lower()
-        if len(needle) < 8:
+        candidates = [normalise_query(phrase)]
+        if len(candidates[0]) < 8:
             continue
-        words = needle.split()
-        pattern = re.compile(r"\s+".join(re.escape(w) for w in words), re.I)
-        pos = find_pos(text, pattern, marks, pages, page_range, body_only)
-        if pos < 0:
-            # Fall back to shorter runs; for a title search only, one long
-            # distinctive term is still a useful lead.
-            parts = [w for w in WORD_RE.findall(phrase)]
-            sizes = (3, 2, 1) if allow_single else (3, 2)
-            for size in sizes:
-                if len(parts) < size:
+        parts = [part for part in WORD_RE.findall(phrase)]
+        sizes = (3, 2, 1) if allow_single else (3, 2)
+        for size in sizes:
+            if len(parts) < size:
+                continue
+            if size == 1 and len(parts[0]) < 8:
+                continue
+            candidates.append(normalise_query(" ".join(parts[:size])))
+        matched = False
+        for needle in dict.fromkeys(candidate for candidate in candidates if len(candidate) >= 3):
+            for _ns, _ne, start, end in search.find_all(needle):
+                pdf, printed = page_at(marks, pages, start)
+                if not in_range(printed, page_range):
                     continue
-                if size == 1 and len(parts[0]) < 8:
+                if body_only and not printed and str(pdf).isdigit() and int(pdf) <= 20:
                     continue
-                pattern = re.compile(r"\s+".join(re.escape(w) for w in parts[:size]),
-                                     re.I)
-                pos = find_pos(text, pattern, marks, pages, page_range, body_only)
-                if pos >= 0:
-                    break
-        if pos < 0:
+                bounds = evidence_window.bounded(text, start, end - start, width,
+                                                 marks, page_range)
+                if bounds is None:
+                    continue
+                wstart, wend = bounds
+                _lo, _hi = evidence_window.allowed_bounds(marks, page_range)
+                wend = complete_sentence(text, wend, _hi)
+                if any(not (wend <= old_start or wstart >= old_end)
+                       for old_start, old_end in seen_spans):
+                    continue
+                seen_spans.append((wstart, wend))
+                exact_quote = needle in quote_set
+                out.append({
+                    "query": phrase[:120],
+                    "query_kind": "quote" if exact_quote else "terms",
+                    "exact_quote": exact_quote,
+                    "printed_page": printed,
+                    "pdf_page": pdf,
+                    "start": wstart,
+                    "end": wend,
+                    "text": re.sub(r"\s+", " ", text[wstart:wend]).strip(),
+                })
+                matched = True
+                break
+            if matched:
+                break
+        # A phrase that matched nowhere is allowed to try shorter variants;
+        # a phrase that matched already must not be duplicated by them.
+        if matched:
             continue
-        pdf, printed = page_at(marks, pages, pos)
-        if not in_range(printed, page_range):
-            continue
-        if (pdf, printed) in seen_pages:
-            continue
-        seen_pages.add((pdf, printed))
-        bounds = evidence_window.bounded(text, pos, len(needle), width, marks, page_range)
-        if bounds is None:
-            continue
-        start, end = bounds
-        exact_quote = needle in quote_set
-        out.append({
-            "query": phrase[:120],
-            "query_kind": "quote" if exact_quote else "terms",
-            "exact_quote": exact_quote,
-            "printed_page": printed,
-            "pdf_page": pdf,
-            "start": start,
-            "end": end,
-            "text": re.sub(r"\s+", " ", text[start:end]).strip(),
-        })
-        if len(out) >= limit:
-            break
     return out
-
 
 def title_phrases(title, limit=10):
     """Distinctive 3- and 2-token phrases from a work title, for a last resort."""
@@ -256,6 +360,89 @@ def title_phrases(title, limit=10):
         out = [words[0]]
     return out[:limit]
 
+
+def content_terms(citation):
+    """Distinctive claim words, used when phrase hits leave the claim uncovered."""
+    sentence = citation.get("sentence") or citation.get("marker", "")
+    stop = {"that", "this", "with", "from", "their", "which", "have", "were",
+            "been", "into", "about", "also", "used", "using", "such", "these",
+            "they", "them", "then", "than", "over", "under", "between", "the",
+            "and", "for", "are", "but", "not", "its", "can", "has", "had",
+            "was", "will", "would", "should", "may", "more", "most", "only"}
+    terms = []
+    for word in WORD_RE.findall(sentence):
+        lowered = word.lower()
+        if len(lowered) >= 4 and lowered not in stop and lowered not in terms:
+            terms.append(lowered)
+    for word in list(terms):
+        for variant in (*spelling_variants(word), *word_variants(word)):
+            if variant not in terms:
+                terms.append(variant)
+    return terms[:60]
+
+
+def _page_blocks(text, marks):
+    for index, (start, pdf, printed) in enumerate(marks):
+        end = marks[index + 1][0] if index + 1 < len(marks) else len(text)
+        yield start, end, pdf, printed
+
+
+def ranked_page_windows(text, marks, pages, terms, width, page_range, limit, used):
+    """Add high-overlap pages/windows when phrase hits leave a claim uncovered."""
+    if not terms or limit <= 0 or not marks:
+        return []
+    view = SearchText(text)
+    terms = [normalise_query(term) for term in terms if normalise_query(term)]
+    frequencies = {}
+    for term in terms:
+        frequencies[term] = sum(
+            1 for start, end, _pdf, printed in _page_blocks(text, marks)
+            if in_range(printed, page_range)
+            and term in normalise_query(text[start:end]))
+    weights = {term: 1.0 / max(1, frequencies[term]) for term in terms}
+    ranked = []
+    for start, end, pdf, printed in _page_blocks(text, marks):
+        if not in_range(printed, page_range) or (pdf, printed) in used:
+            continue
+        page_text = normalise_query(text[start:end])
+        present = [term for term in terms if term in page_text]
+        if len(present) < max(3, len(terms) // 3):
+            continue
+        page_score = sum(weights[term] for term in present)
+        best = None
+        for term in present:
+            for _ns, _ne, pos, pos_end in view.find_all(term):
+                if pos < start or pos >= end:
+                    continue
+                bounds = evidence_window.bounded(text, pos, pos_end - pos, width,
+                                                 marks, page_range)
+                if bounds is None:
+                    continue
+                window_text = normalise_query(text[bounds[0]:bounds[1]])
+                window_score = sum(weights[item] for item in terms
+                                   if item in window_text)
+                if best is None or window_score > best[0]:
+                    best = (window_score, bounds, term)
+        if best is not None:
+            ranked.append((page_score, best[0], printed, pdf, best[1], best[2]))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    out = []
+    for _page_score, _window_score, printed, pdf, bounds, term in ranked:
+        if len(out) >= limit:
+            break
+        start, end = bounds
+        out.append({
+            "query": "claim terms: " + term,
+            "query_kind": "terms",
+            "exact_quote": False,
+            "printed_page": printed,
+            "pdf_page": pdf,
+            "start": start,
+            "end": end,
+            "text": re.sub(r"\s+", " ", text[start:end]).strip(),
+            "fallback": "page_terms",
+        })
+    return out
 
 def reference_members(citation, refs):
     """Resolve each explicit author-date member, leaving ambiguous matches open."""
@@ -296,7 +483,7 @@ def match_refs(citation, refs):
 
 
 def source_windows(root, rid, source, phrases, width, limit, cache,
-                   quotes=None, locator=""):
+                   quotes=None, locator="", citation=None):
     """Prepare windows and coverage for exactly one cited reference."""
     extraction = source.get("extraction")
     path = extraction or source.get("open_text")
@@ -305,6 +492,8 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
               "locator_members": []}
     hits = []
     if path and os.path.exists(path):
+        if citation is not None:
+            phrases = list(phrases) + acronym_phrases(source, citation)
         if path not in cache:
             text, marks, pages = page_index(path)
             meta = load(os.path.join(os.path.dirname(path), "meta.json"), {}) or {}
@@ -318,6 +507,12 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
          extraction_options, page_map_sha256, extraction_text_sha256) = cache[path]
         hits = windows(text, marks, pages, phrases, width, page_range, limit=limit,
                        quotes=quotes)
+        if len(hits) < limit and citation is not None:
+            used_pages = {(hit.get("pdf_page"), hit.get("printed_page")) for hit in hits}
+            terms = content_terms(citation)
+            hits.extend(ranked_page_windows(
+                text, marks, pages, terms, width, page_range,
+                limit - len(hits), used_pages))
         if not hits and extraction:
             identity = source.get("identity") or {}
             terms = (title_phrases(identity.get("title", "")) +
@@ -358,7 +553,7 @@ def main():
     ap.add_argument("--paper", required=True)
     ap.add_argument("--out", default="")
     ap.add_argument("--max-hits", type=int, default=3)
-    ap.add_argument("--window", type=int, default=240)
+    ap.add_argument("--window", type=int, default=360)
     args = ap.parse_args()
     if args.max_hits < 1:
         ap.error("--max-hits must be at least 1")
@@ -453,13 +648,15 @@ def main():
         likely = list(dict.fromkeys(member["r_id"] for member in members if "r_id" in member))
         cit["likely_r_ids"] = likely
         cit["search_terms"] = search_terms(cit)
-        phrases = phrases_for(cit)
+        phrases = (number_phrases(cit) + phrases_for(cit) + spelling_phrases(cit)
+                   + surface_phrases(cit.get("sentence", "")))
         found, per_ref = [], {}
         for rid in likely:
             src = sources[rid]
             hits, status = source_windows(
                 root, rid, src, phrases, args.window, args.max_hits, cache,
-                quotes=quotes_for(cit), locator=cit.get("locator", ""))
+                quotes=quotes_for(cit), locator=cit.get("locator", ""),
+                citation=cit)
             for i, hit in enumerate(hits, 1):
                 hit.update(r_id=rid, source_key=src.get("source_key") or rid,
                            source_object_key=src.get("source_object_key") or rid,
