@@ -144,6 +144,8 @@ def main(argv=None):
                     help="run prep, inventory bootstrap, route, bounded emit, search plan and metrics")
     ap.add_argument("--collect-bounded", action="store_true",
                     help="record host-model responses for bounded requests")
+    ap.add_argument("--finalize", action="store_true",
+                    help="render claim records and the final review")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
@@ -153,6 +155,34 @@ def main(argv=None):
         subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
                         "--batch", args.out, "--paper", "paper"], check=True)
         args.inventory = os.path.join(args.out, "_work", "paper", "inventory.json")
+    if args.finalize:
+        inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
+        claims = args.claims or os.path.join(args.out, "_work", "paper", "claims.json")
+        metadata_path = os.path.join(args.out, "_work", "paper", "metadata.json")
+        if not os.path.exists(metadata_path):
+            inv = json.load(open(inventory, encoding="utf-8"))
+            metadata = {"references": inv.get("references", []),
+                        "works": inv.get("works", []),
+                        "uncited": inv.get("uncited", []),
+                        "status": "complete",
+                        "summary": {"category_a": [],
+                                    "category_b": (["uncited substantive passages"]
+                                                   if inv.get("uncited") else []),
+                                    "hyperlinks_missing": []}}
+            with open(metadata_path, "w", encoding="utf-8") as handle:
+                json.dump(metadata, handle, ensure_ascii=False, indent=1)
+        render = subprocess.run([sys.executable, "-I", ASSESS, "--root", args.out,
+                                 "--paper", "paper", "--inventory", inventory,
+                                 "--claims", claims, "render", "--metadata", metadata_path],
+                                capture_output=True, text=True)
+        if render.returncode:
+            print(render.stderr or render.stdout, file=sys.stderr)
+            return render.returncode
+        return subprocess.run([sys.executable, "-I", RENDER, "--batch", args.out,
+                               "--paper", "paper", "--inventory", inventory,
+                               "--findings", os.path.join(args.out, "_work", "paper",
+                                                          "claim-findings.json"),
+                               "--strict-inventory"]).returncode
     if args.collect_bounded:
         if not args.inventory:
             ap.error("--collect-bounded requires --inventory")

@@ -42,6 +42,10 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Finalize path for bounded single reviews.** `one_paper --finalize` renders
+  claim records and the final review from a prepared inventory/claims root;
+  missing records remain Not Judged. 603 tests.
+
 - **Verified search-copy application.** `search_apply.py` maps only verified
   host-search copies, preserves existing supplied mappings, re-extracts and
   rebuilds task windows; `one_paper --apply-search` wires it. 603 tests.
