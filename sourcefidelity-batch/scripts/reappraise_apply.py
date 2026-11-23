@@ -611,7 +611,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
     ap.add_argument("--task", required=True)
-    ap.add_argument("--judgments", required=True)
+    ap.add_argument("--judgments", default="")
     ap.add_argument("--date", default=date.today().isoformat())
     ap.add_argument("--repair-findings", action="store_true",
                     help="rebuild findings.json from the recorded reappraisal block")
@@ -621,7 +621,7 @@ def main():
 
     root = os.path.abspath(args.batch)
     task = load(args.task)
-    judgments = load(args.judgments)
+    judgments = load(args.judgments) if args.judgments else task.get("cached_judgments", {})
     if not task or not judgments:
         raise SystemExit("task or judgments file unreadable")
     pid = task["paper_id"]
@@ -654,6 +654,12 @@ def main():
         with open(response_path, "w", encoding="utf-8") as handle:
             json.dump({"task_sha256": task_sha, "judgments": judgments},
                       handle, indent=1, ensure_ascii=False)
+        cache_key = task.get("cache_key")
+        if cache_key:
+            shared = os.path.join(root, "_reappraise", "cache", cache_key + ".json")
+            os.makedirs(os.path.dirname(shared), exist_ok=True)
+            with open(shared, "w", encoding="utf-8") as handle:
+                json.dump(judgments, handle, indent=1, ensure_ascii=False)
 
     if args.repair_findings:
         result = repair_findings(folder)

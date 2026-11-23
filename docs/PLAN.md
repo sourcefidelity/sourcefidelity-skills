@@ -63,7 +63,7 @@ Work in this order. Rows may overlap only when they are independent; stop at a r
 | R43 | Abstract-only topical-scope attention | Done | High | Identity-gated abstracts from OpenAlex/Crossref/S2/DOI landing; one bounded scope request per source/chunk; only high-confidence explicit different-subject or incompatible-stated-scope marks; no Supports/Contradicts and no claim-record change. Real R37: 7 abstracts, 4 calls covering 6 claims, 0 marks; positive calibration returned 1 high-confidence mark. 616 tests. |
 | R48 | Acquisition/search bridge | In progress | High | `search-plan.json` and `search_acquire.py` use the harness/agent web search: plan queries, execute them with host `web_search`, save results, verify identity, ingest. No separate key; verified copies map. |
 | R49 | Single-review bounded operation | In progress | High | `--bounded` emits, `--collect-bounded` records, `--finalize --gate` renders. |
-| R50 | Reappraisal reuse | In progress | Medium | Window/task checkpoint; packet reuse remains. |
+| R50 | Reappraisal reuse | Done | Medium | Window cache, task-hash checkpoint and task-content judgment cache; identical tasks reuse prior judgments. |
 | R51 | Judgment audit | In progress | High | Guard blocks Supports/no-evidence; blind 11 agree/5 resolved; 4 open. |
 | R52 | Shared acquisition validator | Done | High | PDF identity/completeness/quality, source-kind, abstract/listing rejection, safety, OCR text; reject fixtures. |
 | R53 | Multi-candidate acquisition ranking | Done | Medium | Rank by PDF/official/title, try all complete candidates, record rejects; no first-link admission. |

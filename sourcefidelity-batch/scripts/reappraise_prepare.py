@@ -67,6 +67,19 @@ def load(path, default=None):
         return default
 
 
+def task_content_hash(bucket):
+    payload = {"paper_id": bucket.get("paper_id"),
+               "entries": bucket.get("entries", []),
+               "windows": bucket.get("windows", {}),
+               "constraints": bucket.get("constraints", {})}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True,
+                                     ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def cache_path(root, key):
+    return os.path.join(root, "_reappraise", "cache", key + ".json")
+
+
 def parse_review(text):
     entries = {}
     matches = list(C_HEAD.finditer(text))
@@ -360,6 +373,10 @@ def main():
             "only_these_ids": [e["id"] for e in bucket["entries"]],
             "return_json_only": True,
         }
+        bucket["cache_key"] = task_content_hash(bucket)
+        cached = load(cache_path(root, bucket["cache_key"]))
+        if cached:
+            bucket["cached_judgments"] = cached
         task_path = os.path.join(out_dir, f"{pid}.task.json")
         json.dump(bucket, open(task_path, "w", encoding="utf-8"),
                   ensure_ascii=False, indent=1)
