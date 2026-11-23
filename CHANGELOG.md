@@ -8,6 +8,12 @@
   unavailable source into an absence finding. A 160-claim / 15k+ word synthetic
   fixture resumed from 10/150 to 160/0 with every packet at or under 4,000 bytes.
 
+- **Terse schema-bound output (R46 O5).** Judgment reasons are capped at 400
+  characters, evidence contributions at 240, and a reason that reproduces an
+  eight-word source shingle is rejected while short quotations remain allowed.
+  Existing packet/response byte caps and evidence validation are unchanged. 577
+  tests pass.
+
 - **Deterministic claim routing (R46 O4).** `fast_paths.py` and
   `route_claims.py` route no-evidence claims away from a model call, reuse
   identical validated records, flag exact quotations, and mark risky or

@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index) and O4 (deterministic routing) are implemented; O3, O5–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index) and O4 (deterministic routing) and O5 (terse output) are implemented; O3 and O6–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 
@@ -80,6 +80,8 @@ Before any model call:
 R44 full-text recovery must try local candidate selection first and use a selector model only when the deterministic candidate set is weak.
 
 ## 5. Reduce output cost
+
+Implemented in `claim_assessment.py`: reasons are capped at 400 characters, contributions at 240, and a reason that repeats an eight-word source shingle is rejected while short quotations remain allowed. The existing 4,000-byte packet and 1,600-byte response caps are unchanged.
 
 - Require terse structured output: judgment, short reason, evidence spans and academic-practice fields.
 - Cap rationale and contribution lengths in the schema.

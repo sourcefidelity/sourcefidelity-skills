@@ -52,7 +52,9 @@ INSTRUCTIONS = (
     "judgment. Use Not Supported only when the inspected passages are adequate and "
     "do not support the claim; use Not Judged only when coverage is insufficient. "
     "Evidence is an array of passage_id, start, end and contribution objects. "
-    "Offsets are zero-based Unicode characters in passage text, end exclusive. "
+    "Keep the reason under 400 characters and each contribution under 240 characters; "
+    "do not restate the source passage. Offsets are zero-based Unicode characters in "
+    "passage text, end exclusive. "
     "Select exact evidence for every substantive judgment. Do not use outside "
     "knowledge."
 )

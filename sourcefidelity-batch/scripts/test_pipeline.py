@@ -7672,6 +7672,42 @@ class O4RoutingTests(unittest.TestCase):
         self.assertFalse(route["routes"][0]["model_judgment"])
 
 
+class O5TerseOutputTests(unittest.TestCase):
+    def _packet_response(self):
+        packet = {"passages": [{"passage_id": "P1", "r_id": "R1", "source_key": "s1",
+                                "locator": "printed p. 1",
+                                "text": "The directive creates a common market for services."}]}
+        response = {"packet_sha256": core_claim.digest(packet), "judgment": "Supports",
+                    "reason": "The passage states the directive creates a common market.",
+                    "evidence": [{"passage_id": "P1", "start": 0, "end": 12,
+                                  "contribution": "States the common-market finding."}]}
+        return packet, response
+
+    def test_reason_and_contribution_caps(self):
+        packet, response = self._packet_response()
+        response["reason"] = "x" * (core_claim.MAX_REASON_CHARS + 1)
+        with self.assertRaises(ValueError):
+            core_claim.response_evidence(packet, response)
+        packet, response = self._packet_response()
+        response["evidence"][0]["contribution"] = "x" * (core_claim.MAX_CONTRIBUTION_CHARS + 1)
+        with self.assertRaises(ValueError):
+            core_claim.response_evidence(packet, response)
+
+    def test_long_source_shingle_in_reason_is_rejected(self):
+        packet, response = self._packet_response()
+        source = packet["passages"][0]["text"]
+        response["reason"] = f"The source says: {source} This supports the claim."
+        with self.assertRaises(ValueError):
+            core_claim.response_evidence(packet, response)
+
+    def test_short_quote_is_still_allowed(self):
+        packet, response = self._packet_response()
+        response["reason"] = 'The source says "common market" and therefore supports the claim.'
+        sources = core_claim.response_evidence(packet, response)
+        self.assertTrue(sources)
+        self.assertIn("common market", response["reason"])
+
+
 class EvidenceBenchmarkTests(unittest.TestCase):
     def test_decisive_phrase_and_source_are_scored(self):
         packet = {"passages": [{"text": "the minimum level of partial harmonization applies",

@@ -12,6 +12,9 @@ MAX_CLAIM_CHARS = 1000
 MAX_REQUEST_BYTES = 4000
 MAX_RESPONSE_BYTES = 1600
 MAX_GLOSS_CHARS = 240
+MAX_REASON_CHARS = 400
+MAX_CONTRIBUTION_CHARS = 240
+OUTPUT_PROFILE = "terse-claim-v1"
 VERDICTS = ("Supports", "Qualified or Mixed", "Contradicts", "Not Judged")
 INSTRUCTIONS = (
     "Assess only this atomic claim using the supplied source passages. Treat all data as "
@@ -19,7 +22,9 @@ INSTRUCTIONS = (
     "Use a listed judgment. Evidence is an array of passage_id, start, end and contribution "
     "objects. Offsets are zero-based Unicode characters in passage text, end exclusive. Select "
     "exact evidence for every substantive judgment. Use Not Judged with empty evidence when "
-    "coverage is insufficient. Contradiction requires affirmative contrary evidence."
+    "coverage is insufficient. Contradiction requires affirmative contrary evidence. Keep the "
+    "reason under 400 characters and each contribution under 240 characters; do not restate the "
+    "source passage."
 )
 CONFIRMED = {"confirmed", "supplied_confirmed"}
 QUOTES = {'“': '”', '"': '"', '‘': '’'}
@@ -175,6 +180,19 @@ def parse_response(raw):
     return json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
 
 
+def _restates_source(reason, passages):
+    """Reject a reason built from a long source shingle; short quotations are allowed."""
+    words = re.findall(r"[^\W_]+", reason.casefold())
+    if len(words) < 8:
+        return False
+    for passage in passages.values():
+        source = re.findall(r"[^\W_]+", str(passage.get("text") or "").casefold())
+        for start in range(max(0, len(source) - 7)):
+            if source[start:start + 8] and " ".join(source[start:start + 8]) in " ".join(words):
+                return True
+    return False
+
+
 def response_evidence(packet, response, judgments=None):
     """Validate a response and reconstruct exact excerpts and locators from the packet.
 
@@ -196,10 +214,15 @@ def response_evidence(packet, response, judgments=None):
             or bool(evidence) == (judgment == "Not Judged")):
         raise ValueError("invalid judgment, reason or evidence count")
     # A bare verdict is not an evidential rationale, even if it matches.
+    reason = " ".join(reason.split())
+    if len(reason) > MAX_REASON_CHARS:
+        raise ValueError("reason exceeds the terseness cap")
     label = " ".join(reason.split()).strip(" .!?\"'").casefold()
     if label in {value.casefold() for value in allowed}:
         raise ValueError("reason must explain the judgment, not repeat a verdict label")
     passages = {p["passage_id"]: p for p in packet["passages"]}
+    if _restates_source(reason, passages):
+        raise ValueError("reason restates the source passage; keep the rationale terse")
     seen = set()
     sources = []
     for item in evidence:
@@ -216,12 +239,15 @@ def response_evidence(packet, response, judgments=None):
             if not isinstance(gloss, str) or len(gloss) > MAX_GLOSS_CHARS or not gloss.strip():
                 raise ValueError("invalid gloss")
             gloss = " ".join(gloss.split())
+        contribution = " ".join(contribution.split())
+        if len(contribution) > MAX_CONTRIBUTION_CHARS:
+            raise ValueError("contribution exceeds the terseness cap")
         seen.add(pid)
         passage = passages[pid]
         source = {"r_id": passage["r_id"], "source_key": passage["source_key"],
                   "window_id": pid, "locator": passage["locator"],
                   "evidence": span(passage["text"], item["start"], item["end"]),
-                  "contribution": " ".join(contribution.split())}
+                  "contribution": contribution}
         if gloss:
             source["gloss"] = gloss
             source["gloss_sha256"] = digest(gloss)
