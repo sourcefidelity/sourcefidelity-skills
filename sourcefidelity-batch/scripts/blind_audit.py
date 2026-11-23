@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Prepare and collect a blind second judgment pass over bounded packets.
+
+    blind_audit.py --root ROOT --paper paper --inventory INV --claims PLAN prepare
+    blind_audit.py --root ROOT --paper paper --inventory INV --claims PLAN collect
+
+`prepare` emits the same bounded claim packets without any first-pass judgment.
+A host worker writes responses under `_work/<paper>/blind-responses/`.
+`collect` compares the second judgment with the saved finding and records
+agreements, disagreements and claims with no packet. It never edits findings.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILLS = os.path.dirname(os.path.dirname(HERE))
+REVIEW = os.path.join(SKILLS, "sourcefidelity-review", "scripts")
+sys.path.insert(0, HERE)
+sys.path.insert(0, REVIEW)
+import batch_paths  # noqa: E402
+import assess_claims  # noqa: E402
+from sourcefidelity_core import claim_assessment as core  # noqa: E402
+
+
+def load(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return {} if default is None else default
+
+
+def _work(root, paper):
+    return batch_paths.artifact(os.path.join(root, "_work"), paper)
+
+
+def prepare(root, paper, inventory_path, claims_path):
+    work = _work(root, paper)
+    inventory = load(inventory_path)
+    task = load(os.path.join(work, "task.json"))
+    plan = load(claims_path)
+    out = os.path.join(work, "blind-requests")
+    os.makedirs(out, exist_ok=True)
+    emitted = []
+    for claim_id, occurrence_id, packet, limitation in assess_claims.packets(
+            task, inventory, plan):
+        if packet is None:
+            continue
+        path = os.path.join(out, claim_id + ".request.json")
+        with open(path, "wb") as handle:
+            handle.write(core.request_bytes(packet))
+        emitted.append({"claim_id": claim_id, "occurrence_id": occurrence_id,
+                        "request": path})
+    manifest = {"schema": "blind-audit-v1", "paper": paper,
+                "requests": emitted,
+                "no_packet": sorted({cid for cid, _oid, packet, _lim
+                                     in assess_claims.packets(task, inventory, plan)
+                                     if packet is None})}
+    with open(os.path.join(work, "blind-manifest.json"), "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, ensure_ascii=False, indent=1)
+    return manifest
+
+
+def collect(root, paper, inventory_path, claims_path):
+    work = _work(root, paper)
+    inventory = load(inventory_path)
+    plan = load(claims_path)
+    findings = load(os.path.join(work, "claim-findings.json")) or load(
+        os.path.join(root, "paper", "findings.json"))
+    first = {row["id"]: row.get("judgment") for row in findings.get("occurrences", [])}
+    specs = {cid: spec for cid, spec in core.claim_specs(inventory, plan)}
+    rows = []
+    for name in sorted(os.listdir(os.path.join(work, "blind-requests"))):
+        if not name.endswith(".request.json"):
+            continue
+        claim_id = name[:-len(".request.json")]
+        response_path = os.path.join(work, "blind-responses", claim_id + ".response.json")
+        response = load(response_path)
+        if not response:
+            rows.append({"claim_id": claim_id, "status": "missing_response"})
+            continue
+        try:
+            request = load(os.path.join(work, "blind-requests", name))
+            packet = {key: value for key, value in request.items()
+                      if key != "packet_sha256"}
+            core.response_evidence(packet, response)
+            second = response["judgment"]
+        except (OSError, ValueError, KeyError, TypeError):
+            rows.append({"claim_id": claim_id, "status": "invalid_response"})
+            continue
+        occurrence_id = specs[claim_id]["occurrence_id"] if claim_id in specs else ""
+        rows.append({"claim_id": claim_id, "occurrence_id": occurrence_id,
+                     "first": first.get(occurrence_id, ""), "second": second,
+                     "status": "agree" if first.get(occurrence_id) == second
+                     else "disagree"})
+    result = {"schema": "blind-audit-v1", "paper": paper, "rows": rows,
+              "agree": sum(1 for row in rows if row["status"] == "agree"),
+              "disagree": sum(1 for row in rows if row["status"] == "disagree"),
+              "missing": sum(1 for row in rows if row["status"] in
+                             ("missing_response", "invalid_response")),
+              "no_packet": load(os.path.join(work, "blind-manifest.json")).get("no_packet", [])}
+    path = os.path.join(work, "blind-audit.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=1)
+    result["out"] = path
+    return result
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--root", required=True)
+    ap.add_argument("--paper", default="paper")
+    ap.add_argument("--inventory", required=True)
+    ap.add_argument("--claims", required=True)
+    ap.add_argument("mode", choices=("prepare", "collect"))
+    args = ap.parse_args(argv)
+    fn = prepare if args.mode == "prepare" else collect
+    print(json.dumps(fn(os.path.abspath(args.root), args.paper,
+                        args.inventory, args.claims), indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
