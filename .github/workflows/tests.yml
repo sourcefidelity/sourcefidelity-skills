@@ -43,6 +43,7 @@ jobs:
           choco install tesseract --no-progress -y
           tesseract --version
       - name: Verify Tesseract languages
+        shell: bash
         run: |
           python - <<'PY'
           import subprocess
