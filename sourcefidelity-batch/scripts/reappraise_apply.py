@@ -645,8 +645,15 @@ def main():
         os.makedirs(os.path.dirname(status_path), exist_ok=True)
         with open(status_path, "w", encoding="utf-8") as handle:
             json.dump({"task_sha256": task_sha, "task_id": task_id,
-                       "paper_id": pid, "date": args.date, "changes": count},
+                       "paper_id": pid, "date": args.date, "changes": count,
+                       "judgments": judgments},
                       handle, indent=1)
+        response_path = os.path.join(os.path.dirname(status_path), "responses",
+                                     task_id + ".json")
+        os.makedirs(os.path.dirname(response_path), exist_ok=True)
+        with open(response_path, "w", encoding="utf-8") as handle:
+            json.dump({"task_sha256": task_sha, "judgments": judgments},
+                      handle, indent=1, ensure_ascii=False)
 
     if args.repair_findings:
         result = repair_findings(folder)
