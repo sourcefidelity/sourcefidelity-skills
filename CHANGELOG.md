@@ -42,6 +42,10 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Host-model bounded collection.** `one_paper --collect-bounded` records
+  host-written responses, writes checkpoint/run status, and keeps model calls
+  outside the skill. Added `BOUNDED_WORKER.md`. 602 tests.
+
 - **Single pipeline mode.** `one_paper --pipeline` runs structural inventory,
   route, checkpoint-pending bounded emission, search plan and metrics in one
   command; model workers remain external. 602 tests.

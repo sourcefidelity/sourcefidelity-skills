@@ -140,6 +140,8 @@ def main(argv=None):
                     help="create a structural inventory before --bounded")
     ap.add_argument("--pipeline", action="store_true",
                     help="run prep, inventory bootstrap, route, bounded emit, search plan and metrics")
+    ap.add_argument("--collect-bounded", action="store_true",
+                    help="record host-model responses for bounded requests")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
@@ -149,6 +151,33 @@ def main(argv=None):
         subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
                         "--batch", args.out, "--paper", "paper"], check=True)
         args.inventory = os.path.join(args.out, "_work", "paper", "inventory.json")
+    if args.collect_bounded:
+        if not args.inventory:
+            ap.error("--collect-bounded requires --inventory")
+        claims = args.claims or os.path.join(args.out, "_work", "paper", "claims.json")
+        req_dir = os.path.join(args.out, "_work", "paper", "bounded-requests")
+        resp_dir = os.path.join(args.out, "_work", "paper", "bounded-responses")
+        os.makedirs(resp_dir, exist_ok=True)
+        recorded = []
+        for name in sorted(os.listdir(req_dir)):
+            if not name.endswith(".request.json"):
+                continue
+            claim_id = name[:-len(".request.json")]
+            response = os.path.join(resp_dir, claim_id + ".response.json")
+            if not os.path.exists(response):
+                continue
+            proc = subprocess.run([sys.executable, "-I", ASSESS, "--root", args.out,
+                                   "--paper", "paper", "--inventory", args.inventory,
+                                   "--claims", claims, "record", claim_id, response],
+                                  capture_output=True, text=True)
+            if proc.returncode == 0:
+                recorded.append(claim_id)
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "checkpoint.py"),
+                        "--root", args.out, "--paper", "paper",
+                        "--inventory", args.inventory, "--claims", claims,
+                        "--write", "--write-status"], check=False)
+        print(json.dumps({"recorded": recorded, "responses": resp_dir}, indent=1))
+        return 0
     if args.pipeline:
         inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
         subprocess.run([sys.executable, "-I", os.path.join(BATCH, "route_claims.py"),
