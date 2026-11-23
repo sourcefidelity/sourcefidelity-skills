@@ -138,13 +138,28 @@ def main(argv=None):
                     help="emit bounded claim requests for an existing prepared root")
     ap.add_argument("--bootstrap-inventory", action="store_true",
                     help="create a structural inventory before --bounded")
+    ap.add_argument("--pipeline", action="store_true",
+                    help="run prep, inventory bootstrap, route, bounded emit, search plan and metrics")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
+    if args.pipeline and not args.inventory:
+        args.bootstrap_inventory = True
     if args.bootstrap_inventory:
         subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
                         "--batch", args.out, "--paper", "paper"], check=True)
         args.inventory = os.path.join(args.out, "_work", "paper", "inventory.json")
+    if args.pipeline:
+        inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "route_claims.py"),
+                        "--batch", args.out, "--paper", "paper"], check=False)
+        manifest = bounded_requests(args.out, inventory, args.claims, args.jobs)
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "search_plan.py"),
+                        "--root", args.out, "--paper", "paper"], check=False)
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "optimization_metrics.py"),
+                        "--root", args.out], check=False)
+        print(json.dumps({"pipeline": manifest}, indent=1))
+        return 0
     if args.bounded:
         if not args.inventory:
             ap.error("--bounded requires --inventory")

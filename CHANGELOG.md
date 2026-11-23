@@ -42,6 +42,10 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Single pipeline mode.** `one_paper --pipeline` runs structural inventory,
+  route, checkpoint-pending bounded emission, search plan and metrics in one
+  command; model workers remain external. 602 tests.
+
 - **Structural inventory bootstrap.** `bootstrap_inventory.py` creates
   citations, references and uncited entries from candidates without making a
   judgment; `one_paper --bootstrap-inventory --bounded` can then emit claim
