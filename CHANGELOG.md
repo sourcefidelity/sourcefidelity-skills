@@ -42,6 +42,12 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Judgment consistency gate.** A Supports judgment is rejected when its own
+  occurrence carries “No supporting evidence,” no source evidence, or a
+  no-supporting-evidence note; Qualified or Mixed may still carry the missing
+  part. This catches the fresh TV C2/C17/C20 contradiction class before render.
+  599 tests pass.
+
 - **Summary-ID reconciliation.** The render gate now rejects a Category A or B
   summary line that names an ID whose findings category is only HL or the other
   category; this catches reports whose prose overstates evidenced findings.

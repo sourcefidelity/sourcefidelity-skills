@@ -91,6 +91,7 @@ from sourcefidelity_core import source_index as core_source_index  # noqa: E402
 from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
+from sourcefidelity_core import judgment_guard  # noqa: E402
 import abstract_scope as abstract_cli  # noqa: E402
 import fetch_abstracts as abstract_fetch  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
@@ -7803,6 +7804,28 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class JudgmentGuardTests(unittest.TestCase):
+    def test_supports_cannot_carry_no_evidence(self):
+        findings = {"occurrences": [{
+            "id": "C1", "judgment": "Supports",
+            "sources": [{"evidence": "The source states the finding."}],
+            "no_evidence": ["the extra qualification"],
+        }]}
+        self.assertTrue(judgment_guard.errors(findings))
+
+    def test_qualified_may_carry_no_evidence(self):
+        findings = {"occurrences": [{
+            "id": "C1", "judgment": "Qualified or Mixed",
+            "sources": [{"evidence": "The source states part."}],
+            "no_evidence": ["the extra qualification"],
+        }]}
+        self.assertEqual(judgment_guard.errors(findings), [])
+
+    def test_supports_needs_a_source_contribution(self):
+        findings = {"occurrences": [{"id": "C1", "judgment": "Supports", "sources": []}]}
+        self.assertTrue(judgment_guard.errors(findings))
 
 
 class R43AbstractScopeTests(unittest.TestCase):

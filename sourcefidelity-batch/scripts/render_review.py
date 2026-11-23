@@ -25,6 +25,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 from sourcefidelity_core import reading_gate as reading_gate_core  # noqa: E402
+from sourcefidelity_core import judgment_guard  # noqa: E402
 
 import authorship_signals  # noqa: E402
 import file_digest  # noqa: E402
@@ -72,6 +73,8 @@ def validate(findings, inventory=None, task=None):
     if duplicates:
         fail(f"duplicate IDs: {duplicates}")
     for message in finding_counts.reconcile(findings):
+        fail(message)
+    for message in judgment_guard.errors(findings):
         fail(message)
     refs_by_id = {ref["id"]: ref for ref in references}
     inventory_occurrences = {occ["id"]: occ for occ in (inventory or {}).get("occurrences", [])}
