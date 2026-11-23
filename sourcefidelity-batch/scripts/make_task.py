@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
 from sourcefidelity_core.search_normalize import (  # noqa: E402
     SearchText, normalise_query, surface_phrases, word_variants,
 )
+from sourcefidelity_core import source_index  # noqa: E402
 import source_registry  # noqa: E402
 import web_cache  # noqa: E402
 
@@ -482,7 +483,8 @@ def _bm25_tokens(text):
     return [token for token in normalise_query(text).split() if len(token) >= 3]
 
 
-def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used):
+def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used,
+                     index=None):
     """BM25 over source paragraphs when coarse windows leave claim terms uncovered."""
     if not terms or limit <= 0:
         return []
@@ -493,29 +495,34 @@ def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used):
         if value and value not in query_terms:
             query_terms.extend(value.split())
     query_terms = list(dict.fromkeys(query_terms))
-    folders = []
-    for start, end, printed in _paragraph_spans(text, marks):
-        if not text[start:end].strip() or not in_range(printed, page_range):
-            continue
-        tokens = _bm25_tokens(text[start:end])
-        if tokens:
-            folders.append((start, end, printed, tokens))
-    if not folders:
-        return []
-    avg = sum(len(tokens) for *_prefix, tokens in folders) / len(folders)
-    df = {term: sum(1 for *_prefix, tokens in folders if term in tokens)
-          for term in query_terms}
-    scores = []
-    for start, end, printed, tokens in folders:
-        score = 0.0
-        for term in query_terms:
-            tf = tokens.count(term)
-            if not tf:
+    if index is not None:
+        scores = [(score, paragraph["start"], paragraph["end"], paragraph["printed_page"])
+                  for score, paragraph in source_index.rank_paragraphs(
+                      index, terms, page_range, limit=50)]
+    else:
+        folders = []
+        for start, end, printed in _paragraph_spans(text, marks):
+            if not text[start:end].strip() or not in_range(printed, page_range):
                 continue
-            idf = (len(folders) + 1) / (df[term] + 1)
-            score += idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * len(tokens) / avg))
-        if score:
-            scores.append((score, start, end, printed))
+            tokens = _bm25_tokens(text[start:end])
+            if tokens:
+                folders.append((start, end, printed, tokens))
+        if not folders:
+            return []
+        avg = sum(len(tokens) for *_prefix, tokens in folders) / len(folders)
+        df = {term: sum(1 for *_prefix, tokens in folders if term in tokens)
+              for term in query_terms}
+        scores = []
+        for start, end, printed, tokens in folders:
+            score = 0.0
+            for term in query_terms:
+                tf = tokens.count(term)
+                if not tf:
+                    continue
+                idf = (len(folders) + 1) / (df[term] + 1)
+                score += idf * (tf * 2.2) / (tf + 1.2 * (0.25 + 0.75 * len(tokens) / avg))
+            if score:
+                scores.append((score, start, end, printed))
     out = []
     for score, start, end, printed in sorted(scores, reverse=True):
         if any(not (end <= old_start or start >= old_end) for old_start, old_end in used):
@@ -623,16 +630,17 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
         if citation is not None:
             phrases = list(phrases) + acronym_phrases(source, citation)
         if path not in cache:
-            text, marks, pages = page_index(path)
+            text, built = source_index.load_or_build(root, path)
+            marks, pages = built["marks"], built["pages"]
             meta = load(os.path.join(os.path.dirname(path), "meta.json"), {}) or {}
             cache[path] = (
                 text, marks, pages,
                 hashlib.sha256(text.encode("utf-8")).hexdigest(),
                 meta.get("sha256"), meta.get("extractor_version", ""),
                 meta.get("extraction_options", {}), meta.get("pages_sha256", ""),
-                meta.get("text_sha256", ""))
+                meta.get("text_sha256", ""), built)
         (text, marks, pages, text_sha256, source_sha256, extraction_version,
-         extraction_options, page_map_sha256, extraction_text_sha256) = cache[path]
+         extraction_options, page_map_sha256, extraction_text_sha256, built) = cache[path]
         hits = windows(text, marks, pages, phrases, width, page_range, limit=limit,
                        quotes=quotes)
         if len(hits) < limit and citation is not None:
@@ -649,7 +657,7 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
                 used = [(hit["start"], hit["end"]) for hit in hits]
                 hits.extend(paragraph_rescue(
                     text, marks, pages, terms, width, page_range,
-                    max(1, limit - len(hits)), used))
+                    max(1, limit - len(hits)), used, index=built))
         if not hits and extraction:
             identity = source.get("identity") or {}
             terms = (title_phrases(identity.get("title", "")) +
@@ -833,6 +841,7 @@ def main():
         },
         "ambiguity": cand.get("ambiguity", {}),
         "sources": sources,
+        "uncited_screen": load(os.path.join(work, "uncited-screen.json"), {}),
         "windows": windows_by_c,
         "window_status": window_status,
         "lookup_command": (

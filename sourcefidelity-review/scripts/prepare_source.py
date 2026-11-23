@@ -2,7 +2,8 @@
 """Prepare a supplied PDF once: shared text, page map, provenance.
 
     python3 -I prepare_source.py --pdf FILE --out DIR [--key KEY]
-        [--seed-json OCR.json] [--dpi 220] [--max-ocr-pages N] [--force]
+        [--seed-json OCR.json] [--langs chi_sim,chi_tra] [--dpi 220]
+        [--max-ocr-pages N] [--force]
 
 Writes DIR/{text.txt,pages.csv,meta.json,README.md}. One DIR holds one source:
 preparing a different --key into a DIR that already holds another key is refused
@@ -30,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import page_map  # noqa: E402
 import detect_structure  # noqa: E402
+import pdf_quality  # noqa: E402
+from sourcefidelity_core import script_detect  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -66,7 +69,9 @@ EXTRACTOR_VERSION = "prepare-source-v2"
 def extraction_options(args):
     """Options that change the extraction and therefore its cache identity."""
     return {"dpi": int(args.dpi), "max_ocr_pages": int(args.max_ocr_pages),
-            "seed_json": bool(args.seed_json)}
+            "seed_json": bool(args.seed_json),
+            "langs": [part.strip() for part in (args.langs or "").split(",")
+                      if part.strip()]}
 
 
 def source_key_conflict(existing, key):
@@ -106,12 +111,14 @@ def load_meta(out):
     return {}
 
 
-def ocr_pages(pdf, pages, dpi):
-    """Return {pdf_page: (text, confidence)} for the requested pages."""
+def ocr_pages(pdf, pages, dpi, langs=None):
+    """Return ({pdf_page: (text, confidence)}, missing_languages)."""
     if not pages:
-        return {}
+        return {}, []
     cmd = [sys.executable, "-I", PDF_QUALITY, "ocr", pdf,
            "--pages", ",".join(str(p) for p in pages), "--dpi", str(dpi)]
+    if langs:
+        cmd += ["--langs", ",".join(langs)]
     proc = subprocess.run(cmd, capture_output=True, timeout=45 * len(pages) + 120)
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or b"").decode("utf-8", "replace")[:400])
@@ -120,7 +127,7 @@ def ocr_pages(pdf, pages, dpi):
     for page in data.get("pages", []):
         out[int(page["pdf_page_1based"])] = (
             page.get("text", ""), float(page.get("mean_confidence") or 0))
-    return out
+    return out, data.get("languages_missing") or []
 
 
 def load_seed(path):
@@ -208,6 +215,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--key", default="")
     ap.add_argument("--seed-json", default="")
+    ap.add_argument("--langs", default="",
+                    help="OCR language codes, e.g. chi_sim,chi_tra,jpn,kor; "
+                         "default: detect from native text or OSD")
     ap.add_argument("--dpi", type=int, default=DEFAULT_DPI)
     ap.add_argument("--max-ocr-pages", type=int, default=0,
                     help="0 = all pages that need OCR")
@@ -241,19 +251,36 @@ def main():
         return 0
 
     pages = page_map.read_pages(pdf)
-    need = [p["pdf_page"] for p in pages if p["words"] < 5]
+    need = [p["pdf_page"] for p in pages
+            if not p.get("native_usable", p["words"] >= 5)]
+    native_text = "\n".join(p["text"] for p in pages if p.get("native_usable"))
+    plan = script_detect.ocr_plan(native_text, args.langs)
+    if need and not plan["languages"]:
+        detected = pdf_quality.detect_languages(pdf)
+        if detected.get("languages"):
+            plan = {"languages": detected["languages"], "source": "osd",
+                    "ambiguous": bool(detected.get("ambiguous")),
+                    "reason": detected.get("script", "")}
+        else:
+            plan = {"languages": [], "source": "script_hint",
+                    "ambiguous": True,
+                    "reason": detected.get("hint") or detected.get("error") or
+                              "language unknown"}
     if args.max_ocr_pages:
         need = need[: args.max_ocr_pages]
 
     ocr = {}
+    missing = []
     source = "none"
     if args.seed_json and os.path.exists(args.seed_json):
         ocr = load_seed(args.seed_json)
         source = "seed"
+    elif need and not plan["languages"]:
+        source = "skipped"
     elif need:
         try:
-            ocr = ocr_pages(pdf, need, args.dpi)
-            source = "pdfocr"
+            ocr, missing = ocr_pages(pdf, need, args.dpi, plan["languages"])
+            source = "tesseract"
         except Exception as exc:  # record, do not abort the batch
             ocr = {}
             source = f"failed: {type(exc).__name__}"
@@ -310,6 +337,10 @@ def main():
         "ocr_pages_count": sum(1 for p in pages if p["source"] == "ocr"),
         "empty_pages": sum(1 for p in pages if p["source"] == "none"),
         "ocr_source": source,
+        "ocr_languages": plan["languages"],
+        "ocr_language_source": plan["source"],
+        "ocr_language_ambiguous": bool(plan["ambiguous"] and need),
+        "ocr_languages_missing": missing,
         "ocr_pages": [p["pdf_page"] for p in pages if p["source"] == "ocr"],
         "offset": offset,
         "structure": structure,
@@ -330,6 +361,18 @@ def main():
         pass
     if source.startswith("failed"):
         meta["gaps"].append(f"OCR failed for {len(need)} pages: {source}")
+    if plan["ambiguous"] and need:
+        meta["gaps"].append(
+            "OCR language is ambiguous" +
+            (" (Han-only text; Chinese simplified and traditional packs were requested)"
+             if "Han-only" in plan.get("reason", "") else "") + ".")
+    if missing:
+        meta["gaps"].append(
+            "Requested OCR language packs are missing: " + ", ".join(missing) + ".")
+    if need and not plan["languages"]:
+        meta["gaps"].append(
+            f"OCR was not run for {len(need)} page(s): source language is unknown; "
+            "pass --langs (for example rus, ara, heb, hin or tha).")
     if offset["arabic_offset"] is None:
         meta["gaps"].append("No constant printed-page offset could be inferred; pages keep only visible folios.")
     if meta["empty_pages"]:

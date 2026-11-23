@@ -133,13 +133,74 @@ def _now():
 # ---------------------------------------------------------------- OCR backend
 
 def tesseract_langs(langs):
-    mapping = {"en-us": "eng", "en-gb": "eng", "zh-hans": "chi_sim",
-               "zh-hant": "chi_tra"}
+    mapping = {
+        "en-us": "eng", "en-gb": "eng",
+        "zh": "chi_sim", "zh-hans": "chi_sim", "zh-cn": "chi_sim",
+        "zh-hant": "chi_tra", "zh-tw": "chi_tra",
+        "ja": "jpn", "ja-jp": "jpn", "jpn": "jpn",
+        "ko": "kor", "ko-kr": "kor", "kor": "kor",
+        "ja-vert": "jpn_vert", "jpn-vert": "jpn_vert",
+        "ko-vert": "kor_vert", "kor-vert": "kor_vert",
+        "zh-hans-vert": "chi_sim_vert", "zh-hant-vert": "chi_tra_vert",
+        "chi-sim": "chi_sim", "chi-tra": "chi_tra",
+        "chi-sim-vert": "chi_sim_vert", "chi-tra-vert": "chi_tra_vert",
+        "ru": "rus", "rus": "rus", "uk": "ukr", "ukr": "ukr",
+        "bg": "bul", "bul": "bul", "ar": "ara", "ara": "ara",
+        "fa": "fas", "fas": "fas", "ur": "urd", "urd": "urd",
+        "he": "heb", "heb": "heb", "hi": "hin", "hin": "hin",
+        "mr": "mar", "mar": "mar", "th": "tha", "tha": "tha",
+    }
     out = []
     for language in langs or []:
         key = language.lower().replace("_", "-")
-        out.append(mapping.get(key, key.split("-")[0]))
+        out.append(mapping.get(key) or key.split("-")[0])
     return out or ["eng"]
+
+
+def detect_languages(path, page=1, dpi=150):
+    """One-page OSD: script class, orientation and OCR language hints.
+
+    OSD cannot distinguish Simplified from Traditional Chinese; Han returns both
+    Chinese packs and an ambiguity flag. It also cannot decide a Han-only
+    Japanese page, so the caller must keep that ambiguity.
+    """
+    binary, reason = helper_status()
+    if binary is None:
+        return {"error": reason, "languages": [], "ambiguous": True}
+    try:
+        import pymupdf
+        document = pymupdf.open(path)
+    except Exception as exc:
+        return {"error": f"PDF open failed: {type(exc).__name__}: {exc}",
+                "languages": [], "ambiguous": True}
+    try:
+        if page < 1 or page > document.page_count:
+            return {"error": "page out of range", "languages": [], "ambiguous": True}
+        png, _width, _height = _render_page(document, page, dpi)
+    finally:
+        document.close()
+    try:
+        proc = subprocess.run([binary, "stdin", "stdout", "--psm", "0"],
+                              input=png, capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"error": f"OSD failed: {exc}", "languages": [], "ambiguous": True}
+    text = ((proc.stdout or b"") + (proc.stderr or b"")).decode("utf-8", "replace")
+    script_match = re.search(r"Script:\s*([A-Za-z]+)", text)
+    degree_match = re.search(r"Orientation in degrees:\s*(\d+)", text)
+    script = script_match.group(1) if script_match else ""
+    mapping = {"Han": (["chi_sim", "chi_tra"], True, ""),
+               "Japanese": (["jpn"], False, ""),
+               "Korean": (["kor"], False, ""),
+               "Latin": (["eng"], False, ""),
+               "Cyrillic": ([], True, "Cyrillic script; pass --langs rus/ukr/bul"),
+               "Arabic": ([], True, "Arabic script; pass --langs ara/fas/urd"),
+               "Hebrew": ([], True, "Hebrew script; pass --langs heb"),
+               "Thai": ([], True, "Thai script; pass --langs tha"),
+               "Devanagari": ([], True, "Devanagari script; pass --langs hin/mar")}
+    languages, ambiguous, hint = mapping.get(script, ([], True, ""))
+    return {"script": script, "orientation": int(degree_match.group(1))
+            if degree_match else None, "languages": languages,
+            "ambiguous": ambiguous, "hint": hint, "raw": text.strip()[:400]}
 
 
 def helper_status():

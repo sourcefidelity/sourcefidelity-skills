@@ -61,6 +61,40 @@ judgments through the request/response files.
 
 `match_sources.py` and `scope.py` identify which references the new sources affect; `reappraise_apply.py` updates only those entries in the existing review and ledger and logs every changed judgment. It never re-runs a whole review silently. Reappraisal tasks carry the shared copy-scope observation, and the apply step rejects a judgment from an inadequate or unresolved copy.
 
+### full-text recovery
+
+A `Not Judged` occurrence is not closed while a cited source has a usable extracted copy. `recover_full_text.py` queues those occurrences from findings and the source registry, builds one page-aware paragraph index per extraction, ranks candidates with normalised claim terms, rare-term weighting and proximity, and prefers the cited page range, showing the cited page even when no term hits. At most three passages and the 4,000-byte request budget reach an isolated one-claim model call; the main context receives only the claim ID, judgment and record path. Each packet carries `full_text_recovery` provenance: source and extraction hashes, page range and whether it was applied, blocks searched, selected passages and any locator limitation. `apply` adds recovered windows to the task, updates findings, rerenders through `render_review.py` and keeps a pre-recovery copy; it refuses when findings and summary already disagree. No relevant passage is recorded as `no_relevant_full_text`, never converted into support. Recovery cannot create absence: a copy-scope or edition limitation excludes the source.
+
+### reading gate
+
+Before rendering, `reading_gate.py` checks every occurrence for patchwriting, reported viewpoint, lost qualification, quoted-term fidelity, citation form and locator agreement. Every finding carries the exact source words and locator; when the copy cannot support the check, the gate records `declined` or `inconclusive` with the reason. `apply` merges only new A/B issues, counts A+B records, keeps pre-gate copies and rerenders through `render_review.py --require-gate`. The gate never changes a judgment and never infers absence from silence.
+
+### Unicode and script foundation
+
+Native text is preferred. A script-aware character count replaces the `\S+` word gate, so a CJK page with no spaces is native text rather than an OCR candidate. Script detection chooses OCR packs (Han-only text requests `chi_sim+chi_tra` and records the ambiguity; kana and Hangul choose `jpn` and `kor`; vertical codes are explicit), and missing packs are recorded instead of silently substituting `eng+chi_sim`. HTML and URL bytes are decoded from the HTTP charset, meta declaration or BOM, then UTF-8/GB18030/Big5/Shift-JIS/EUC-KR fallbacks. The shared segmentation module provides character n-grams for Chinese/Japanese and whitespace words plus syllable bigrams for Korean, with original offsets; no segmenter is required.
+
+### Tier 2 scripts
+
+Accented Latin, Cyrillic, Arabic, Hebrew, Devanagari and Thai are detected and tokenized as Unicode words. OCR needs explicit `--langs`; otherwise `prepare_source.py` skips it and records a limitation. Query translation, recovery and same-script identity are tested on representative sources; cross-script checks defer. No all-language claim is made.
+
+### CJK identity and cross-lingual retrieval
+
+ASCII identity matching remains the default, but it is no longer the only path. `acquisition_list.key_from_entry` preserves CJK in source keys, and `source_registry.score_file` uses a Unicode first-page score when the reference title or author is CJK: title bigrams/trigrams, an author prefix, and the year, without transliteration. DOI, ISBN, a supplied file, or an explicit manual map still outranks a title-only match; an unmatched CJK copy stays unresolved.
+
+`query_translate.py` is a per-claim pre-pass. It binds each English claim to the cited source language, stores `source_language`, `query` and up to three `variants`, and rejects queries that are not in the source script. The translated query is used only to retrieve passages: recovery and the judgment packet carry the original CJK text, never the translation. An evidence contribution may carry an optional English `gloss` (≤240 characters); the gloss is reviewer-facing and does not replace the original quotation. The deterministic gate handles CJK quotes, patchwriting, citation form and locators; stance and qualification remain `inconclusive` until a model reads the original passage.
+
+### Cross-language evidence safety
+
+A quotation is compared only when the quotation's script matches a cited source's script; otherwise the gate records `source_language_differs` and leaves it inconclusive. An evidence `gloss` is optional, English-facing and carries a SHA-256 provenance hash. `recover_full_text.py emit --whole-source` is the bounded fallback when a translated query finds no claim terms: it offers up to three longest source blocks (cited pages first), records `whole_source_fallback`, and never treats them as query-relevant or forced evidence.
+
+### Reference-native identity
+
+`reference_language.py` reads deterministic signals only: CJK characters, a romanised title with a bracketed translation, and translation-tool notes. `native_query.py` turns those signals into a hash-free but schema-bound proposal request (native title, authors, container, language, confidence); a cited native title needs no model proposal. A page comparison uses a fixed `yes`/`no`/`unsure` answer plus author agreement, and `unsure` keeps the work unresolved. The route store (`_work/native-script-routes.json`) records `completed` or `incomplete`; `source_registry.native_absence_allowed` refuses to turn a likely other-language work into `nonexistent` until completion. A completed index search marks it automatically; a page comparison alone does not. `resolve_unsupplied.cached_result_allowed` refuses to reuse a negative result for a likely other-language work until the route completed. No automatic pinyin or romanised identity is performed.
+
+### CJK index adapters
+
+`cjk_indexes.py` normalizes J-STAGE/CiNii (Japanese) and KISS/RISS (Korean) results into Crossref-like items. Unit tests use fixtures and never open a socket; `--live` is explicit. Chinese has no index adapter; use DOI/URL/supplied/manual map, never CNKI/Wanfang. `resolve_unsupplied --cjk-indexes` uses them after Crossref.
+
 ### Shared helpers
 
 `sourcefidelity-shared/sourcefidelity_core` owns the versioned source contracts, canonical acquired-copy staging, source scope/kind coverage, page maps, evidence selection, assessment packets and parity snapshots. `one_paper.py` is the thin one-paper orchestration over that shared preparation. Single-paper and batch preparation both use `source_registry.py` to match supplied copies. Finding counts, academic checks and HTML/text preparation are also shared core modules with compatibility shims at the old skill paths. The review skill keeps compatibility shims where old script paths are imported; supplied copies outrank acquired copies, which outrank bounded web text. Every fetched or mapped PDF/HTML/text copy is hashed under `_acquired/<source_key>/` and registered; failed downloads are recorded as unusable rather than mapped. The shared package must not import a skill, a database or a model provider.
@@ -97,6 +131,8 @@ An existing review plus newly supplied sources. Matching identifies the affected
 | `_work/sourcepack/index.md` | source pack | Which file backs which reference, with printed pages. |
 | `_work/hyperlink-audit.md` | audit | Every link and its observed state. |
 | `_work/<paper>/review_metrics.json` | metrics | Scope-line measurements. |
+| `_work/<paper>/recovery/*.packet.json` | full-text recovery | Bounded one-claim packet with source/extraction hashes, page-range status and selected passages. |
+| `_work/<paper>/claim-records/*.provenance.json` | full-text recovery | Recovery outcome, packet hash and selected-passage provenance; the response record is the sibling `.json`. |
 
 Reports are snapshots. Correcting one is an explicit, logged edit or a reappraisal; nothing rewrites a delivered report in place.
 
@@ -111,6 +147,12 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 - **Clause-level uncited checks.** A partly cited paragraph is not wholly cited: clauses after a citation are checked separately, with `possible_continuation` distinguished from an independent uncited claim.
 - **No absence without a completed route.** "Could not be found" is only sayable after the protocol's required routes ran; access restrictions and operational failures are `search_incomplete`. Kind coverage tracks the routes each reference kind requires, so a partial provider set cannot become `unlocated_after_search`.
 - **Copy coverage.** Identity does not prove that a copy contains the cited component. A preview, front-matter-only copy, incomplete scan or non-Latin script variant is a coverage limitation; only an `adequate` copy-scope observation permits an absence conclusion.
+- **Native-script neutrality.** A likely other-language work cannot become absent or reusable-negative before its native-script route completes; `unsure` is neutral, and no pinyin identity is inferred automatically.
+- **CJK index identity.** J-STAGE/CiNii and KISS/RISS may resolve identity, never content; Chinese goes through DOI/URL/supplied/manual mapping, not CNKI/Wanfang.
+- **Cross-lingual evidence.** A translated query retrieves; the original passage is evidence. A gloss is optional and bounded; an unmatched CJK identity is unresolved, never absent.
+- **Script-aware extraction.** A CJK page is native when it has enough CJK characters even with fewer than five whitespace tokens. OCR uses the script’s packs, reports missing packs, and records Han-only ambiguity; HTML is decoded from its declared or detected charset rather than assumed UTF-8.
+- **Reading gate before render.** Every occurrence passes the six reading checks; a finding needs exact source evidence and a locator, and a check the copy cannot support is declined with a reason. The gate changes issue coverage, never a judgment.
+- **Recovery before closing.** A `Not Judged` occurrence whose cited source has a usable extraction gets one bounded recovery pass: cited page first, rare-term ranking, three passages, 4,000 bytes, one claim per call. If nothing relevant survives, the reason is `no_relevant_full_text`; absence still requires adequate copy coverage.
 - **Provider pacing.** Review discovery, open-access lookup and batch adapters share local per-provider request slots and Retry-After cooldowns. The pacing store holds only provider keys and timestamps. Waits occur outside its transactions.
 - **Identity request budget.** Each reference shares a cooperative elapsed budget across metadata pacing, socket timeouts and retry waits. Provider waits that exceed the remaining budget are skipped. Copy retrieval has its own timeouts.
 - **Identity cache.** Citation verdicts are keyed by normalized citation text. Completed misses use the same TTL as matches; incomplete searches are retried. Provider metadata keyed by DOI remains reusable across distinct citations.

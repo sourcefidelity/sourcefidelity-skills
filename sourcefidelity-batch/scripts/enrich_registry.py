@@ -37,6 +37,7 @@ import source_registry as sr  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
                                 "sourcefidelity-review", "scripts"))
 import provider_pacing  # noqa: E402
+from sourcefidelity_core import script_detect, segmentation  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -153,21 +154,30 @@ def map_kind(provider_type, editors):
 
 
 def title_coverage(cited_title, provider_title):
-    cited = set(sr.tokens(cited_title))
+    if script_detect.detect(cited_title)["language"] != "latin":
+        cited = {item["term"] for item in segmentation.unique_terms(cited_title)}
+        provided = {item["term"] for item in segmentation.unique_terms(provider_title)}
+    else:
+        cited = set(sr.tokens(cited_title))
+        provided = set(sr.tokens(provider_title))
     if not cited:
         return 0.0
-    provided = set(sr.tokens(provider_title))
     return len(cited & provided) / len(cited)
 
 
 def match_item(record, item, via_doi):
     identity = record.get("identity", {})
     cited_title = identity.get("title", "")
-    cited_surname = sr.surname_of(identity.get("author", ""))
+    cited_author = identity.get("author", "")
+    cited_surname = (sr.unicode_surname(cited_author)
+                     if script_detect.detect(cited_author)["language"] != "latin"
+                     else sr.surname_of(cited_author))
     provider_title = (item.get("title") or [""])[0]
     coverage = title_coverage(cited_title, provider_title)
     provider_surnames = [s.casefold() for s in (authors_of(item) + editors_of(item))]
-    author_hit = bool(cited_surname and cited_surname.casefold() in provider_surnames)
+    author_hit = bool(cited_surname and any(
+        cited_surname.casefold() in surname or surname in cited_surname.casefold()
+        for surname in provider_surnames))
     year = year_of(item)
     year_hit = bool(identity.get("year") and year == identity.get("year"))
     if via_doi:
@@ -265,7 +275,10 @@ def apply(record, provider, via, detail):
         record["restrict_pages"] = False
     if record.get("identity_status") != "supplied_confirmed":
         record["identity_status"] = "resolved_external"
-        record["verified_by"] = ((record.get("verified_by") or "").strip() + " Crossref").strip()
+        label = "CJK index" if str(via).startswith("cjk-index:") else "Crossref"
+        if label not in (record.get("verified_by") or ""):
+            record["verified_by"] = ((record.get("verified_by") or "").strip()
+                                     + " " + label).strip()
     if conflicts:
         record["kind_conflict"] = conflicts
     return {"applied": True, "kind": kind, "conflicts": conflicts}

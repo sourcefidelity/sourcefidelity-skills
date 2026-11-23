@@ -25,6 +25,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import review_metrics  # noqa: E402
 import source_coverage  # noqa: E402
+import recover_full_text  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -156,18 +157,46 @@ def write_coverage_section(w, root):
     if not papers:
         return
     w("## Source coverage\n")
-    w("| Paper | Works | Identity | Full text | Supplied | Blocked | Missing |")
-    w("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    w("| Paper | Works | Identity | Full text | Supplied | Blocked | Missing | Full-text unjudged |")
+    w("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for pid, row in sorted(papers.items()):
         w(f"| {pid} | {row['works']} | {row['identity']} | {row['full_text']} | "
-          f"{row['supplied']} | {row['blocked']} | {row['missing']} |")
+          f"{row['supplied']} | {row['blocked']} | {row['missing']} | "
+          f"{row.get('full_text_unjudged', 0)} |")
     total = data.get("totals") or {}
     w(f"| **Total** | {total.get('works', 0)} | {total.get('identity', 0)} | "
       f"{total.get('full_text', 0)} | {total.get('supplied', 0)} | "
-      f"{total.get('blocked', 0)} | {total.get('missing', 0)} |")
+      f"{total.get('blocked', 0)} | {total.get('missing', 0)} | "
+      f"{total.get('full_text_unjudged', 0)} |")
     w("")
     w("Full text means an extracted representation exists; identity-only "
-      "metadata and HTML shells are not counted.\n")
+      "metadata and HTML shells are not counted. Full-text unjudged counts "
+      "occurrences still Not Judged although a cited source has a usable copy.\n")
+
+
+def write_recovery_section(w, root):
+    """Recovery queue and outcome counts, when the batch has run recovery."""
+    try:
+        data = recover_full_text.status(str(root))
+    except (OSError, ValueError):
+        return
+    rows = data.get("papers") or []
+    if not any(row.get("queued") or row.get("full_text_unjudged") for row in rows):
+        return
+    w("## Full-text recovery\n")
+    w("| Paper | Full-text unjudged | Queued | Judged | No relevant text | Pending |")
+    w("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for row in rows:
+        w(f"| {row['paper']} | {row['full_text_unjudged']} | {row['queued']} | "
+          f"{row['judged']} | {row['no_relevant_full_text']} | {row['pending']} |")
+    total = data.get("totals") or {}
+    w(f"| **Total** | {total.get('full_text_unjudged', 0)} | {total.get('queued', 0)} | "
+      f"{total.get('judged', 0)} | {total.get('no_relevant_full_text', 0)} | "
+      f"{total.get('pending', 0)} |")
+    w("")
+    w("Judged means a recovered Supports/Qualified/Contradicts/Not Supported "
+      "record; no relevant text means the bounded search found no passage and "
+      "recorded that reason instead of forcing a judgment.\n")
 
 
 def write_metrics_section(w, aggregate):
@@ -366,6 +395,7 @@ def main():
         w("")
 
     write_coverage_section(w, root)
+    write_recovery_section(w, root)
 
     w("## Sources to acquire\n")
     acq_list = acq.get("acquirable", [])

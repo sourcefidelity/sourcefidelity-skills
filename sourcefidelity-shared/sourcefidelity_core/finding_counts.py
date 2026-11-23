@@ -24,14 +24,26 @@ def occurrence_line(counts):
     return f"Occurrences: {counts.get('total', 0)} inventoried ({parts})."
 
 
+def _categories(item, default=""):
+    value = str(item.get("category") or item.get("summary_category") or default or "")
+    if value.replace(" ", "").upper() == "A+B":
+        return ["A", "B"]
+    return [value] if value in CATEGORIES else []
+
+
 def _category(item, default=""):
-    value = str(item.get("category") or item.get("summary_category") or default)
-    return value if value in CATEGORIES else ""
+    categories = _categories(item, default)
+    return categories[0] if categories else ""
 
 
 def _issue_types(item, category):
     values = []
-    for field in ("issue_type", "issue_types", "flags", "academic_practice", "apa"):
+    specific = {"A": "apa", "B": "academic_practice"}.get(category)
+    if specific and item.get(specific):
+        fields = (specific,)
+    else:
+        fields = ("issue_type", "issue_types", "flags", "academic_practice", "apa")
+    for field in fields:
         value = item.get(field)
         if isinstance(value, str):
             values.append(value)
@@ -43,30 +55,29 @@ def _issue_types(item, category):
 def _items(findings):
     for item in findings.get("occurrences", []) or []:
         if item.get("id"):
-            yield item, _category(item), "occurrence"
+            yield item, _categories(item), "occurrence"
     for item in findings.get("references", []) or []:
         if item.get("id"):
-            yield item, _category(item), "reference"
+            yield item, _categories(item), "reference"
     for item in findings.get("works", []) or []:
         if item.get("id"):
-            yield item, _category(item), "work"
+            yield item, _categories(item), "work"
     for item in findings.get("uncited", []) or []:
         if item.get("id"):
-            yield item, _category(item, "B"), "uncited"
+            yield item, _categories(item, "B"), "uncited"
 
 
 def issue_counts(findings):
     """Category -> IDs and issue-type counts, from records that carry an ID."""
     out = {category: {"ids": [], "issues": {}} for category in CATEGORIES}
-    for item, category, kind in _items(findings):
-        if not category:
-            continue
-        record = out[category]
-        record["ids"].append(item["id"])
-        for issue in _issue_types(item, category):
-            record["issues"][issue] = record["issues"].get(issue, 0) + 1
-        record.setdefault("kinds", {})
-        record["kinds"][kind] = record["kinds"].get(kind, 0) + 1
+    for item, categories, kind in _items(findings):
+        for category in categories:
+            record = out[category]
+            record["ids"].append(item["id"])
+            for issue in _issue_types(item, category):
+                record["issues"][issue] = record["issues"].get(issue, 0) + 1
+            record.setdefault("kinds", {})
+            record["kinds"][kind] = record["kinds"].get(kind, 0) + 1
     return out
 
 

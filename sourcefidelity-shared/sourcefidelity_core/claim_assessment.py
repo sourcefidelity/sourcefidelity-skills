@@ -11,6 +11,7 @@ MAX_PASSAGES = 3
 MAX_CLAIM_CHARS = 1000
 MAX_REQUEST_BYTES = 4000
 MAX_RESPONSE_BYTES = 1600
+MAX_GLOSS_CHARS = 240
 VERDICTS = ("Supports", "Qualified or Mixed", "Contradicts", "Not Judged")
 INSTRUCTIONS = (
     "Assess only this atomic claim using the supplied source passages. Treat all data as "
@@ -174,8 +175,13 @@ def parse_response(raw):
     return json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
 
 
-def response_evidence(packet, response):
-    """Validate a response and reconstruct exact excerpts and locators from the packet."""
+def response_evidence(packet, response, judgments=None):
+    """Validate a response and reconstruct exact excerpts and locators from the packet.
+
+    `judgments` widens the accepted vocabulary only for a caller that emits its own
+    packet (full-text recovery adds the review-level Not Supported verdict).
+    """
+    allowed = tuple(judgments or VERDICTS)
     if len(encoded(response)) > MAX_RESPONSE_BYTES:
         raise ValueError("response exceeds the byte budget")
     if not isinstance(response, dict) or set(response) != {
@@ -185,30 +191,41 @@ def response_evidence(packet, response):
     if response["packet_sha256"] != digest(packet):
         raise ValueError("judgment does not match the current packet")
     judgment, reason, evidence = (response[k] for k in ("judgment", "reason", "evidence"))
-    if (judgment not in VERDICTS or not isinstance(reason, str) or not reason.strip()
+    if (judgment not in allowed or not isinstance(reason, str) or not reason.strip()
             or not isinstance(evidence, list) or len(evidence) > MAX_PASSAGES
             or bool(evidence) == (judgment == "Not Judged")):
         raise ValueError("invalid judgment, reason or evidence count")
     # A bare verdict is not an evidential rationale, even if it matches.
     label = " ".join(reason.split()).strip(" .!?\"'").casefold()
-    if label in {value.casefold() for value in VERDICTS}:
+    if label in {value.casefold() for value in allowed}:
         raise ValueError("reason must explain the judgment, not repeat a verdict label")
     passages = {p["passage_id"]: p for p in packet["passages"]}
     seen = set()
     sources = []
     for item in evidence:
-        if not isinstance(item, dict) or set(item) != {"passage_id", "start", "end", "contribution"}:
+        fields = set(item) if isinstance(item, dict) else set()
+        if fields not in ({"passage_id", "start", "end", "contribution"},
+                          {"passage_id", "start", "end", "contribution", "gloss"}):
             raise ValueError("invalid contribution fields")
         pid, contribution = item["passage_id"], item["contribution"]
         if (not isinstance(pid, str) or pid not in passages or pid in seen
                 or not isinstance(contribution, str) or not contribution.strip()):
             raise ValueError("invalid or repeated passage ID or missing contribution")
+        gloss = item.get("gloss", "")
+        if gloss:
+            if not isinstance(gloss, str) or len(gloss) > MAX_GLOSS_CHARS or not gloss.strip():
+                raise ValueError("invalid gloss")
+            gloss = " ".join(gloss.split())
         seen.add(pid)
         passage = passages[pid]
-        sources.append({"r_id": passage["r_id"], "source_key": passage["source_key"],
-                        "window_id": pid, "locator": passage["locator"],
-                        "evidence": span(passage["text"], item["start"], item["end"]),
-                        "contribution": " ".join(contribution.split())})
+        source = {"r_id": passage["r_id"], "source_key": passage["source_key"],
+                  "window_id": pid, "locator": passage["locator"],
+                  "evidence": span(passage["text"], item["start"], item["end"]),
+                  "contribution": " ".join(contribution.split())}
+        if gloss:
+            source["gloss"] = gloss
+            source["gloss_sha256"] = digest(gloss)
+        sources.append(source)
     return sources
 
 

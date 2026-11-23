@@ -31,6 +31,12 @@ import urllib.parse
 import urllib.error
 import urllib.request
 
+SKILLS = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+SHARED = os.path.join(SKILLS, "sourcefidelity-shared")
+if SHARED not in sys.path:
+    sys.path.insert(0, SHARED)
+from sourcefidelity_core.prepare_html import decode_html  # noqa: E402
+
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
 # paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
@@ -221,10 +227,8 @@ def decode(body, content_type):
     marker = "charset="
     if marker in (content_type or ""):
         charset = content_type.split(marker, 1)[1].split(";")[0].strip(" \"'")
-    try:
-        return body.decode(charset or "utf-8", "replace")
-    except LookupError:
-        return body.decode("utf-8", "replace")
+    text, _encoding, _source, _limitation = decode_html(body, charset)
+    return text
 
 
 def fetch(url, *, network=None, resolver=None, timeout=20, max_bytes=2_000_000,

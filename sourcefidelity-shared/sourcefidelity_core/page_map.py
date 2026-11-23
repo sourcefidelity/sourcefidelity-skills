@@ -19,6 +19,11 @@ import json
 import re
 import sys
 
+try:
+    from . import script_detect
+except ImportError:  # direct script use
+    import script_detect
+
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
 # paths, names or quoted passages; emit UTF-8 so a redirected run cannot fail.
@@ -113,25 +118,75 @@ def page_lines(text):
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
-def read_pages(path):
-    """Return [{pdf_page, text, chars, source, confidence, folio, folio_kind}] via pypdf."""
-    from pypdf import PdfReader
+def _pymupdf_texts(path):
+    """Optional native text from PyMuPDF; empty when unavailable or unreadable."""
+    try:
+        import pymupdf
+    except ImportError:
+        return []
+    try:
+        document = pymupdf.open(path)
+        try:
+            return [page.get_text() or "" for page in document]
+        finally:
+            document.close()
+    except Exception:
+        return []
 
-    reader = PdfReader(path)
+
+def _choose_text(pypdf_text, pymupdf_text):
+    """Prefer a CJK-capable extraction when pypdf returns Latin/garbled text."""
+    if not pymupdf_text:
+        return pypdf_text, "pypdf"
+    pypdf_language = script_detect.detect(pypdf_text)["language"]
+    alt_language = script_detect.detect(pymupdf_text)["language"]
+    native_scripts = ("zh", "ja", "ko", "cyrillic", "arabic", "hebrew",
+                      "devanagari", "thai")
+    if alt_language in native_scripts and pypdf_language not in native_scripts:
+        return pymupdf_text, "pymupdf"
+    return pypdf_text, "pypdf"
+
+
+def read_pages(path):
+    """Return page text and folios, preferring a CJK-capable extraction.
+
+    pypdf is the required path. When PyMuPDF is available it supplies text for
+    pages where pypdf fails (AES PDFs) or returns Latin/garbled text for a CJK
+    page; folio detection and page counts stay identical.
+    """
+    source_texts = []
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        source_texts = [page.extract_text() or "" for page in reader.pages]
+    except Exception:
+        source_texts = []
+    alternatives = _pymupdf_texts(path)
+    if not source_texts and not alternatives:
+        raise ValueError("no PDF text extraction path available")
+    if not source_texts:
+        source_texts = alternatives
+        alternatives = []
     pages = []
-    for index, page in enumerate(reader.pages, 1):
-        text = page.extract_text() or ""
+    for index, pypdf_text in enumerate(source_texts, 1):
+        alt = alternatives[index - 1] if index - 1 < len(alternatives) else ""
+        text, extractor = _choose_text(pypdf_text, alt)
         lines = page_lines(text)
         head = lines[:6]
         tail = lines[-4:] if len(lines) > 4 else lines
         folio, kind, value = folio_from_lines(head + tail)
+        words = len(re.findall(r"\S+", text))
+        native = script_detect.native_usable(text)
         pages.append({
             "pdf_page": index,
             "text": text,
             "chars": len(text.strip()),
-            "words": len(re.findall(r"\S+", text)),
-            "source": "native" if len(re.findall(r"\S+", text)) >= 5 else "none",
-            "confidence": 1.0 if len(re.findall(r"\S+", text)) >= 5 else 0.0,
+            "words": words,
+            "native_usable": native,
+            "language": script_detect.detect(text)["language"],
+            "source": "native" if native else "none",
+            "confidence": 1.0 if native else 0.0,
+            "extractor": extractor,
             "folio": folio,
             "folio_kind": kind,
             "folio_value": value,

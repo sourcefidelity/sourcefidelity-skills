@@ -23,6 +23,8 @@ SKILLS = os.path.dirname(os.path.dirname(HERE))
 REVIEW_SCRIPTS = os.path.join(SKILLS, "sourcefidelity-review", "scripts")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW_SCRIPTS)
+sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
+from sourcefidelity_core import reading_gate as reading_gate_core  # noqa: E402
 
 import authorship_signals  # noqa: E402
 import file_digest  # noqa: E402
@@ -341,8 +343,11 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
             source = src.get("source_key", "source")
             if src.get("r_id"):
                 source = f"{src['r_id']} ({source})"
-            lines.append(f"- **{source} — {src.get('contribution', '')}.** "
-                         f"{src.get('evidence', '')} Locator: {src.get('locator', '')}.")
+            line = (f"- **{source} — {src.get('contribution', '')}.** "
+                    f"{src.get('evidence', '')} Locator: {src.get('locator', '')}.")
+            if src.get("gloss"):
+                line += f" Gloss (reviewer): {src['gloss']}"
+            lines.append(line)
         if occ.get("no_evidence"):
             lines.append("**No supporting evidence found for:** " + "; ".join(occ["no_evidence"]) + ".")
         for label in ("academic_practice", "apa"):
@@ -388,7 +393,10 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     for item in findings.get("uncited", []):
         lines.append(f"- **{item['id']} — {item.get('locator', '')}.** \"{item.get('statement', '')}\" "
                      f"{item.get('source_status', '')} {item.get('search', '')} "
-                     f"Category B ({item.get('type', 'uncited claim')}).")
+                     f"Category B ({item.get('type', 'uncited claim')})."
+                     + (f" Screen: {item['screen_status']}." if item.get('screen_status') else "")
+                     + (f" Cited-source candidate: {item['apparent_source_r_id']} ({item['cited_match_label']})."
+                        if item.get('apparent_source_r_id') else ""))
     lines.append("")
 
     if findings.get("limitations"):
@@ -627,6 +635,8 @@ def main():
                     help="review_metrics.json to use instead of the sidecar")
     ap.add_argument("--strict-inventory", action="store_true",
                     help="validate the inventory against the prepared candidates")
+    ap.add_argument("--require-gate", action="store_true",
+                    help="require a complete reading-gate report for every occurrence")
     args = ap.parse_args()
     if args.strict_inventory and not args.inventory:
         ap.error("--strict-inventory requires --inventory")
@@ -658,6 +668,15 @@ def main():
         result = validate_inventory(candidates, inventory, strict=True)
         if not result["ok"]:
             fail("inventory: " + "; ".join(result["errors"]))
+    if args.require_gate:
+        gate = load(os.path.join(work, "reading-gate.json"), {}) or {}
+        if not gate or gate.get("schema") != reading_gate_core.VERSION:
+            fail("reading gate report missing or has the wrong schema")
+        gate_ids = {item.get("occurrence") for item in gate.get("occurrences", []) or []}
+        finding_ids = {item.get("id") for item in findings.get("occurrences", []) or []}
+        missing = sorted(finding_ids - gate_ids)
+        if missing:
+            fail("reading gate missing occurrence(s): " + ", ".join(missing))
     validate(findings, inventory, task)
     if args.inventory:
         reconcile(findings, inventory)

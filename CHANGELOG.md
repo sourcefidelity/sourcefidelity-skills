@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+- **Long-run budget and resume status (R37).** `checkpoint.py --budget N
+  --write-status` names the next N pending claims and writes a `partial`
+  `run-status.json` with `budget_stop` when work remains, without turning an
+  unavailable source into an absence finding. A 160-claim / 15k+ word synthetic
+  fixture resumed from 10/150 to 160/0 with every packet at or under 4,000 bytes.
+
+- **Per-source paragraph index (R46 O2).** `source_index.py` stores one
+  content-addressed paragraph index per extraction under `_work/_indexes/`,
+  keyed by the text and pages.csv hashes. `make_task.py` reuses it across
+  citations and papers, and the BM25 paragraph rescue reads persisted tokens
+  and offsets instead of re-parsing the source. 570 tests pass.
+
+- **Uncited-source screen (R46 O1a).** `screen_uncited.py` screens source-like
+  U passages against never-cited reference metadata, without loading source
+  text into the main context. High/medium candidates enter an acquisition
+  allowlist; abstracts guide triage only and cannot establish use; full-text
+  overlap marks `full_text_matched` but is not a judgment. The same screen now
+  checks cited full texts and labels a U passage as an uncited use of a cited
+  source or misplaced attribution, with exact spans but no new citation
+  judgment. Deliberately supplied uncited copies are still extracted. A
+  hash-bound `screen_uncited_model.py emit/record` pass ranks only listed
+  ambiguous candidates and cannot create evidence. 567 tests pass.
+
+- **Cited-only acquisition (R46 O1).** Works with no citing paper stay in the
+  bibliography inventory but are skipped by `resolve_unsupplied.py`,
+  `acquisition_list.py`, `prepare_matched.py` and `fetch_open_sources.py`.
+  `--include-uncited` restores resolver queries for an explicit audit. 560
+  tests pass.
+
+- **Tier 2 script foundation (R47e).** Accented Latin, Cyrillic, Arabic,
+  Hebrew, Devanagari and Thai are detected and segmented; Tier 2 OCR now
+  requires explicit `--langs` instead of an English/Chinese fallback; Windows
+  1251/1256/1255, KOI8-R and TIS-620 charsets are supported. Cross-script
+  quotations and semantic checks defer rather than guess. Retrieval and
+  judgment for these scripts remain open. 554 tests pass.
+
+- **Reference-native identity route (R47f).** Added deterministic other-language
+  signals, a native-query proposal workflow, a fixed yes/no/unsure cross-script
+  comparison, and a route-completion guard that blocks absence and negative
+  cache reuse for likely other-language works. A completed CJK index search
+  marks the route automatically; Chinese has no native adapter. No automatic
+  pinyin was added. 548 tests pass.
+- **Cross-language quotation safety (R47g).** A quotation whose script differs
+  from every cited source is now explicitly `source_language_differs` and
+  inconclusive, not an altered-quote finding. Glosses carry a provenance hash,
+  and `recover_full_text.py emit --whole-source` offers up to three longest
+  source blocks when the translated query finds no claim terms, marked as
+  whole-source rather than query-relevant.
+
+- **CJK academic index adapters (R47c).** Added J-STAGE/CiNii and KISS/RISS
+  identity adapters with fixture-only unit tests and explicit live probes.
+  J-STAGE and CiNii live probes returned candidates; KISS/RISS remain
+  fixture-tested. `resolve_unsupplied.py --cjk-indexes` falls back to them
+  after Crossref. Chinese has no CNKI/Wanfang adapter. 538 tests pass.
+
+- **CJK identity and cross-lingual retrieval (R47b).** CJK reference keys and
+  first-page identity no longer collapse to `unknown`; pypdf extraction falls
+  back to PyMuPDF for CJK pages it garbles or cannot decrypt. Added the
+  hash-bound `query_translate.py` pre-pass, CJK recovery terms, optional English
+  `gloss` on evidence contributions, and deterministic CJK quote/patch/locator
+  checks with model deferral for stance/qualification. `acceptance_cjk.py`
+  reports the real samples without source text. 532 tests pass.
+
+- **CJK extraction foundation (R47a).** Native text is now preferred over OCR for
+  CJK pages, using a script-aware character count instead of `\S+`. Script
+  detection routes OCR to `chi_sim`+`chi_tra`, `jpn`, `kor` and explicit vertical
+  codes, reports missing packs, and records Han-only ambiguity. HTML/URL bytes
+  decode from the declared charset, meta or BOM with GBK/Big5/Shift-JIS/EUC-KR
+  fallbacks, and shared zh/ja/ko segmentation preserves original offsets. 524
+  tests pass.
+
+- **Per-occurrence reading gate (R45).** Added `reading_gate.py` and the shared
+  `reading_gate` core: deterministic patchwriting, reported-viewpoint, lost-
+  qualification, quoted-term, citation-form and locator checks. Findings carry
+  exact source evidence and a locator; unavailable or ambiguous checks are
+  `declined`/`inconclusive` with a reason. `apply` merges only new A/B issues,
+  supports A+B records, keeps pre-gate copies and renders with
+  `render_review.py --require-gate`. The TV fixture's C1/C2/C5/C9/C15/C16/
+  C17/C18 are all checked; prior/current disagreement is classified, not scored.
+
+- **Bounded full-text recovery (R44).** Added `recover_full_text.py` with
+  `queue`/`emit`/`record`/`apply`/`status` and a shared `recovery` core. A
+  still-`Not Judged` occurrence whose cited source has a usable extraction is
+  queued, ranked against a page-aware paragraph index with rare-term weighting
+  and proximity, and sent one bounded one-claim packet (cited page first, at
+  most three passages and 4,000 bytes). Records carry `full_text_recovery`
+  provenance and `no_relevant_full_text` when nothing survives; the batch report
+  exposes full-text-unjudged and recovery counts. `apply` adds recovered windows,
+  rerenders through the normal validator, and refuses when findings and summary
+  disagree.
+
 - **Checkpoint/resume at long-form scale (R37).** Two bounded 5-claim model
   batches resumed from the checkpoint manifest, moving the 140-claim synthetic
   task from 0/140 to 10/130 complete without rerunning saved claims. The

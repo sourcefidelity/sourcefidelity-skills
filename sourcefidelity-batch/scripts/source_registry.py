@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from collections import defaultdict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +47,7 @@ sys.path.insert(0, SHARED_PACKAGE)
 import acquisition_list  # noqa: E402
 import prepare_html  # noqa: E402
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
+from sourcefidelity_core import reference_language, script_detect, segmentation  # noqa: E402
 from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import detect_structure  # noqa: E402
 import source_scope  # noqa: E402
@@ -361,6 +363,105 @@ def first_pages_text(path, pages=3):
     return text
 
 
+def unicode_norm(text):
+    """Normalise without dropping non-Latin letters; used for CJK identity."""
+    value = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return " ".join(re.findall(r"[^\W_]+", value, flags=re.UNICODE))
+
+
+def unicode_surname(author):
+    value = str(author or "").strip()
+    if not value:
+        return ""
+    language = script_detect.detect(value)["language"]
+    if language == "latin":
+        return surname_of(value)
+    parts = re.split(r"[,，]", value)
+    candidate = parts[0].strip()
+    if language == "ko":
+        return candidate[:1]
+    if language in ("zh", "ja"):
+        return candidate[:2]
+    # Cyrillic, Arabic, Hebrew, Devanagari and Thai: the name before the
+    # comma is the family name; without one, use the whole first name field.
+    return candidate.split()[0] if candidate else ""
+
+
+def _has_cjk(value):
+    return script_detect.detect(value)["language"] in ("zh", "ja", "ko")
+
+
+def _non_latin(value):
+    return script_detect.detect(value)["language"] in (
+        "zh", "ja", "ko", "cyrillic", "arabic", "hebrew", "devanagari", "thai")
+
+
+def _score_unicode(text, record, parsed, path="", full_text=""):
+    """Score a CJK first page against a CJK reference without transliteration."""
+    body = unicode_norm(text)
+    title = parsed.get("title", "")
+    terms = [item["term"] for item in segmentation.unique_terms(title)][:80]
+    hits = sum(1 for term in terms if term.casefold() in body)
+    coverage = hits / len(terms) if terms else 0.0
+    author = str(parsed.get("author", "") or "")
+    surname = unicode_surname(author)
+    surname_key = surname.casefold()
+    author_key = unicode_norm(author)
+    author_hit = bool(surname_key and surname_key in body) or bool(
+        author_key and author_key in body)
+    filename_author = False
+    if path:
+        base = unicode_norm(os.path.basename(path))
+        if surname_key and surname_key in base:
+            author_hit = True
+            filename_author = True
+    year = str(parsed.get("year", "") or "")
+    year_hit = bool(year and year in text)
+    score = 0.55 * coverage + 0.25 * (1.0 if author_hit else 0.0) + 0.20 * (
+        1.0 if year_hit else 0.0)
+    return round(score, 4), {
+        "title_coverage": round(coverage, 3),
+        "author": author_hit,
+        "year": year_hit,
+        "filename_author": filename_author,
+        "script": ("cjk" if script_detect.detect(f"{title} {author}")["language"]
+                   in ("zh", "ja", "ko") else
+                   script_detect.detect(f"{title} {author}")["language"]),
+        "source": "unicode-first-page",
+        "base_score": round(score, 4),
+    }
+
+
+def is_cited(record):
+    """False only when the registry explicitly says the work has no citing paper."""
+    if "citation_count" not in record:
+        return True
+    try:
+        return int(record.get("citation_count") or 0) > 0
+    except (TypeError, ValueError):
+        return True
+
+
+def uncited_allowlist(root):
+    """Source keys the U screen admits to acquisition."""
+    path = os.path.join(root, "_work", "uncited-allowlist.json")
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    return set(data) if isinstance(data, dict) else set()
+
+
+def is_acquirable(record, allowlist=None, key=""):
+    return is_cited(record) or bool(key and key in (allowlist or set()))
+
+
+def native_absence_allowed(record):
+    """A likely other-language work needs a completed native route before absence."""
+    return not (reference_language.other_language_signals(record.get("identity", {}))
+                and not reference_language.can_mark_absent(record))
+
+
 def score_file(text, record, parsed, path="", full_text=""):
     """Score a supplied file against a work.
 
@@ -371,6 +472,8 @@ def score_file(text, record, parsed, path="", full_text=""):
     chapter, `full_text` is the shared extraction and is used to confirm that
     the file actually contains that chapter.
     """
+    if _non_latin(parsed.get("title", "")) or _non_latin(parsed.get("author", "")):
+        return _score_unicode(text, record, parsed, path, full_text)
     body = norm(text)
     if not body:
         return 0.0, {}
@@ -867,6 +970,13 @@ def main():
             return 0
 
     page_counts = {path: source_pages(path) for path in supplied}
+    native_routes = {}
+    native_path = os.path.join(root, "_work", "native-script-routes.json")
+    if os.path.exists(native_path):
+        try:
+            native_routes = json.load(open(native_path, encoding="utf-8"))
+        except ValueError:
+            native_routes = {}
     sidecar = {}
     side_path = os.path.join(root, "_work", "source_provider.json")
     if os.path.exists(side_path):
@@ -925,12 +1035,15 @@ def main():
             "extraction": "",
             "page_map": "",
             "identity_status": "unresolved",
+            "native_script_route": {},
             "verified_by": "",
             "search_status": "not_searched",
             "search": {},
             "match": {},
             "notes": "",
         }
+        if key in native_routes:
+            record["native_script_route"] = native_routes[key]
         if key in sidecar:
             for field, value in sidecar[key].items():
                 record[field] = value
@@ -1015,11 +1128,16 @@ def main():
                         record["notes"] = ("file matched by title/author only; "
                                            "identity is not independently confirmed")
         if record["identity_status"] == "unresolved":
-            for entry in data["entries"]:
-                if entry.get("retrieval") == "nonexistent":
-                    record["identity_status"] = "nonexistent"
-                    record["notes"] = "summaries record affirmative evidence of nonexistence"
-                    break
+            if not native_absence_allowed(record):
+                record["identity_status"] = "unresolved"
+                record["notes"] = ("native-script route is not complete; absence is not "
+                                   "assessed for this likely other-language work")
+            else:
+                for entry in data["entries"]:
+                    if entry.get("retrieval") == "nonexistent":
+                        record["identity_status"] = "nonexistent"
+                        record["notes"] = "summaries record affirmative evidence of nonexistence"
+                        break
         meta = None
         extraction_dir = ""
         own_meta = os.path.join(root, "_sources", key, "meta.json")

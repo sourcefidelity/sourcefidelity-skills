@@ -38,7 +38,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
                                 "sourcefidelity-review", "scripts"))
+import cjk_indexes  # noqa: E402
 import enrich_registry as er  # noqa: E402
+import native_query  # noqa: E402
+from sourcefidelity_core import reference_language  # noqa: E402
 import kind_coverage  # noqa: E402
 import source_registry as sr  # noqa: E402
 
@@ -167,7 +170,9 @@ def is_academic(record):
     return record.get("work_kind") in ACADEMIC
 
 
-def skip_reason(record):
+def skip_reason(record, include_uncited=False, allowlist=None, key=""):
+    if not include_uncited and not sr.is_acquirable(record, allowlist, key):
+        return "uncited"
     if record.get("supplied_file"):
         return "supplied_copy"
     if record.get("identity_status") not in (None, "unresolved"):
@@ -206,12 +211,21 @@ def http_status(exc):
     return int(status.group(1)) if status else None
 
 
-def lookup(record, root, cache, refresh=False):
+def cached_result_allowed(record, cached):
+    """A negative other-language cache is unusable until its native route completed."""
+    if not cached:
+        return False
+    if cached.get("provider"):
+        return True
+    return reference_language.can_mark_absent(record)
+
+
+def lookup(record, root, cache, refresh=False, cjk=False):
     """Resolve one citation, recording attempted routes and caching completed results."""
     identity = record.get("identity") or {}
     doi = (identity.get("doi") or "").strip()
     cached = fresh_result(record, cache) if not refresh else None
-    if cached:
+    if cached and cached_result_allowed(record, cached):
         return {**cached, "_cached": True}
     key = cache_key(record)
     cache.pop(key, None)
@@ -298,6 +312,41 @@ def lookup(record, root, cache, refresh=False):
                     break
                 if "rejected" not in result:
                     result.update(candidate=candidate, rejected=why)
+            if not result["provider"] and cjk:
+                index_route = {"provider": "cjk_indexes", "query": "title"}
+                attempts.append(index_route)
+                try:
+                    indexed = cjk_indexes.search(record, live=True)
+                    index_route["outcome"] = indexed.get("status", "searched")
+                    index_route["adapters"] = [row.get("adapter")
+                                               for row in indexed.get("adapters", [])]
+                    attempted = [row for row in indexed.get("adapters", [])
+                                 if row.get("outcome") not in ("not_searched", "unsupported_language")]
+                    if attempted and all(row.get("outcome") == "returned" for row in attempted):
+                        source_key = str(record.get("source_key") or "")
+                        if source_key:
+                            try:
+                                native_query.set_route(root, source_key, "completed",
+                                                       "J-STAGE/CiNii or KISS/RISS search completed")
+                            except (OSError, ValueError):
+                                pass
+                except Exception as exc:
+                    index_route.update(outcome="provider_failure",
+                                       reason=type(exc).__name__)
+                    indexed = {}
+                for hit in (indexed.get("candidates") or []):
+                    score, detail = er.match_item(record, hit["item"], False)
+                    candidate = er.provider_fields(hit["item"])
+                    detail = {**detail, "via": f"cjk-index:{hit['source_index']}",
+                              "source_index": hit["source_index"]}
+                    candidate_result = {**result, "provider": candidate,
+                                        "score": score, "detail": detail}
+                    ok, why = plausible(record, candidate_result)
+                    if ok:
+                        result.update(provider=candidate, score=score, detail=detail)
+                        break
+                    if "rejected" not in result:
+                        result.update(candidate=candidate, rejected=why)
     except Exception as exc:  # retain the disposition and retry on the next run
         status = http_status(exc)
         reason = ("rate_limited" if status == 429 else "provider_error"
@@ -407,6 +456,7 @@ def set_status(record, status, reason, result=None):
         "attempts": (result or {}).get("attempts", []),
         "cached": bool((result or {}).get("_cached")),
         "score": (result or {}).get("score", ""),
+        "via": ((result or {}).get("detail") or {}).get("via", ""),
         "provider_doi": ((result or {}).get("provider") or {}).get("doi", ""),
         "handle_url": (result or {}).get("handle_url", ""),
         "coverage": (result or {}).get("coverage", {}),
@@ -421,6 +471,10 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--include-non-academic", action="store_true",
                     help="also query web/other works (normally skipped)")
+    ap.add_argument("--include-uncited", action="store_true",
+                    help="also resolve references with no citing paper")
+    ap.add_argument("--cjk-indexes", action="store_true",
+                    help="after Crossref, query J-STAGE/CiNii or KISS/RISS by CJK title")
     args = ap.parse_args()
     if args.limit < 0:
         ap.error("--limit cannot be negative")
@@ -429,11 +483,12 @@ def main():
                              encoding="utf-8"))
     registry = payload.get("works", {})
     cache = er.load_cache(root)
+    allowlist = sr.uncited_allowlist(root)
 
     groups = {}
     skipped = {}
     for key, record in registry.items():
-        reason = skip_reason(record)
+        reason = skip_reason(record, args.include_uncited, allowlist, key)
         if reason == "non_academic" and args.include_non_academic:
             reason = ""
         if reason:
@@ -458,9 +513,12 @@ def main():
             for r in records:
                 if r.get("provider") and r.get("identity_status") != "supplied_confirmed":
                     r["identity_status"] = "resolved_external"
-                    if "Crossref" not in (r.get("verified_by") or ""):
+                    label = ("CJK index"
+                             if str((r.get("search") or {}).get("via", "")).startswith("cjk-index")
+                             else "Crossref")
+                    if label not in (r.get("verified_by") or ""):
                         r["verified_by"] = ((r.get("verified_by") or "").strip()
-                                            + " Crossref").strip()
+                                            + " " + label).strip()
                 if r.get("search_status") not in {"searched", "partial"}:
                     set_status(r, "searched", "cached_provider")
             continue
@@ -493,7 +551,8 @@ def main():
 
     for index, (ident, keys) in enumerate(pending, 1):
         record = representative([registry[k] for k in keys])
-        result = lookup(record, root, cache, refresh=args.refresh)
+        result = lookup(record, root, cache, refresh=args.refresh,
+                        cjk=args.cjk_indexes)
         result["coverage"] = coverage_for(record, result)
         if result.get("_cached"):
             stats["cached"] += 1

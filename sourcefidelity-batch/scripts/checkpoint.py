@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Write or inspect a per-claim checkpoint for a long review.
 
-    checkpoint.py --root ROOT --paper paper --inventory INV --claims PLAN [--write]
+    checkpoint.py --root ROOT --paper paper --inventory INV --claims PLAN
+        [--write] [--budget N] [--write-status]
 
 A claim is complete only when its saved record still matches the current
 packet hash. Stale or missing records are reported as pending so a long run
-can resume without rerunning completed claims.
+can resume without rerunning completed claims. `--budget N` names the next N
+claims and marks the result `partial` with `budget_stop: true` when work
+remains; it never turns a pending source into an absence finding.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ def load(path):
         return json.load(handle)
 
 
-def status(root, paper, inventory, plan):
+def status(root, paper, inventory, plan, budget=0):
     task = load(batch_paths.artifact(
         batch_paths.paper_folder(os.path.join(root, "_work"), paper), "task.json"))
     candidates = load(batch_paths.artifact(
@@ -40,10 +43,12 @@ def status(root, paper, inventory, plan):
     if not result["ok"]:
         raise ValueError("inventory: " + "; ".join(result["errors"]))
     complete, pending = [], []
+    max_packet_bytes = 0
     for cid, _oid, packet, _limitation in assess_claims.packets(task, inventory, plan):
         if packet is None:
             pending.append({"claim_id": cid, "reason": "no eligible evidence"})
             continue
+        max_packet_bytes = max(max_packet_bytes, len(core.request_bytes(packet)))
         path = assess_claims.claim_record(
             batch_paths.paper_folder(os.path.join(root, "_work"), paper), cid)
         try:
@@ -55,9 +60,16 @@ def status(root, paper, inventory, plan):
             pending.append({"claim_id": cid, "reason": "stale"})
             continue
         complete.append(cid)
-    return {"paper": paper, "total": len(complete) + len(pending),
-            "complete": complete, "pending": pending,
-            "complete_count": len(complete), "pending_count": len(pending)}
+    state = {"paper": paper, "total": len(complete) + len(pending),
+             "complete": complete, "pending": pending,
+             "complete_count": len(complete), "pending_count": len(pending),
+             "status": "complete" if not pending else "partial",
+             "max_packet_bytes": max_packet_bytes}
+    if budget:
+        state["budget"] = budget
+        state["next"] = pending[:budget]
+        state["budget_stop"] = len(pending) > budget
+    return state
 
 
 def main(argv=None):
@@ -67,9 +79,20 @@ def main(argv=None):
     parser.add_argument("--inventory", required=True)
     parser.add_argument("--claims", required=True)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--budget", type=int, default=0)
+    parser.add_argument("--write-status", action="store_true")
     args = parser.parse_args(argv)
     try:
-        state = status(args.root, args.paper, load(args.inventory), load(args.claims))
+        if args.budget < 0:
+            raise ValueError("budget must not be negative")
+        state = status(args.root, args.paper, load(args.inventory), load(args.claims),
+                       args.budget)
+        if args.write_status:
+            work = batch_paths.paper_folder(os.path.join(args.root, "_work"), args.paper)
+            path = os.path.join(work, "run-status.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(state, handle, indent=1)
+            state["run_status"] = path
         if args.write:
             work = batch_paths.paper_folder(os.path.join(args.root, "_work"), args.paper)
             path = os.path.join(work, "checkpoint.json")

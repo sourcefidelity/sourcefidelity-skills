@@ -17,8 +17,11 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)),
+                                "sourcefidelity-shared"))
 import paper_index  # noqa: E402
 import batch_paths  # noqa: E402
+from sourcefidelity_core import recovery  # noqa: E402
 
 
 def load(path, default=None):
@@ -96,8 +99,15 @@ def build(root):
             batch_paths.paper_folder(os.path.join(str(root), "_work"), pid),
             "claim-findings.json")
         findings = load(findings_path, {}) or {}
-        row["not_judged_reasons"] = findings.get("not_judged_reasons", {})
+        paper_findings = load(os.path.join(str(root), pid, "findings.json"), {}) or findings
+        task = load(os.path.join(str(root), "_work", pid, "task.json"), {}) or {}
+        unjudged = recovery.count_unjudged_with_text(
+            paper_findings, works, task.get("sources") or {})
+        row["not_judged_reasons"] = paper_findings.get("not_judged_reasons",
+                                                       findings.get("not_judged_reasons", {}))
         row["occurrences"] = summary.get("occurrences", {})
+        row["full_text_unjudged"] = unjudged["occurrences"]
+        row["full_text_unjudged_ids"] = unjudged["ids"]
     return {"papers": coverage, "totals": {
         "works": sum(row["works"] for row in coverage.values()),
         "identity": sum(row["identity"] for row in coverage.values()),
@@ -105,6 +115,8 @@ def build(root):
         "supplied": sum(row["supplied"] for row in coverage.values()),
         "blocked": sum(row["blocked"] for row in coverage.values()),
         "missing": sum(row["missing"] for row in coverage.values()),
+        "full_text_unjudged": sum(row.get("full_text_unjudged", 0)
+                                  for row in coverage.values()),
     }}
 
 

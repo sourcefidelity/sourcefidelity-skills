@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** Planned as R46. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** In progress as R46. O1 (cited-only acquisition and U screen) and O2 (source index) are implemented; O3–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 
@@ -25,9 +25,11 @@ The most expensive current component is output generation, followed by acquisiti
 - No source text in metrics, logs or cache keys.
 - Model/provider selection, pricing windows, peak/off-peak scheduling and dollar-cost policy are outside this plan.
 
-## 1. Acquire only what is cited
+## 1. Acquire only what is cited, or screened as likely used
 
 - Build the acquisition queue from cited works, not every reference entry.
+- Deliberately supplied uncited copies are still extracted; the user supplied them on purpose.
+- Screen source-like uncited passages against never-cited metadata before acquisition, and against cited full texts for an uncited-use or misplaced-attribution candidate. A high/medium uncited candidate is allowlisted; cited matches carry exact spans but are never a citation judgment; an abstract is acquisition triage only, never evidence.
 - Skip uncited references for source retrieval, extraction, link checks and judgment.
 - Prioritise works cited multiple times and supplied copies.
 - Reuse acquisition and link-status results across papers that cite the same work.
@@ -37,6 +39,8 @@ The most expensive current component is output generation, followed by acquisiti
 Expected effect: large reduction in preparation work and wait time, especially papers with long uncited bibliographies.
 
 ## 2. Build one source index per source, not per claim
+
+Implemented as `source_index.py` under `_work/_indexes/`: one content-addressed paragraph index per extraction, keyed by the text and pages.csv hashes; `make_task.py` reuses it across citations and papers, and the BM25 rescue reads persisted tokens/offsets. The remaining work is reusing ranked candidate sets across identical claims and broadening the index to recovery.
 
 - Extract and segment each source once.
 - Build a paragraph/sentence index once per source: offsets, page coordinates, normalized tokens, span hashes.

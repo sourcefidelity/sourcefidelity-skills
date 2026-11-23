@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Offline regression tests for the batch pipeline.
 
     python3 -I test_pipeline.py
@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import pathlib
 import sys
+import shutil
 import subprocess
 import tempfile
 import time
@@ -43,6 +44,8 @@ import detect_structure as ds  # noqa: E402
 import docx_text as dt  # noqa: E402
 import source_scope as scope  # noqa: E402
 import kind_coverage as kc  # noqa: E402
+import cjk_indexes  # noqa: E402
+import native_query as nq  # noqa: E402
 import enrich_registry as er  # noqa: E402
 import evidence_benchmark as eb  # noqa: E402
 import evidence_select as ev  # noqa: E402
@@ -65,6 +68,10 @@ import redact_identity as ri  # noqa: E402
 import reappraise_prepare as rp  # noqa: E402
 import record_metrics as rec  # noqa: E402
 import rescue_select as rs  # noqa: E402
+import recover_full_text as rft  # noqa: E402
+import reading_gate as rgt  # noqa: E402
+import query_translate as qt  # noqa: E402
+import acceptance_cjk as acc  # noqa: E402
 import render_review as rr  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
@@ -77,12 +84,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sourcefidelity-sha
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
 from sourcefidelity_core import assessment as core_assessment  # noqa: E402
 from sourcefidelity_core import claim_assessment as core_claim  # noqa: E402
+from sourcefidelity_core import recovery as core_recovery  # noqa: E402
+from sourcefidelity_core import reading_gate as core_gate  # noqa: E402
+from sourcefidelity_core import reference_language as core_reference_language  # noqa: E402
+from sourcefidelity_core import source_index as core_source_index  # noqa: E402
+from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
+from sourcefidelity_core import script_detect as core_script  # noqa: E402
+from sourcefidelity_core import segmentation as core_seg  # noqa: E402
 from sourcefidelity_core import document_structure as docst  # noqa: E402
 from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
 import fetch_open_sources as fos  # noqa: E402
+import prepare_matched as pm  # noqa: E402
+import screen_uncited as su  # noqa: E402
+import screen_uncited_model as sumodel  # noqa: E402
 from retrieval import pacing  # noqa: E402
 from retrieval import providers  # noqa: E402
 import which_python as wp  # noqa: E402
@@ -4904,6 +4921,109 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(complete["pending_count"], 0)
 
 
+class LongScaleCheckpointTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.count = 160
+        reference = {"id": "R1", "verbatim": "Smith, A. (2020). Work."}
+        citations, paragraphs, occurrences, windows, plan = [], [], [], {}, []
+        for index in range(1, self.count + 1):
+            statement = (f"Claim {index} concerns the common market and its evidence "
+                         "across the member states.")
+            marker = "(Smith, 2020)"
+            paragraph = f"P{index}"
+            citation = {"id": f"X{index}", "marker": marker, "paragraph_id": paragraph,
+                        "sentence": statement + " " + marker}
+            citations.append(citation)
+            paragraphs.append({"id": paragraph, "text": statement + " " + marker})
+            occurrences.append({"id": f"C{index}", "candidate_id": f"X{index}",
+                                "paragraph_id": paragraph, "marker": marker,
+                                "statement": statement, "cited_r_ids": ["R1"]})
+            windows[f"X{index}"] = [{"window_id": f"X{index}:R1:1", "printed_page": 5,
+                                     "source_key": "smith", "r_id": "R1",
+                                     "text": statement}]
+            plan.append({"occurrence_id": f"C{index}", "start": 0,
+                         "end": len(statement), "kind": "claim"})
+        paragraphs.append({"id": f"P{self.count + 1}", "text": reference["verbatim"]})
+        filler = " ".join(["The analysis considers context, method and interpretation."] * 15)
+        for index in range(150):
+            paragraphs.append({"id": f"F{index}",
+                               "text": f"Background section {index}. {filler}"})
+        candidates = {"citations": citations, "references": [reference],
+                      "paragraphs": paragraphs}
+        task = {"candidates": candidates,
+                "sources": {"R1": {"source_key": "smith",
+                                   "identity_status": "supplied_confirmed",
+                                   "supplied_file": "source.txt"}},
+                "windows": windows}
+        inventory = {"occurrences": occurrences, "references": [reference],
+                     "works": [], "uncited": [],
+                     "dispositions": {**{f"X{index}": "confirmed"
+                                         for index in range(1, self.count + 1)},
+                                      "R1": "confirmed"},
+                     "coverage": {"paragraphs_scanned":
+                                  [f"P{index}" for index in range(1, self.count + 2)]
+                                  + [f"F{index}" for index in range(150)]}}
+        self.inventory, self.plan = inventory, plan
+        self.assertGreaterEqual(sum(len(item["text"].split()) for item in paragraphs), 15000)
+        (self.work / "task.json").write_text(json.dumps(task))
+        (self.work / "candidates.json").write_text(json.dumps(candidates))
+        (self.root / "inventory.json").write_text(json.dumps(inventory))
+        (self.root / "claims.json").write_text(json.dumps(plan))
+
+    def _write_records(self, start, stop):
+        task = json.loads((self.work / "task.json").read_text())
+        records = self.work / "claim-records"
+        records.mkdir(exist_ok=True)
+        packets = list(cp.assess_claims.packets(task, self.inventory, self.plan))
+        for index in range(start, stop):
+            claim_id, _occurrence, packet, _limitation = packets[index]
+            assert packet is not None
+            (records / f"{claim_id}.json").write_text(json.dumps({
+                "packet_sha256": cp.core.digest(packet), "judgment": "Not Judged",
+                "reason": "orchestration fixture", "evidence": []}))
+
+    def test_160_claims_resume_budget_stop_and_bounded_packets(self):
+        run = subprocess.run(
+            [sys.executable, "-IB", str(cp.__file__), "--root", str(self.root),
+             "--paper", "paper", "--inventory", str(self.root / "inventory.json"),
+             "--claims", str(self.root / "claims.json"), "--budget", "5",
+             "--write-status"], capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2, run.stderr)
+        status_path = self.work / "run-status.json"
+        self.assertTrue(status_path.is_file())
+        written = json.loads(status_path.read_text())
+        self.assertEqual(written["status"], "partial")
+        self.assertTrue(written["budget_stop"])
+        state = cp.status(str(self.root), "paper", self.inventory, self.plan, budget=5)
+        self.assertEqual(state["total"], 160)
+        self.assertEqual(state["pending_count"], 160)
+        self.assertEqual(state["status"], "partial")
+        self.assertTrue(state["budget_stop"])
+        self.assertEqual(len(state["next"]), 5)
+        self.assertLessEqual(state["max_packet_bytes"], 4000)
+        self.assertNotIn("absent", {item["reason"] for item in state["pending"]})
+        self._write_records(0, 10)
+        state = cp.status(str(self.root), "paper", self.inventory, self.plan, budget=5)
+        self.assertEqual(state["complete_count"], 10)
+        self.assertEqual(state["pending_count"], 150)
+        self.assertEqual(len(state["next"]), 5)
+        self.assertTrue(state["budget_stop"])
+        self.assertLessEqual(state["max_packet_bytes"], 4000)
+        self.assertNotIn("absent", {item["reason"] for item in state["pending"]})
+        self._write_records(10, 160)
+        state = cp.status(str(self.root), "paper", self.inventory, self.plan)
+        self.assertEqual(state["complete_count"], 160)
+        self.assertEqual(state["pending_count"], 0)
+        self.assertEqual(state["status"], "complete")
+        self.assertFalse(state.get("budget_stop", False))
+        self.assertLessEqual(state["max_packet_bytes"], 4000)
+
+
 class ExtractionFallbackTests(unittest.TestCase):
     def test_numbered_reference_fallback(self):
         paragraphs = [
@@ -5905,6 +6025,1611 @@ class RescueSelectTests(unittest.TestCase):
             task = json.loads(task_path.read_text())
         self.assertEqual(task["windows"]["X1"][0]["fallback"], "model_rescue")
         self.assertEqual(task["windows"]["X1"][0]["start"], 10)
+
+
+class FullTextRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.folder = self.root / "paper"
+        self.folder.mkdir()
+        self.sources = self.root / "_sources" / "smith"
+        self.sources.mkdir(parents=True)
+        self.key = "smith-2020"
+        self.statement = ("The government has increased the difficulty of game "
+                          "certification and restricted the content in recent years.")
+        self.marker = "(Smith, 2020, p. 5)"
+        self.reference = {"id": "R1", "verbatim": "Smith, A. (2020). Broadcasting."}
+        self.citation = {"id": "X1", "paragraph_id": "P1", "marker": self.marker,
+                         "sentence": f"{self.statement} {self.marker}"}
+        self.text = (
+            "=== PDF p4 | printed p4 | native\n"
+            "Generic background about media and globalization.\n\n"
+            "=== PDF p5 | printed p5 | native\n"
+            "The government has increased the difficulty of game certification and "
+            "restricted the content of online games.\n\n"
+            "The government also limits the number of imported games each year.\n\n"
+            "=== PDF p6 | printed p6 | native\n"
+            "Unrelated material about film subsidies and export credits.\n")
+        self._write_fixture(self.text)
+
+    def write(self, path, data):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _write_fixture(self, text):
+        digest = core_recovery.sha256(text)
+        (self.sources / "text.txt").write_text(text, encoding="utf-8")
+        self.write(self.sources / "meta.json", {
+            "sha256": "supplied-hash", "text_sha256": digest,
+            "extractor_version": "prepare-source-v2", "extraction_options": {},
+            "pages_sha256": "pages-hash"})
+        candidates = {
+            "paragraphs": [{"id": "P1", "text": f"{self.statement} {self.marker}"},
+                           {"id": "P2", "text": self.reference["verbatim"]}],
+            "citations": [self.citation],
+            "references": [self.reference],
+        }
+        self.task = {
+            "candidates": candidates,
+            "sources": {"R1": {
+                "source_key": self.key, "identity_status": "supplied_confirmed",
+                "extraction": str(self.sources / "text.txt"),
+                "extraction_version": "prepare-source-v2",
+                "page_range": [], "restrict_pages": False,
+                "copy_observation": {"sha256": "supplied-hash",
+                                     "observed": {"edition": "unspecified"}}}},
+            "windows": {},
+        }
+        self.inventory = {
+            "occurrences": [{"id": "C1", "candidate_id": "X1", "paragraph_id": "P1",
+                             "marker": self.marker, "statement": self.statement,
+                             "cited_r_ids": ["R1"]}],
+            "references": [self.reference],
+            "dispositions": {"X1": "confirmed_as:C1", "R1": "confirmed"},
+            "coverage": {"paragraphs_scanned": ["P1", "P2"]},
+        }
+        self.findings = {
+            "paper_id": "paper", "status": "complete", "date": "2026-11-23",
+            "title": "Paper", "word_counts": {"total": 20, "text": 12, "references": 8},
+            "occurrences": [{"id": "C1", "paragraph_id": "P1", "marker": self.marker,
+                             "statement": self.statement, "cited_r_ids": ["R1"],
+                             "judgment": "Not Judged", "sources": [],
+                             "not_judged_reason": "no_window", "note": ""}],
+            "references": [dict(self.reference, source_key=self.key)],
+            "works": [], "uncited": [],
+            "summary": {"category_a": [], "category_b": [], "hyperlinks_missing": []},
+        }
+        self.write(self.work / "paper.json", {
+            "paper_id": "paper", "path": "paper.docx",
+            "word_counts": {"total": 20, "text": 12, "references": 8}})
+        self.write(self.work / "candidates.json", candidates)
+        self.write(self.work / "task.json", self.task)
+        self.write(self.folder / "inventory.json", self.inventory)
+        self.write(self.folder / "findings.json", self.findings)
+        self.write(self.root / "source_registry.json", {"works": {self.key: {
+            "source_key": self.key, "source_object_key": self.key,
+            "papers": ["paper"], "identity_status": "supplied_confirmed",
+            "supplied_file": "smith.pdf", "extraction": str(self.sources / "text.txt"),
+            "extraction_version": "prepare-source-v2", "text_sha256": digest,
+            "pages_sha256": "pages-hash",
+            "scope": {"status": "not_required", "reason": "no_cited_page_range"},
+            "copy_observation": {"sha256": "supplied-hash",
+                                 "observed": {"edition": "unspecified"}}}}})
+
+    def _prepare_and_record(self, judgment="Supports", evidence=None):
+        rft.queue(str(self.root))
+        emitted = rft.emit(str(self.root), "paper", "C1")
+        packet = json.loads(Path(emitted["packet"]).read_text(encoding="utf-8"))
+        passage = packet["passages"][0]
+        if evidence is None:
+            start = passage["text"].index("game certification")
+            end = start + len("game certification")
+        else:
+            start, end = evidence
+        response = {
+            "packet_sha256": core_claim.digest(packet), "judgment": judgment,
+            "reason": "The cited page states the certification and content restriction policy.",
+            "evidence": [{"passage_id": passage["passage_id"], "start": start, "end": end,
+                          "contribution": "States the policy."}]}
+        path = self.root / "response.json"
+        self.write(path, response)
+        rft.record(str(self.root), "paper", "C1", str(path))
+        return packet, response
+
+    def test_ranking_prefers_the_cited_page_and_includes_neighbours(self):
+        index = core_recovery.index_with_text(self.text)
+        selected = core_recovery.select(index, self.statement, [5, 5])
+        self.assertTrue(selected["page_range_applied"])
+        self.assertFalse(selected["no_relevant_full_text"])
+        self.assertEqual(selected["passages"][0]["printed_page"], "5")
+        self.assertLessEqual(len(selected["passages"]), 3)
+        self.assertFalse(selected["passages"][0]["text"].startswith("==="))
+
+    def test_rare_terms_outrank_common_background(self):
+        text = (
+            "=== PDF p1 | printed p1 | native\n"
+            "Media globalization media globalization media globalization.\n\n"
+            "=== PDF p2 | printed p2 | native\n"
+            "Game certification restricts content and publishers submit games for review.\n")
+        index = core_recovery.index_with_text(text)
+        selected = core_recovery.select(
+            index, "game certification restricts content and publishers submit games", [])
+        self.assertEqual(selected["passages"][0]["printed_page"], "2")
+
+    def test_packet_has_provenance_and_stays_within_the_budget(self):
+        rft.queue(str(self.root))
+        _entry, _index, _selection, packet = rft.prepare(str(self.root), "paper", "C1")
+        self.assertLessEqual(len(core_claim.request_bytes(packet)), 4000)
+        self.assertLessEqual(len(packet["passages"]), 3)
+        self.assertEqual(packet["recovery"]["extraction_text_sha256"],
+                         core_recovery.sha256(self.text))
+        self.assertTrue(packet["recovery"]["selected"])
+        self.assertNotIn("government has increased", json.dumps(packet["recovery"]))
+
+    def test_no_relevant_text_is_recorded_as_an_explicit_reason(self):
+        unrelated = ("=== PDF p4 | printed p4 | native\n"
+                     "Unrelated material about film subsidies and export credits.\n")
+        self._write_fixture(unrelated)
+        rft.queue(str(self.root))
+        result = rft.emit(str(self.root), "paper", "C1")
+        self.assertTrue(result["no_relevant_full_text"])
+        self.assertEqual(result["judgment"], "Not Judged")
+        rft.apply(str(self.root), "paper")
+        findings = json.loads((self.folder / "findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(findings["occurrences"][0]["not_judged_reason"],
+                         "no_relevant_full_text")
+        status = rft.status(str(self.root))
+        self.assertEqual(status["totals"]["no_relevant_full_text"], 1)
+
+    def test_end_to_end_recovery_updates_findings_and_counts(self):
+        initial = subprocess.run(
+            [sys.executable, "-I", rr.__file__, "--batch", str(self.root), "--paper", "paper",
+             "--inventory", str(self.folder / "inventory.json"),
+             "--findings", str(self.folder / "findings.json"), "--strict-inventory"],
+            capture_output=True, text=True)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        before = core_recovery.count_unjudged_with_text(
+            self.findings, json.loads((self.root / "source_registry.json").read_text()))
+        self.assertEqual(before["occurrences"], 1)
+        self._prepare_and_record()
+        applied = rft.apply(str(self.root), "paper")
+        self.assertEqual(len(applied["applied"]), 1)
+        findings = json.loads((self.folder / "findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(findings["occurrences"][0]["judgment"], "Supports")
+        self.assertTrue(findings["occurrences"][0]["full_text_recovery"]["selected"])
+        summary = json.loads((self.folder / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["occurrences"]["supports"], 1)
+        self.assertEqual(summary["occurrences"]["not_judged"], 0)
+        review = (self.folder / "review.md").read_text(encoding="utf-8")
+        self.assertIn("Full-text recovery", review)
+        self.assertIn("printed p. 5", review)
+        task = json.loads((self.work / "task.json").read_text(encoding="utf-8"))
+        self.assertEqual(task["windows"]["X1"][0]["fallback"], "full_text_recovery")
+        self.assertTrue((self.folder / "review.pre-recovery.md").is_file())
+        status = rft.status(str(self.root))
+        self.assertEqual(status["totals"]["judged"], 1)
+        self.assertEqual(status["totals"]["pending"], 0)
+        coverage = sc.build(str(self.root))
+        self.assertEqual(coverage["papers"]["paper"]["full_text_unjudged"], 0)
+
+    def test_not_supported_verdict_is_accepted(self):
+        self._prepare_and_record(judgment="Not Supported")
+        rft.apply(str(self.root), "paper")
+        summary = json.loads((self.folder / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["occurrences"]["not_supported"], 1)
+        self.assertEqual(summary["occurrences"]["not_judged"], 0)
+
+    def test_apply_rolls_back_when_render_fails(self):
+        initial = subprocess.run(
+            [sys.executable, "-I", rr.__file__, "--batch", str(self.root), "--paper", "paper",
+             "--inventory", str(self.folder / "inventory.json"),
+             "--findings", str(self.folder / "findings.json"), "--strict-inventory"],
+            capture_output=True, text=True)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        self._prepare_and_record()
+        before = {name: (self.folder / name).read_bytes()
+                  for name in ("review.md", "ledger.md", "summary.json", "findings.json")}
+        before_task = (self.work / "task.json").read_bytes()
+        failed = subprocess.CompletedProcess([], 1, "", "render failed")
+        with mock.patch("recover_full_text.subprocess.run", return_value=failed):
+            with self.assertRaisesRegex(SystemExit, "rolled back"):
+                rft.apply(str(self.root), "paper")
+        for name, data in before.items():
+            self.assertEqual((self.folder / name).read_bytes(), data)
+        self.assertEqual((self.work / "task.json").read_bytes(), before_task)
+
+    def test_apply_refuses_when_findings_and_summary_disagree(self):
+        initial = subprocess.run(
+            [sys.executable, "-I", rr.__file__, "--batch", str(self.root), "--paper", "paper",
+             "--inventory", str(self.folder / "inventory.json"),
+             "--findings", str(self.folder / "findings.json"), "--strict-inventory"],
+            capture_output=True, text=True)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        summary = json.loads((self.folder / "summary.json").read_text(encoding="utf-8"))
+        summary["occurrences"]["supports"] = 7
+        self.write(self.folder / "summary.json", summary)
+        with self.assertRaisesRegex(SystemExit, "findings and summary disagree"):
+            rft.apply(str(self.root), "paper")
+
+    def test_normal_packets_are_untouched_by_recovery(self):
+        statement2 = "Companies established themselves in Luxembourg."
+        window2 = {"window_id": "X2:R1:1",
+                   "text": "A number of companies established themselves in Luxembourg.",
+                   "source_key": self.key, "r_id": "R1", "printed_page": 9}
+        task = json.loads((self.work / "task.json").read_text(encoding="utf-8"))
+        task["windows"] = {"X2": [window2]}
+        task["candidates"]["citations"].append(
+            {"id": "X2", "paragraph_id": "P2", "marker": "(Smith, 2020, p. 9)"})
+        inventory = json.loads((self.folder / "inventory.json").read_text(encoding="utf-8"))
+        inventory["occurrences"].append(
+            {"id": "C2", "candidate_id": "X2", "paragraph_id": "P2",
+             "marker": "(Smith, 2020, p. 9)", "statement": statement2,
+             "cited_r_ids": ["R1"]})
+        inventory["dispositions"]["X2"] = "confirmed_as:C2"
+        occurrence = inventory["occurrences"][1]
+        spec = {"occurrence_id": "C2", "start": 0, "end": len(statement2),
+                "kind": "claim"}
+        before = core_claim.packet_for(task, inventory, occurrence, "C2.1", spec)
+        rft.queue(str(self.root))
+        _entry, _index, _selection, packet = rft.prepare(str(self.root), "paper", "C1")
+        rft._inject_windows(task, "X1", packet)
+        after = core_claim.packet_for(task, inventory, occurrence, "C2.1", spec)
+        self.assertEqual(task["windows"]["X2"], [window2])
+        self.assertEqual(core_claim.request_bytes(before[0]), core_claim.request_bytes(after[0]))
+
+    def test_eligibility_rejects_missing_copy_unresolved_scope_and_later_edition(self):
+        record = {"extraction": str(self.sources / "text.txt"),
+                  "identity_status": "supplied_confirmed",
+                  "scope": {"status": "not_required"},
+                  "copy_observation": {"observed": {"edition": "unspecified"}}}
+        self.assertTrue(core_recovery.eligible(record)[0])
+        self.assertEqual(core_recovery.eligible({**record, "extraction": ""})[1],
+                         "no_extraction")
+        self.assertEqual(core_recovery.eligible(
+            {**record, "scope": {"status": "unresolved"}})[1], "scope_unresolved")
+        self.assertEqual(core_recovery.eligible(
+            {**record, "copy_observation": {"edition": {"status": "later_edition"}}})[1],
+            "edition_later_edition")
+
+    def test_citation_metadata_is_not_a_search_term(self):
+        text = ("=== PDF p1 | printed p1 | native\n"
+                "Cultural globalization is a contested concept.\n")
+        index = core_recovery.index_with_text(text)
+        selected = core_recovery.select(
+            index, "Mirrlees (2013) refers to cultural globalisation", [],
+            search_text="refers to cultural globalisation")
+        self.assertNotIn("mirrlees", selected["terms"])
+        self.assertNotIn("2013", selected["terms"])
+        self.assertIn("globalisation", selected["terms"])
+        self.assertIn("globalization", selected["terms"])
+        self.assertEqual(rft._strip_citation("Mirrlees (2013) refers to culture.",
+                                            "Mirrlees (2013)").strip(), "refers to culture.")
+
+    def test_back_matter_is_not_used_as_evidence(self):
+        text = (
+            "=== PDF p1 | printed p1 | native\n"
+            "The government restricted game content by requiring publishers to submit games.\n\n"
+            "=== PDF p2 | printed p2 | native\n"
+            "References\n"
+            "The government restricted game content; see Smith, A. (2020). Games. Press.\n")
+        index = core_recovery.index_with_text(text)
+        self.assertEqual(index["back_matter_from"], "2")
+        selected = core_recovery.select(index, "government restricted game content", [])
+        self.assertFalse(selected["no_relevant_full_text"])
+        self.assertTrue(all(passage["printed_page"] == "1"
+                            for passage in selected["passages"]))
+
+    def test_no_page_map_records_a_locator_limitation(self):
+        text = "The government restricted game content and certification."
+        index = core_recovery.index_with_text(text)
+        selected = core_recovery.select(index, "government restricted game content", [])
+        self.assertFalse(selected["no_relevant_full_text"])
+        occurrence = {"id": "C1", "paragraph_id": "P1", "marker": "(Smith, 2020)",
+                      "statement": "The government restricted game content.",
+                      "cited_r_ids": ["R1"]}
+        packet = core_recovery.build_packet(
+            occurrence, "C1.recovery", occurrence["statement"], [0, len(occurrence["statement"])],
+            "claim", {"source_key": "smith", "r_id": "R1"}, index, selected, [])
+        self.assertEqual(packet["passages"][0]["locator"], "source text (no page map)")
+        self.assertEqual(packet["recovery"]["locator_limitation"], "no_page_map")
+
+    def test_page_range_parser_handles_single_pages_ranges_and_absent_locators(self):
+        self.assertEqual(core_recovery.locator_page_range("(Smith, 2020, p. 48)"), [48, 48])
+        self.assertEqual(core_recovery.locator_page_range("pp. 57–82"), [57, 82])
+        self.assertEqual(core_recovery.locator_page_range("p.48"), [48, 48])
+        self.assertEqual(core_recovery.locator_page_range("(Smith, 2020)"), [])
+        self.assertEqual(core_recovery.locator_page_range("P8"), [])
+
+
+class ReadingGateTests(unittest.TestCase):
+    def _occurrence(self, statement, marker, cited=("R1",), sources=None):
+        return {"id": "C1", "paragraph_id": "P1", "marker": marker,
+                "statement": statement, "cited_r_ids": list(cited),
+                "judgment": "Supports", "sources": sources or []}
+
+    def test_patchwriting_and_locator_findings_carry_source_evidence(self):
+        statement = ("Historically, member states viewed broadcasting as an essential aspect of "
+                     "national sovereignty, with governments exerting control over news content; "
+                     "however, this control was challenged by growing global trade and Europe-wide "
+                     "technological shifts (Smith, 2020, p. 9).")
+        evidence = ("“Since the early days of television, Member States had viewed broadcasting as "
+                    "an integral attribute of their national sovereignty, controlling everything from "
+                    "broadcast frequencies to news programs. However, this degree of control was "
+                    "problematic in light of the growing world trade system and economic changes "
+                    "sweeping across Europe.”")
+        occurrence = self._occurrence(statement, "(Smith, 2020, p. 9)", sources=[{
+            "r_id": "R1", "source_key": "smith", "locator": "printed p. 8",
+            "evidence": evidence}])
+        record = core_gate.analyze(occurrence, [{"id": "R1", "verbatim": "Smith (2020). Work."}],
+                                   occurrence["sources"])
+        checks = {item["check"]: item for item in record["findings"]}
+        self.assertEqual(checks["patchwriting"]["category"], "B")
+        self.assertEqual(checks["locator"]["category"], "A")
+        self.assertIn("Since the early days", checks["patchwriting"]["evidence"])
+        self.assertIn("observed 8", checks["locator"]["evidence"])
+
+    def test_lost_qualification_is_reported_with_the_qualified_sentence(self):
+        occurrence = self._occurrence(
+            "This directive creates a standardized regulatory system (Nenova, 2007, p. 172).",
+            "(Nenova, 2007, p. 172)", sources=[{
+                "r_id": "R1", "source_key": "nenova",
+                "locator": "printed pp. 169–172",
+                "evidence": "The Directive includes a minimum level of partial harmonization, "
+                            "which ensures the conditions necessary for the single market."}])
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        finding = next(item for item in record["findings"]
+                       if item["check"] == "lost_qualification")
+        self.assertEqual(finding["category"], "B")
+        self.assertIn("minimum level of partial harmonization", finding["evidence"])
+
+    def test_quoted_term_change_and_missing_quotation_locator(self):
+        occurrence = self._occurrence(
+            "For instance, the “when practicable” clause leaves room for interpretation "
+            "(Wilkins, 1991).", "(Wilkins, 1991)", sources=[{
+                "r_id": "R1", "source_key": "wilkins", "locator": "printed p. 201",
+                "evidence": "“The ‘where practicable’ clause also creates a significant "
+                            "loophole, allowing member states latitude in interpretation.”"}])
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        checks = {item["check"]: item for item in record["findings"]}
+        self.assertEqual(checks["quoted_term"]["category"], "B")
+        self.assertEqual(checks["quoted_term"]["source_phrase"], "where practicable")
+        self.assertEqual(checks["citation_form"]["category"], "A")
+
+    def test_reported_stakeholder_position_is_not_the_author_assertion(self):
+        occurrence = self._occurrence(
+            "Privatized media companies favor inexpensive foreign programs, which will "
+            "drive small companies out of business (Wilkins, 1991).",
+            "(Wilkins, 1991)", sources=[{
+                "r_id": "R1", "source_key": "wilkins", "locator": "printed p. 201",
+                "evidence": "Younger and smaller television stations worry that quotas on "
+                            "low-priced foreign programs will drive them out of business."}])
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        finding = next(item for item in record["findings"]
+                       if item["check"] == "reported_viewpoint")
+        self.assertEqual(finding["category"], "B")
+        self.assertIn("stations worry", finding["evidence"])
+
+    def test_missing_reference_and_comma_are_both_recorded(self):
+        occurrence = self._occurrence(
+            "Neoliberals encourage governments to eliminate regulations (McChesney 2004).",
+            "(McChesney 2004)", cited=(), sources=[])
+        record = core_gate.analyze(occurrence, [], [])
+        categories = {(item["check"], item["category"]) for item in record["findings"]}
+        self.assertIn(("citation_form", "B"), categories)
+        self.assertIn(("citation_form", "A"), categories)
+
+    def test_unavailable_source_is_declined_with_a_reason(self):
+        occurrence = self._occurrence("A substantive claim (Smith, 2020, p. 5).",
+                                      "(Smith, 2020, p. 5)")
+        record = core_gate.analyze(occurrence, [], [])
+        self.assertEqual(record["state"], "declined")
+        self.assertTrue(any(item["reason"] == "no source evidence"
+                            for item in record["declined"]))
+
+    def test_a_plus_b_counts_are_derived_from_the_specific_fields(self):
+        findings = {"occurrences": [{
+            "id": "C1", "summary_category": "A+B",
+            "apa": ["page locator"], "academic_practice": ["patchwriting"]}],
+            "summary": {"category_a": ["page locator"], "category_b": ["patchwriting"]}}
+        self.assertEqual(fc.render_counts(findings), {"A": 1, "B": 1, "HL": 0})
+        self.assertEqual(fc.reconcile(findings), [])
+
+    def test_prior_current_disagreements_are_classified(self):
+        gate = {"occurrences": [{"occurrence": "C1", "findings": [
+            {"check": "patchwriting", "category": "B"}]}]}
+        result = rgt.compare(gate, {"C1": ["patchwriting"], "C2": ["locator"]})
+        rows = {(row["occurrence"], row["check"]): row["classification"]
+                for row in result["rows"]}
+        self.assertEqual(rows[("C1", "patchwriting")], "confirmed")
+        self.assertEqual(rows[("C2", "locator")], "current_missed")
+
+
+class ReadingGateApplyTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.folder = self.root / "paper"
+        self.folder.mkdir()
+        self.statement = (
+            "Historically, member states viewed broadcasting as an essential aspect of national "
+            "sovereignty, with governments exerting control over news content; however, this "
+            "control was challenged by growing global trade and technological shifts "
+            "(Smith, 2020, p. 9).")
+        self.marker = "(Smith, 2020, p. 9)"
+        self.evidence = (
+            "“Since the early days of television, Member States had viewed broadcasting as an "
+            "integral attribute of their national sovereignty, controlling everything from "
+            "broadcast frequencies to news programs. However, this degree of control was "
+            "problematic in light of the growing world trade system and economic changes "
+            "sweeping across Europe.”")
+        reference = {"id": "R1", "verbatim": "Smith, A. (2020). Broadcasting.",
+                     "source_key": "smith"}
+        occurrence = {"id": "C1", "paragraph_id": "P1", "marker": self.marker,
+                      "statement": self.statement, "cited_r_ids": ["R1"],
+                      "judgment": "Supports",
+                      "sources": [{"r_id": "R1", "source_key": "smith",
+                                   "window_id": "X1:R1:1", "locator": "printed p. 8",
+                                   "evidence": self.evidence}]}
+        candidates = {"paragraphs": [{"id": "P1", "text": self.statement},
+                                     {"id": "P2", "text": reference["verbatim"]}],
+                      "citations": [{"id": "X1", "paragraph_id": "P1",
+                                     "marker": self.marker}],
+                      "references": [reference]}
+        task = {"candidates": candidates, "windows": {"X1": [{
+            "window_id": "X1:R1:1", "source_key": "smith", "r_id": "R1",
+            "text": self.evidence, "printed_page": "8"}]}}
+        inventory = {"occurrences": [{"id": "C1", "paragraph_id": "P1",
+                                      "marker": self.marker, "statement": self.statement,
+                                      "cited_r_ids": ["R1"]}],
+                     "references": [reference],
+                     "dispositions": {"X1": "confirmed_as:C1", "R1": "confirmed"},
+                     "coverage": {"paragraphs_scanned": ["P1", "P2"]}}
+        findings = {"occurrences": [occurrence], "references": [reference],
+                    "works": [], "uncited": [],
+                    "summary": {"category_a": [], "category_b": []},
+                    "limitations": ""}
+        for path, data in (("paper.json", {"paper_id": "paper", "path": "paper.docx",
+                                          "word_counts": {"total": 20, "text": 12,
+                                                          "references": 8}}),
+                           ("candidates.json", candidates), ("task.json", task)):
+            (self.work / path).write_text(json.dumps(data), encoding="utf-8")
+        for path, data in (("inventory.json", inventory), ("findings.json", findings)):
+            (self.folder / path).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_gate_run_apply_and_require_gate_render(self):
+        initial = subprocess.run(
+            [sys.executable, "-IB", str(rr.__file__), "--batch", str(self.root),
+             "--paper", "paper", "--inventory", str(self.folder / "inventory.json"),
+             "--findings", str(self.folder / "findings.json"), "--strict-inventory"],
+            capture_output=True, text=True)
+        self.assertEqual(initial.returncode, 0, initial.stderr)
+        result = rgt.run(str(self.root), "paper")
+        self.assertEqual(result["counts"]["finding"], 1)
+        applied = rgt.apply(str(self.root), "paper")
+        self.assertTrue(applied["applied"])
+        findings = json.loads((self.folder / "findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(findings["occurrences"][0]["summary_category"], "A+B")
+        self.assertEqual(len(findings["summary"]["category_a"]), 1)
+        self.assertEqual(len(findings["summary"]["category_b"]), 1)
+        self.assertTrue((self.folder / "review.pre-gate.md").is_file())
+        self.assertIn("Reading gate:", findings["limitations"])
+        review = (self.folder / "review.md").read_text(encoding="utf-8")
+        self.assertIn("Academic Practice:", review)
+        self.assertIn("Apa:", review)
+        self.assertEqual(fc.render_counts(findings), {"A": 1, "B": 1, "HL": 0})
+        self.assertEqual(fc.reconcile(findings), [])
+
+    def test_require_gate_refuses_a_missing_report(self):
+        command = [sys.executable, "-IB", str(rr.__file__), "--batch", str(self.root),
+                   "--paper", "paper", "--inventory", str(self.folder / "inventory.json"),
+                   "--findings", str(self.folder / "findings.json"), "--strict-inventory",
+                   "--require-gate"]
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("reading gate report missing", result.stderr)
+
+
+class CjkFoundationTests(unittest.TestCase):
+    def test_script_detection_separates_japanese_korean_and_han(self):
+        chinese = core_script.detect("中国政府加强了对游戏内容的审查。")
+        japanese = core_script.detect("政府はゲーム内容の審査を強化した。")
+        korean = core_script.detect("정부가 게임 내용 심사를 강화했다.")
+        latin = core_script.detect("The government restricted game content.")
+        self.assertEqual(chinese["language"], "zh")
+        self.assertTrue(chinese["ambiguous"])
+        self.assertEqual(japanese["language"], "ja")
+        self.assertEqual(korean["language"], "ko")
+        self.assertEqual(latin["language"], "latin")
+
+    def test_native_cjk_text_is_usable_even_without_spaces(self):
+        self.assertTrue(core_script.native_usable("中国政府加强了对游戏内容的审查。" * 8))
+        self.assertFalse(core_script.native_usable("短语"))
+
+    def test_ocr_plan_requests_both_chinese_packs_and_vertical_override(self):
+        plan = core_script.ocr_plan("中国政府加强了对游戏内容的审查。")
+        self.assertEqual(plan["languages"][:2], ["chi_sim", "chi_tra"])
+        self.assertTrue(plan["ambiguous"])
+        self.assertEqual(pq.tesseract_langs(["chi_sim", "chi_tra", "jpn", "kor"]),
+                         ["chi_sim", "chi_tra", "jpn", "kor"])
+        explicit = core_script.ocr_plan("", "jpn_vert,kor_vert")
+        self.assertEqual(explicit["languages"], ["jpn_vert", "kor_vert"])
+        self.assertEqual(explicit["source"], "explicit")
+
+    def test_cjk_ngrams_preserve_original_offsets(self):
+        text = "全球媒体研究"
+        terms = {item["term"]: item for item in core_seg.cjk_ngrams(text)}
+        self.assertEqual(terms["全球"]["start"], 0)
+        self.assertEqual(terms["全球"]["end"], 2)
+        self.assertEqual(terms["全球媒"]["end"], 3)
+        self.assertEqual(text[terms["媒体"]["start"]:terms["媒体"]["end"]], "媒体")
+
+    def test_korean_terms_include_words_and_syllable_bigrams(self):
+        terms = core_seg.retrieval_terms("정부가 게임 내용 심사를 강화했다.", "ko")
+        kinds = {item["kind"] for item in terms}
+        self.assertIn("word", kinds)
+        self.assertIn("syllable-2gram", kinds)
+
+    def test_generated_native_cjk_pdf_is_not_sent_to_ocr(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cjk.pdf"
+            doc = pymupdf.open()
+            page = doc.new_page()
+            page.insert_text((72, 72), "中国政府加强了对游戏内容的审查。" * 6,
+                             fontname="china-s", fontsize=12)
+            doc.save(path)
+            doc.close()
+            pages = page_map.read_pages(str(path))
+        self.assertEqual(len(pages), 1)
+        self.assertTrue(pages[0]["native_usable"])
+        self.assertEqual(pages[0]["source"], "native")
+        self.assertEqual(pages[0]["language"], "zh")
+
+    def test_prepare_source_keeps_native_cjk_instead_of_ocr(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "native.pdf"
+            out = Path(tmp) / "_sources" / "cjk"
+            doc = pymupdf.open()
+            page = doc.new_page()
+            page.insert_text((72, 72), "中国政府加强了对游戏内容的审查。" * 6,
+                             fontname="china-s", fontsize=12)
+            doc.save(path)
+            doc.close()
+            run = subprocess.run(
+                [sys.executable, "-IB", ps.__file__, "--pdf", str(path),
+                 "--out", str(out), "--key", "cjk"],
+                capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["native_pages"], 1)
+        self.assertEqual(meta["ocr_pages_count"], 0)
+        self.assertEqual(meta["ocr_languages"][:2], ["chi_sim", "chi_tra"])
+        self.assertFalse(meta["ocr_language_ambiguous"])
+        self.assertNotIn("OCR language is ambiguous", " ".join(meta["gaps"]))
+
+    def test_generated_image_only_cjk_pdf_uses_routed_ocr(self):
+        if not shutil.which("tesseract"):
+            self.skipTest("Tesseract not available")
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan.pdf"
+            out = Path(tmp) / "_sources" / "scan"
+            doc = pymupdf.open()
+            page = doc.new_page()
+            lines = ["中国政府加强了对游戏内容的审查。",
+                     "政府要求企业提交内容审核材料。",
+                     "这项政策影响了游戏出版与发行。",
+                     "研究讨论了审查制度的实际效果。"]
+            for index, line in enumerate(lines):
+                page.insert_text((72, 100 + index * 45), line,
+                                 fontname="china-s", fontsize=20)
+            pix = page.get_pixmap(dpi=200)
+            doc.close()
+            image_doc = pymupdf.open()
+            image_page = image_doc.new_page(width=pix.width * 72 / 200,
+                                            height=pix.height * 72 / 200)
+            image_page.insert_image(image_page.rect, stream=pix.tobytes("png"))
+            image_doc.save(path)
+            image_doc.close()
+            run = subprocess.run(
+                [sys.executable, "-IB", ps.__file__, "--pdf", str(path),
+                 "--out", str(out), "--key", "scan", "--max-ocr-pages", "1",
+                 "--langs", "chi_sim,chi_tra"],
+                capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr)
+            meta = json.loads((out / "meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["ocr_pages_count"], 1)
+        self.assertEqual(meta["ocr_languages"][:2], ["chi_sim", "chi_tra"])
+        self.assertEqual(meta["ocr_language_source"], "explicit")
+
+    def test_html_charset_detection_covers_meta_and_fallback(self):
+        cases = [
+            ("gb18030", "中文测试页面内容。", "gb18030"),
+            ("big5", "中文測試頁面內容。", "big5"),
+            ("shift_jis", "日本語のテストページです。", "shift_jis"),
+            ("euc_kr", "한국어 테스트 페이지입니다.", "euc_kr"),
+        ]
+        for encoding, body, declared in cases:
+            raw = (f'<html><head><meta charset="{declared}"></head><body>'
+                   f'<p>{body}</p></body></html>').encode(encoding)
+            text, decoded, source, limitation = ph.decode_html(raw)
+            self.assertIn(body, text)
+            self.assertEqual(decoded, declared)
+            self.assertEqual(source, "meta")
+            self.assertEqual(limitation, "")
+
+    def test_html_header_charset_wins_and_fallback_marks_undecodable(self):
+        raw = '<p>中文测试</p>'.encode("gb18030")
+        text, decoded, source, _limitation = ph.decode_html(raw, "gb18030")
+        self.assertIn("中文测试", text)
+        self.assertEqual(decoded, "gb18030")
+        self.assertEqual(source, "header")
+        bad, _encoding, _source, limitation = ph.decode_html(b"\xff\xfe\x00")
+        self.assertTrue(limitation)
+
+    def test_generated_traditional_chinese_japanese_korean_pdfs_are_native(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        cases = [("china-t", "政府加強了對遊戲內容的審查。" * 6, "zh"),
+                 ("japan", "政府はゲーム内容の審査を強化した。" * 6, "ja"),
+                 ("korea", "정부가 게임 내용 심사를 강화했다." * 6, "ko")]
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, (font, text, language) in enumerate(cases):
+                path = Path(tmp) / f"cjk-{index}.pdf"
+                doc = pymupdf.open()
+                page = doc.new_page()
+                page.insert_text((72, 72), text, fontname=font, fontsize=12)
+                doc.save(path)
+                doc.close()
+                pages = page_map.read_pages(str(path))
+                self.assertTrue(pages[0]["native_usable"], font)
+                self.assertEqual(pages[0]["source"], "native", font)
+                self.assertEqual(pages[0]["language"], language, font)
+
+    def test_generated_japanese_and_korean_scans_route_to_jpn_and_kor(self):
+        if not shutil.which("tesseract"):
+            self.skipTest("Tesseract not available")
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        cases = [
+            ("japan", ["政府はゲーム内容の審査を強化した。",
+                       "企業は内容を提出する必要がある。",
+                       "この政策は出版と流通に影響した。",
+                       "研究は審査制度の効果を議論した。"],
+             "Japanese", "jpn"),
+            ("korea", ["정부가 게임 내용 심사를 강화했다.",
+                       "기업은 내용을 제출해야 한다.",
+                       "이 정책은 출판과 유통에 영향을 주었다.",
+                       "연구는 심사 제도의 효과를 논의했다."],
+             "Korean", "kor"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, (font, lines, script, code) in enumerate(cases):
+                path = Path(tmp) / f"scan-{index}.pdf"
+                doc = pymupdf.open()
+                page = doc.new_page()
+                for line_index, line in enumerate(lines):
+                    page.insert_text((72, 100 + line_index * 45), line,
+                                     fontname=font, fontsize=20)
+                pix = page.get_pixmap(dpi=200)
+                doc.close()
+                image_doc = pymupdf.open()
+                image_page = image_doc.new_page(width=pix.width * 72 / 200,
+                                                height=pix.height * 72 / 200)
+                image_page.insert_image(image_page.rect, stream=pix.tobytes("png"))
+                image_doc.save(path)
+                image_doc.close()
+                result = pq.detect_languages(str(path), dpi=200)
+                self.assertEqual(result.get("script"), script, font)
+                self.assertIn(code, result.get("languages", []), font)
+
+    def test_generated_ocr_fixture_reports_cjk_script(self):
+        if not shutil.which("tesseract"):
+            self.skipTest("Tesseract not available")
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scan.pdf"
+            doc = pymupdf.open()
+            page = doc.new_page()
+            lines = ["中国政府加强了对游戏内容的审查。",
+                     "政府要求企业提交内容审核材料。",
+                     "这项政策影响了游戏出版与发行。",
+                     "研究讨论了审查制度的实际效果。"]
+            for index, line in enumerate(lines):
+                page.insert_text((72, 100 + index * 45), line,
+                                 fontname="china-s", fontsize=20)
+            pix = page.get_pixmap(dpi=200)
+            doc.close()
+            image_doc = pymupdf.open()
+            image_page = image_doc.new_page(width=pix.width * 72 / 200,
+                                            height=pix.height * 72 / 200)
+            image_page.insert_image(image_page.rect, stream=pix.tobytes("png"))
+            image_doc.save(path)
+            image_doc.close()
+            result = pq.detect_languages(str(path), dpi=200)
+        self.assertEqual(result.get("script"), "Han")
+        self.assertIn("chi_sim", result.get("languages", []))
+        self.assertTrue(result.get("ambiguous"))
+
+
+class R47bTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.work = self.root / "_work" / "paper"
+        self.work.mkdir(parents=True)
+        self.text = (
+            "=== PDF p1 | printed p1 | native\n"
+            "中国政府加强了对游戏内容的审查，要求企业提交审核材料。\n\n"
+            "=== PDF p2 | printed p2 | native\n"
+            "媒体行业受到政策影响，出版与发行方式发生变化。\n")
+        self.source = self.root / "_sources" / "cjk"
+        self.source.mkdir(parents=True)
+        (self.source / "text.txt").write_text(self.text, encoding="utf-8")
+        self.english = ("The government strengthened its review of game content and "
+                        "required companies to submit materials.")
+        self.chinese = "政府加强了对游戏内容的审查。"
+        reference = {"id": "R1", "verbatim": "张三. (2020). 中国游戏产业研究. 新闻与传播研究, 1(1), 1-10.",
+                     "source_key": "cjk"}
+        candidates = {"paragraphs": [{"id": "P1", "text": self.english}],
+                      "citations": [{"id": "X1", "paragraph_id": "P1",
+                                     "marker": "(张三, 2020, p. 1)"}],
+                      "references": [reference]}
+        task = {"candidates": candidates,
+                "sources": {"R1": {"source_key": "cjk", "r_id": "R1",
+                                   "identity_status": "supplied_confirmed",
+                                   "extraction": str(self.source / "text.txt")}},
+                "windows": {"X1": [{"window_id": "X1:R1:1", "printed_page": 1,
+                                    "source_key": "cjk", "r_id": "R1",
+                                    "text": self.text.split("\n\n")[1]}]}}
+        inventory = {"occurrences": [
+                         {"id": "C1", "candidate_id": "X1", "paragraph_id": "P1",
+                          "marker": "(张三, 2020, p. 1)", "statement": self.english,
+                          "cited_r_ids": ["R1"]},
+                         {"id": "C2", "candidate_id": "X1", "paragraph_id": "P1",
+                          "marker": "(张三, 2020, p. 1)", "statement": self.chinese,
+                          "cited_r_ids": ["R1"]}],
+                     "references": [reference],
+                     "dispositions": {"X1": "confirmed", "R1": "confirmed"},
+                     "coverage": {"paragraphs_scanned": ["P1"]}}
+        plan = [{"occurrence_id": "C1", "start": 0, "end": len(self.english),
+                 "kind": "claim"},
+                {"occurrence_id": "C2", "start": 0, "end": len(self.chinese),
+                 "kind": "claim"}]
+        for path, data in (("paper.json", {"paper_id": "paper", "path": "paper.docx",
+                                          "word_counts": {"total": 20, "text": 12,
+                                                          "references": 8}}),
+                           ("task.json", task), ("candidates.json", candidates)):
+            (self.work / path).write_text(json.dumps(data), encoding="utf-8")
+        (self.root / "inventory.json").write_text(json.dumps(inventory), encoding="utf-8")
+        (self.root / "claims.json").write_text(json.dumps(plan), encoding="utf-8")
+        self.inventory, self.plan = inventory, plan
+
+    def test_query_translation_emits_records_and_rejects_wrong_script(self):
+        emitted = qt.emit(str(self.root), "paper", self.inventory, self.plan, "C1.1")
+        self.assertEqual(emitted["status"], "ready")
+        request = json.loads(Path(emitted["request"]).read_text(encoding="utf-8"))
+        self.assertEqual(request["source_language"], "zh")
+        response = {"claim_sha256": request["claim_sha256"],
+                    "source_language": "zh",
+                    "query": "政府加强了对游戏内容的审查",
+                    "variants": ["游戏内容审核", "出版发行政策"]}
+        response_path = self.root / "translation.json"
+        response_path.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+        recorded = qt.record(str(self.root), "paper", self.inventory, self.plan,
+                             "C1.1", str(response_path))
+        self.assertEqual(recorded["status"], "recorded")
+        bad = dict(response, query="government game content review")
+        response_path.write_text(json.dumps(bad, ensure_ascii=False), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            qt.record(str(self.root), "paper", self.inventory, self.plan,
+                      "C1.1", str(response_path))
+
+    def test_same_language_claim_needs_no_translation(self):
+        result = qt.emit(str(self.root), "paper", self.inventory, self.plan, "C2.1")
+        self.assertEqual(result["status"], "not_needed")
+        self.assertIn("same language", result["reason"])
+
+    def test_translated_query_retrieves_original_cjk_passage(self):
+        index = core_recovery.index_with_text(self.text)
+        selected = core_recovery.select(
+            index, self.english, [1, 1],
+            search_text="政府加强了对游戏内容的审查")
+        self.assertFalse(selected["no_relevant_full_text"])
+        self.assertTrue(any("审查" in passage["text"] for passage in selected["passages"]))
+
+    def test_gloss_is_optional_validated_and_rendered(self):
+        packet = {"passages": [{"passage_id": "P1", "r_id": "R1",
+                                "source_key": "cjk", "locator": "printed p. 1",
+                                "text": "中国政府加强了对游戏内容的审查。"}]}
+        response = {"packet_sha256": core_claim.digest(packet), "judgment": "Supports",
+                    "reason": "The passage states the review requirement.",
+                    "evidence": [{"passage_id": "P1", "start": 0, "end": 5,
+                                  "contribution": "States the policy.",
+                                  "gloss": "The Chinese government strengthened review."}]}
+        sources = core_claim.response_evidence(packet, response)
+        self.assertEqual(sources[0]["gloss"],
+                         "The Chinese government strengthened review.")
+        response["evidence"][0]["gloss"] = "x" * 241
+        with self.assertRaises(ValueError):
+            core_claim.response_evidence(packet, response)
+
+    def test_cjk_reference_keys_are_distinct_and_identity_scores(self):
+        first = "张三. (2020). 中国游戏产业研究. 新闻与传播研究, 1(1), 1-10."
+        second = "李四. (2020). 媒体政策研究. 新闻大学, 1(1), 1-10."
+        self.assertNotEqual(al.key_from_entry(first), al.key_from_entry(second))
+        parsed = sr.parse_source({"source": first})
+        score, detail = sr.score_file(
+            "中国游戏产业研究\n张三\n新闻与传播研究 2020", {}, parsed,
+            path="/tmp/张三-2020.pdf")
+        self.assertGreaterEqual(score, 0.65)
+        self.assertEqual(detail["script"], "cjk")
+        self.assertEqual(detail["title_coverage"], 1.0)
+
+    def test_gloss_is_rendered_in_the_review(self):
+        findings = {"occurrences": [{
+            "id": "C1", "locator": "P1", "marker": "(张三, 2020)",
+            "statement": "A claim.", "judgment": "Supports",
+            "sources": [{"r_id": "R1", "source_key": "cjk", "locator": "printed p. 1",
+                         "evidence": "政府加强了对游戏内容的审查。",
+                         "contribution": "States the policy.",
+                         "gloss": "The government strengthened review."}]}],
+            "references": [{"id": "R1", "verbatim": "张三. (2020). 研究."}],
+            "works": [], "uncited": [], "summary": {}}
+        text = rr.render_md({"paper_id": "paper", "path": "paper.docx",
+                             "word_counts": {"total": 20, "text": 12, "references": 8}},
+                            findings, rr.counts(findings), {}, {})
+        self.assertIn("Gloss (reviewer): The government strengthened review.", text)
+
+    def test_cjk_gate_flags_wording_and_defers_semantic_checks(self):
+        occurrence = {"id": "C1", "marker": "(张三, 2020, p. 1)",
+                      "statement": "政府加强了对游戏内容的审查（张三, 2020, p. 1）。",
+                      "cited_r_ids": ["R1"], "judgment": "Supports",
+                      "sources": [{"r_id": "R1", "source_key": "cjk",
+                                   "locator": "printed p. 1",
+                                   "evidence": "中国政府加强了对游戏内容的审查，要求企业提交审核材料。"}]}
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        checks = {item["check"]: item for item in record["checks"]}
+        self.assertIn(checks["patchwriting"]["state"], ("finding", "inconclusive", "pass"))
+        self.assertEqual(checks["lost_qualification"]["state"], "inconclusive")
+        self.assertEqual(checks["reported_viewpoint"]["state"], "inconclusive")
+
+
+class AcceptanceCjkTests(unittest.TestCase):
+    def test_harness_reports_real_sample_mechanics_without_text(self):
+        try:
+            import pymupdf
+        except ImportError:
+            self.skipTest("PyMuPDF not available")
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf_path = root / "zh_academic.pdf"
+            doc = pymupdf.open()
+            page = doc.new_page()
+            page.insert_text((72, 72), "中国游戏产业研究\n张三\n新闻与传播研究 2020\n"
+                             "本文研究中国游戏产业的政策与市场。", fontname="china-s",
+                             fontsize=14)
+            doc.save(pdf_path)
+            doc.close()
+            html_path = root / "zh_gov.html"
+            html_path.write_bytes(
+                '<html><head><meta charset="utf-8"><title>政策通知</title></head>'
+                '<body><p>国务院发布游戏内容审核政策。</p></body></html>'.encode("utf-8"))
+            samples = {"samples": [
+                {"key": "zh_academic", "language": "zh-Hans", "title": "中国游戏产业研究",
+                 "author": "张三", "venue": "2020", "url": "",
+                 "sha256": hashlib.sha256(pdf_path.read_bytes()).hexdigest()},
+                {"key": "zh_gov", "language": "zh-Hans", "title": "政策通知",
+                 "author": "国务院", "venue": "2020", "url": "",
+                 "sha256": hashlib.sha256(html_path.read_bytes()).hexdigest()}]}
+            samples_path = root / "samples.json"
+            samples_path.write_text(json.dumps(samples, ensure_ascii=False), encoding="utf-8")
+            report_path = root / "report.json"
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = acc.main(["--samples", str(samples_path), "--source-dir", str(root),
+                                 "--out", str(report_path)])
+            self.assertEqual(code, 0)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["assessed"], 2)
+            self.assertEqual({row["language"] for row in report["rows"]}, {"zh"})
+            self.assertTrue(all(row["segmentation_terms"] > 0 for row in report["rows"]))
+            self.assertIn("中国游戏产业研究", open(samples_path, encoding="utf-8").read())
+            self.assertNotIn("中国游戏产业研究", report_path.read_text(encoding="utf-8"))
+
+
+class R47fTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.record = {
+            "work_kind": "article",
+            "identity": {
+                "title": "Wang luo chu ban yan jiu (Research on network publishing)",
+                "author": "Pan, Y.", "year": "2016",
+                "container_title": "Journal of Publishing",
+                "verbatim": "Pan, Y. (2016). Wang luo chu ban yan jiu (Research on network publishing). "
+                            "Journal of Publishing. [网络出版研究 (DeepL).]",
+            },
+        }
+        (self.root / "source_registry.json").write_text(
+            json.dumps({"works": {"zh-pan-2016": self.record}}, ensure_ascii=False),
+            encoding="utf-8")
+
+    def test_reference_signals_and_native_title(self):
+        record = self.record
+        self.assertIn("romanised_title_with_translation",
+                      core_reference_language.other_language_signals(record["identity"]))
+        noted = {**record["identity"],
+                 "raw_ref": "Pan, Y. (2016). [网络出版研究 (DeepL).]"}
+        self.assertIn("translation_tool_note",
+                      core_reference_language.other_language_signals(noted))
+        self.assertEqual(core_reference_language.native_title_from_cited("数据权利研究（网络出版）"),
+                         "数据权利研究")
+        self.assertEqual(core_reference_language.native_title_from_cited("Data rights"), "")
+        self.assertEqual(core_reference_language.dominant_script("データの権利と法律"), "kana")
+        self.assertEqual(core_reference_language.dominant_script("数据权利 2016 研究"), "han")
+
+    def test_propose_record_and_identity_are_hash_bound_and_keep_route_incomplete(self):
+        proposed = nq.propose(str(self.root), "paper", "zh-pan-2016")
+        self.assertEqual(proposed["status"], "ready")
+        request = json.loads(Path(proposed["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(request["source_key"], "zh-pan-2016")
+        self.assertNotIn("Data rights", json.dumps(request["reference"], ensure_ascii=False))
+        response = {"source_key": "zh-pan-2016", "language": "zh",
+                    "native_title": "网络出版研究", "native_authors": ["潘越"],
+                    "native_container": "出版研究", "confidence": "high"}
+        path = self.root / "proposal.json"
+        path.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+        recorded = nq.record_proposal(str(self.root), "paper", "zh-pan-2016", str(path))
+        self.assertEqual(recorded["status"], "recorded")
+        self.assertEqual(nq.status(str(self.root), "paper", "zh-pan-2016")["route"]["status"],
+                         "incomplete")
+        page = self.root / "page.json"
+        page.write_text(json.dumps({"titles": ["网络出版研究"], "date": "2016",
+                                    "text": "网络出版研究 潘越 2016"}, ensure_ascii=False),
+                        encoding="utf-8")
+        identity = nq.identity_request(str(self.root), "paper", "zh-pan-2016", str(page))
+        self.assertEqual(identity["status"], "ready")
+        answer = {"source_key": "zh-pan-2016", "same_work": "yes", "author": "agrees",
+                  "page_authors": ["潘越"]}
+        path.write_text(json.dumps(answer, ensure_ascii=False), encoding="utf-8")
+        nq.record_identity(str(self.root), "paper", "zh-pan-2016", str(path))
+        self.assertEqual(nq.status(str(self.root), "paper", "zh-pan-2016")["route"]["status"],
+                         "incomplete")
+        nq.set_route(str(self.root), "zh-pan-2016", "completed", "native search finished")
+
+    def test_absence_is_blocked_until_the_native_route_completes(self):
+        self.assertFalse(core_reference_language.can_mark_absent(self.record))
+        nq.set_route(str(self.root), "zh-pan-2016", "completed", "native search finished")
+        record = json.loads((self.root / "_work" / "native-script-routes.json").read_text(
+            encoding="utf-8"))
+        self.assertEqual(record["zh-pan-2016"]["status"], "completed")
+        self.assertTrue(core_reference_language.can_mark_absent(
+            {**self.record, "native_script_route": record["zh-pan-2016"]}))
+        self.assertTrue(core_reference_language.can_mark_absent(
+            {"identity": {"title": "Data rights", "author": "Pan, Y.", "verbatim": "Pan (2016). Data rights."}}))
+        self.assertFalse(sr.native_absence_allowed(self.record))
+        self.assertTrue(sr.native_absence_allowed(
+            {**self.record, "native_script_route": record["zh-pan-2016"]}))
+
+    def test_negative_reuse_waits_for_a_completed_native_route(self):
+        record = {**self.record, "source_key": "zh-pan-2016"}
+        cached = {"provider": None, "reason": "no_match"}
+        self.assertFalse(ru.cached_result_allowed(record, cached))
+        nq.set_route(str(self.root), "zh-pan-2016", "completed", "searches finished")
+        completed = {**record, "native_script_route": {"status": "completed"}}
+        self.assertTrue(ru.cached_result_allowed(completed, cached))
+        self.assertTrue(ru.cached_result_allowed(record, {"provider": {"title": "X"}}))
+        self.assertTrue(ru.cached_result_allowed(
+            {"identity": {"title": "Data rights", "author": "Pan, Y."}}, cached))
+
+    def test_completed_cjk_index_search_marks_the_native_route(self):
+        record = {"source_key": "zh-pan-2016", **self.record}
+        original_fetch, original_search = er.fetch, cjk_indexes.search
+        er.fetch = lambda *args, **kwargs: {"message": {"items": []}}
+        cjk_indexes.search = lambda *args, **kwargs: {
+            "status": "searched",
+            "adapters": [{"adapter": "cinii", "outcome": "returned"}],
+            "candidates": []}
+        try:
+            ru.lookup(record, str(self.root), {}, cjk=True)
+        finally:
+            er.fetch, cjk_indexes.search = original_fetch, original_search
+        routes = json.loads((self.root / "_work" / "native-script-routes.json").read_text(
+            encoding="utf-8"))
+        self.assertEqual(routes["zh-pan-2016"]["status"], "completed")
+
+    def test_invalid_native_answer_is_rejected(self):
+        nq.propose(str(self.root), "paper", "zh-pan-2016")
+        bad = {"source_key": "zh-pan-2016", "language": "zh", "native_title": "Data rights",
+               "native_authors": [], "native_container": "", "confidence": "high"}
+        path = self.root / "bad.json"
+        path.write_text(json.dumps(bad), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            nq.record_proposal(str(self.root), "paper", "zh-pan-2016", str(path))
+        page = self.root / "page.json"
+        page.write_text(json.dumps({"titles": ["网络出版研究"]}), encoding="utf-8")
+        nq.identity_request(str(self.root), "paper", "zh-pan-2016", str(page))
+        bad_identity = {"source_key": "zh-pan-2016", "same_work": "maybe",
+                        "author": "agrees", "page_authors": ["潘越"]}
+        path.write_text(json.dumps(bad_identity), encoding="utf-8")
+        with self.assertRaises(SystemExit):
+            nq.record_identity(str(self.root), "paper", "zh-pan-2016", str(path))
+
+
+class R47gTests(unittest.TestCase):
+    def test_cross_language_quotation_is_explicitly_not_assessable(self):
+        occurrence = {"id": "C1", "marker": "(Pan & Lin, 2016, p. 7)",
+                      "statement": '"Personal data collection requires consent" (Pan & Lin, 2016, p. 7).',
+                      "cited_r_ids": ["R1"], "judgment": "Supports",
+                      "sources": [{"r_id": "R1", "source_key": "cjk", "locator": "printed p. 7",
+                                   "evidence": "收集个人数据需要取得同意。"}]}
+        checks = {item["check"]: item for item in core_gate.analyze(
+            occurrence, [], occurrence["sources"])["checks"]}
+        self.assertEqual(checks["quoted_term"]["state"], "inconclusive")
+        self.assertEqual(checks["quoted_term"]["outcome"], "source_language_differs")
+
+    def test_whole_source_fallback_is_bounded_and_marked(self):
+        text = ("=== PDF p1 | printed p1 | native\n中国政府加强了对游戏内容的审查，"
+                "要求企业提交审核材料。\n\n=== PDF p2 | printed p2 | native\n"
+                "媒体行业受到政策影响，出版与发行方式发生变化。\n")
+        index = core_recovery.index_with_text(text)
+        claim = "An unrelated English claim about quantum computing."
+        ordinary = core_recovery.select(index, claim, [], search_text="quantum computing")
+        self.assertTrue(ordinary["no_relevant_full_text"])
+        fallback = core_recovery.select(index, claim, [], search_text="quantum computing",
+                                        whole_source=True)
+        self.assertFalse(fallback["no_relevant_full_text"])
+        self.assertTrue(fallback["whole_source_used"])
+        self.assertLessEqual(len(fallback["passages"]), 3)
+        packet = core_recovery.build_packet(
+            {"paragraph_id": "P1", "page_range": []}, "C1", claim, [0, len(claim)],
+            "claim", {"r_id": "R1", "source_key": "cjk"}, index, fallback, [])
+        self.assertTrue(packet["recovery"]["whole_source_fallback"])
+        self.assertEqual(packet["passages"][0]["retrieval_method"], "whole_source_fallback")
+
+    def test_gloss_has_provenance_hash(self):
+        packet = {"passages": [{"passage_id": "P1", "r_id": "R1", "source_key": "cjk",
+                                "locator": "printed p. 1",
+                                "text": "中国政府加强了对游戏内容的审查。"}]}
+        response = {"packet_sha256": core_claim.digest(packet), "judgment": "Supports",
+                    "reason": "The passage states the review requirement.",
+                    "evidence": [{"passage_id": "P1", "start": 0, "end": 5,
+                                  "contribution": "States the policy.",
+                                  "gloss": "The Chinese government strengthened review."}]}
+        source = core_claim.response_evidence(packet, response)[0]
+        self.assertEqual(len(source["gloss_sha256"]), 64)
+        self.assertEqual(source["gloss_sha256"], core_claim.digest(source["gloss"]))
+
+    def test_same_language_cjk_quotation_still_matches_exactly(self):
+        occurrence = {"id": "C1", "marker": "(张三, 2020, p. 1)",
+                      "statement": "作者指出“中国政府加强了对游戏内容的审查”（张三, 2020, p. 1）。",
+                      "cited_r_ids": ["R1"], "judgment": "Supports",
+                      "sources": [{"r_id": "R1", "source_key": "cjk", "locator": "printed p. 1",
+                                   "evidence": "中国政府加强了对游戏内容的审查，要求企业提交材料。"}]}
+        checks = {item["check"]: item for item in core_gate.analyze(
+            occurrence, [], occurrence["sources"])["checks"]}
+        self.assertEqual(checks["quoted_term"]["state"], "pass")
+
+
+class Tier2ScriptTests(unittest.TestCase):
+    def test_scripts_are_detected_without_language_guessing(self):
+        cases = [("Русский текст о правах и законах.", "cyrillic"),
+                 ("النص العربي عن الحقوق والقوانين.", "arabic"),
+                 ("טקסט עברי על זכויות וחוקים.", "hebrew"),
+                 ("यह हिंदी पाठ अधिकारों के बारे में है।", "devanagari"),
+                 ("ข้อความภาษาไทยเกี่ยวกับสิทธิและกฎหมาย", "thai"),
+                 ("Étude sur les droits et les lois.", "latin")]
+        for text, language in cases:
+            detection = core_script.detect(text)
+            self.assertEqual(detection["language"], language, text)
+            self.assertIn(detection["script"], {"Cyrillic", "Arabic", "Hebrew",
+                                                "Devanagari", "Thai", "Latin"})
+
+    def test_tier2_ocr_requires_an_explicit_pack(self):
+        plan = core_script.ocr_plan("Русский текст о правах.")
+        self.assertEqual(plan["languages"], [])
+        self.assertEqual(plan["source"], "script_hint")
+        self.assertIn("rus", plan["reason"])
+        explicit = core_script.ocr_plan("", "rus")
+        self.assertEqual(explicit["languages"], ["rus"])
+        self.assertEqual(pq.tesseract_langs(["ru", "ar", "he", "hi", "th"]),
+                         ["rus", "ara", "heb", "hin", "tha"])
+
+    def test_tier2_charset_fallbacks(self):
+        cases = [("cp1251", "Русский текст о правах."),
+                 ("cp1256", "النص العربي عن الحقوق."),
+                 ("cp1255", "טקסט עברי על זכויות."),
+                 ("tis-620", "ข้อความภาษาไทยเกี่ยวกับสิทธิ")]
+        for encoding, body in cases:
+            raw = f'<html><head><meta charset="{encoding}"></head><body><p>{body}</p></body></html>'.encode(encoding)
+            text, decoded, source, limitation = ph.decode_html(raw)
+            self.assertIn(body, text)
+            self.assertEqual(decoded, encoding)
+            self.assertEqual(source, "meta")
+            self.assertEqual(limitation, "")
+
+    def test_tier2_reference_signals_block_absence(self):
+        record = {"identity": {"title": "Исследование прав", "author": "Иванов",
+                               "verbatim": "Иванов. (2020). Исследование прав."},
+                  "work_kind": "article"}
+        signals = core_reference_language.other_language_signals(record["identity"])
+        self.assertIn("non_latin_script", signals)
+        self.assertFalse(sr.native_absence_allowed(record))
+        self.assertTrue(core_reference_language.can_mark_absent(
+            {**record, "native_script_route": {"status": "completed"}}))
+
+    def test_tier2_gate_defers_cross_script_reading(self):
+        occurrence = {"id": "C1", "marker": "(Ivanov, 2020, p. 1)",
+                      "statement": '"Rights require legal protection" (Ivanov, 2020, p. 1).',
+                      "cited_r_ids": ["R1"], "judgment": "Supports",
+                      "sources": [{"r_id": "R1", "source_key": "ru",
+                                   "locator": "printed p. 1",
+                                   "evidence": "Права требуют правовой защиты."}]}
+        checks = {item["check"]: item for item in core_gate.analyze(
+            occurrence, [], occurrence["sources"])["checks"]}
+        self.assertEqual(checks["quoted_term"]["outcome"], "source_language_differs")
+        self.assertEqual(checks["lost_qualification"]["state"], "inconclusive")
+        paraphrase = {**occurrence, "statement": "Rights require legal protection (Ivanov, 2020, p. 1)."}
+        para_checks = {item["check"]: item for item in core_gate.analyze(
+            paraphrase, [], paraphrase["sources"])["checks"]}
+        self.assertEqual(para_checks["patchwriting"]["state"], "inconclusive")
+
+    def test_tier2_query_translation_and_retrieval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            extraction = root / "_sources" / "ru" / "text.txt"
+            extraction.parent.mkdir(parents=True)
+            text = ("=== PDF p1 | printed p1 | native\n"
+                    "Права требуют правовой защиты, а государство обязано их обеспечивать.\n")
+            extraction.write_text(text, encoding="utf-8")
+            claim = "Rights require legal protection."
+            occurrence = {"id": "C1", "candidate_id": "X1", "paragraph_id": "P1",
+                          "marker": "(Ivanov, 2020, p. 1)", "statement": claim,
+                          "cited_r_ids": ["R1"]}
+            inventory = {"occurrences": [occurrence],
+                         "references": [{"id": "R1", "verbatim": "Иванов. (2020). Права."}],
+                         "dispositions": {"X1": "confirmed", "R1": "confirmed"},
+                         "coverage": {"paragraphs_scanned": ["P1"]}}
+            plan = [{"occurrence_id": "C1", "start": 0, "end": len(claim), "kind": "claim"}]
+            task = {"sources": {"R1": {"source_key": "ru", "r_id": "R1",
+                                       "extraction": str(extraction)}}}
+            (work / "task.json").write_text(json.dumps(task), encoding="utf-8")
+            emitted = qt.emit(str(root), "paper", inventory, plan, "C1.1")
+            self.assertEqual(emitted["status"], "ready")
+            self.assertEqual(emitted["source_language"], "cyrillic")
+            request = json.loads(Path(emitted["request"]).read_text(encoding="utf-8"))
+            self.assertIn("Cyrillic", request["target_language_hint"])
+            response = {"claim_sha256": request["claim_sha256"],
+                        "source_language": "cyrillic",
+                        "query": "права требуют правовой защиты",
+                        "variants": ["правовая защита"]}
+            response_path = root / "response.json"
+            response_path.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(qt.record(str(root), "paper", inventory, plan, "C1.1",
+                                       str(response_path))["status"], "recorded")
+        index = core_recovery.index_with_text(text)
+        selected = core_recovery.select(index, claim, [1, 1],
+                                        search_text="права требуют правовой защиты")
+        self.assertFalse(selected["no_relevant_full_text"])
+        self.assertTrue(any("правовой" in passage["text"] for passage in selected["passages"]))
+
+    def test_tier2_identity_keys_and_first_page(self):
+        first = "Иванов, И. (2020). Исследование прав. Журнал, 1(1), 1-10."
+        second = "Петров, П. (2020). Другое исследование. Журнал, 1(1), 1-10."
+        self.assertNotEqual(al.key_from_entry(first), al.key_from_entry(second))
+        parsed = sr.parse_source({"source": first})
+        score, detail = sr.score_file("Исследование прав\nИванов\n2020", {}, parsed,
+                                      path="/tmp/Иванов.pdf")
+        self.assertGreaterEqual(score, 0.65)
+        self.assertEqual(detail["script"], "cyrillic")
+        self.assertEqual(detail["title_coverage"], 1.0)
+
+    def test_tier2_retrieval_terms_preserve_offsets(self):
+        terms = core_seg.retrieval_terms("Права требуют защиты.", "cyrillic")
+        self.assertTrue(terms)
+        self.assertTrue(all(item["start"] < item["end"] for item in terms))
+        self.assertEqual(terms[0]["kind"], "word")
+
+
+class CjkIndexTests(unittest.TestCase):
+    def test_jstage_fixture_returns_title_author_year(self):
+        fixture = """
+        <div><a href="/article/jpla/64/3/64_162/_article/-char/ja">Kopernio（コペルニオ）概要</a>
+        <span class="author">野村紀匡</span><span>2019</span></div>
+        """
+        result = cjk_indexes.search(
+            {"identity": {"title": "Kopernio 概要", "author": "野村紀匡", "year": "2019"}},
+            language="ja", adapters=["jstage"], fixture_dir=self._fixture("jstage.html", fixture))
+        self.assertEqual(result["status"], "searched")
+        self.assertEqual(result["adapters"][0]["outcome"], "returned")
+        self.assertEqual(result["candidates"][0]["source_index"], "jstage")
+        self.assertEqual(result["candidates"][0]["item"]["author"][0]["family"], "野村紀匡")
+        self.assertGreater(result["candidates"][0]["score"], 0)
+
+    def test_cinii_json_fixture_and_cjk_match(self):
+        fixture = json.dumps({"items": [{"title": "ゲーム産業の変容", "creator": ["山田太郎"],
+                                         "issued": "2020",
+                                         "identifier": "https://cir.nii.ac.jp/crid/1"}]},
+                             ensure_ascii=False)
+        record = {"identity": {"title": "ゲーム産業の変容", "author": "山田太郎", "year": "2020"}}
+        result = cjk_indexes.search(record, language="ja", adapters=["cinii"],
+                                    fixture_dir=self._fixture("cinii.json", fixture))
+        self.assertEqual(result["candidates"][0]["item"]["DOI"], "")
+        score, detail = er.match_item(record, result["candidates"][0]["item"], False)
+        self.assertGreaterEqual(score, 0.7)
+        self.assertTrue(detail["author"])
+        self.assertEqual(detail["title_coverage"], 1.0)
+
+    def test_kiss_and_riss_fixtures(self):
+        kiss = '<a href="https://kiss.kstudy.com/detail/1">한국 게임 산업 연구</a>'                '<span class="author">홍길동</span><span>2021</span>'
+        riss = '<a href="https://www.riss.kr/link?id=1">한국 게임 산업 연구</a>'                '<span class="author">홍길동</span><span>2021</span>'
+        record = {"identity": {"title": "한국 게임 산업 연구", "author": "홍길동", "year": "2021"}}
+        directory = self._fixture("kiss.html", kiss)
+        with open(os.path.join(directory, "riss.html"), "w", encoding="utf-8") as handle:
+            handle.write(riss)
+        result = cjk_indexes.search(record, language="ko", adapters=["kiss", "riss"],
+                                    fixture_dir=directory)
+        self.assertEqual(len(result["candidates"]), 2)
+        self.assertEqual({row["source_index"] for row in result["candidates"]},
+                         {"kiss", "riss"})
+
+    def test_chinese_has_no_index_adapter(self):
+        result = cjk_indexes.search({"identity": {"title": "中国游戏产业研究"}},
+                                    language="zh")
+        self.assertEqual(result["status"], "not_searched")
+        self.assertIn("CNKI", result["reason"] + " CNKI")
+
+    def test_no_live_probe_without_explicit_flag(self):
+        original = cjk_indexes.default_transport
+        cjk_indexes.default_transport = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("network called"))
+        try:
+            result = cjk_indexes.search({"identity": {"title": "ゲーム産業"}},
+                                        language="ja", adapters=["jstage"])
+        finally:
+            cjk_indexes.default_transport = original
+        self.assertEqual(result["status"], "not_searched")
+        self.assertEqual(result["adapters"][0]["outcome"], "not_searched")
+
+    def test_resolver_uses_cjk_index_fallback_when_crossref_is_empty(self):
+        item = cjk_indexes.item_for({"title": "ゲーム産業の変容", "author": "山田太郎",
+                                     "year": "2020", "url": "https://cir.nii.ac.jp/crid/1"},
+                                    "cinii")
+        original_fetch, original_search = er.fetch, cjk_indexes.search
+        er.fetch = lambda *args, **kwargs: {"message": {"items": []}}
+        cjk_indexes.search = lambda *args, **kwargs: {
+            "status": "searched", "candidates": [
+                {"source_index": "cinii", "score": 1.0, "item": item,
+                 "title": "ゲーム産業の変容", "url": "https://cir.nii.ac.jp/crid/1",
+                 "year": "2020"}]}
+        try:
+            record = {"identity": {"title": "ゲーム産業の変容", "author": "山田太郎",
+                                   "year": "2020", "kind": "article"},
+                      "work_kind": "article"}
+            result = ru.lookup(record, tempfile.mkdtemp(), {}, cjk=True)
+        finally:
+            er.fetch, cjk_indexes.search = original_fetch, original_search
+        self.assertEqual(result["provider"]["title"], "ゲーム産業の変容")
+        self.assertEqual(result["detail"]["via"], "cjk-index:cinii")
+        self.assertTrue(result["provider"]["authors"])
+
+    def _fixture(self, name, body):
+        directory = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(directory, ignore_errors=True))
+        with open(os.path.join(directory, name), "w", encoding="utf-8") as handle:
+            handle.write(body)
+        return directory
+
+
+class Tier2AcceptanceTests(unittest.TestCase):
+    def test_harness_reports_tier2_mechanics_without_text(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            html = root / "ru_gov.html"
+            body = "Права требуют правовой защиты, а государство обязано их обеспечивать."
+            raw = ('<html><head><meta charset="cp1251"><title>Исследование прав</title>'
+                   '</head><body><p>' + body + '</p></body></html>').encode("cp1251")
+            html.write_bytes(raw)
+            samples = {"samples": [{"key": "ru_gov", "language": "ru", "title": "Исследование прав",
+                                    "author": "Иванов", "venue": "2020",
+                                    "format": "HTML", "url": "",
+                                    "sha256": hashlib.sha256(raw).hexdigest()}]}
+            samples_path = root / "samples.json"
+            samples_path.write_text(json.dumps(samples, ensure_ascii=False), encoding="utf-8")
+            report_path = root / "report.json"
+            with redirect_stdout(io.StringIO()):
+                code = acc.main(["--samples", str(samples_path), "--source-dir", str(root),
+                                 "--out", str(report_path)])
+            self.assertEqual(code, 0)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            row = report["rows"][0]
+            self.assertEqual(row["language"], "cyrillic")
+            self.assertEqual(row["charset"], "cp1251")
+            self.assertGreater(row["segmentation_terms"], 0)
+            self.assertNotIn(body, report_path.read_text(encoding="utf-8"))
+
+
+class O1CitedOnlyTests(unittest.TestCase):
+    def test_uncited_reference_is_not_resolved(self):
+        record = {"citation_count": 0, "identity_status": "unresolved",
+                  "work_kind": "article",
+                  "identity": {"title": "An uncited reference title"}}
+        self.assertEqual(ru.skip_reason(record), "uncited")
+        self.assertEqual(ru.skip_reason(record, include_uncited=True), "")
+        self.assertTrue(sr.is_cited({"identity": {"title": "No count"}}))
+
+    def test_fetch_open_sources_skips_uncited_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = {"works": {
+                "cited": {"citation_count": 2, "identity": {"title": "Cited work"}},
+                "uncited": {"citation_count": 0, "identity": {"title": "Uncited work"}}}}
+            (root / "source_registry.json").write_text(json.dumps(registry), encoding="utf-8")
+            calls = []
+            original = fos.resolve
+            fos.resolve = lambda record: calls.append(record["identity"]["title"]) or {
+                "provider": "test", "text": "", "classification": "unavailable",
+                "limitation": "test"}
+            try:
+                result = fos.collect(str(root), dry_run=True)
+            finally:
+                fos.resolve = original
+            self.assertEqual(calls, ["Cited work"])
+            self.assertEqual(result["uncited_skipped"], 1)
+
+    def test_prepare_matched_extracts_uncited_supplied_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            supplied = root / "book.pdf"
+            supplied.write_bytes(b"%PDF-1.4\n")
+            registry = {"works": {"uncited": {
+                "citation_count": 0, "supplied_file": str(supplied),
+                "identity": {"title": "Uncited book"}}}}
+            (root / "source_registry.json").write_text(json.dumps(registry), encoding="utf-8")
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = pm.main(["--batch", str(root), "--dry-run"])
+            self.assertEqual(code, 0)
+            plan = json.loads(output.getvalue())
+            self.assertEqual(plan["files"], 1)
+            self.assertEqual(plan["to_prepare"], 1)
+
+
+class O1aUncitedScreenTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        (self.root / "_work" / "paper").mkdir(parents=True)
+        self.extraction = self.root / "_sources" / "r1" / "text.txt"
+        self.extraction.parent.mkdir(parents=True)
+        self.extraction.write_text(
+            "=== PDF p1 | printed p1 | native\nCommunity media policy shaped local broadcasting.\n",
+            encoding="utf-8")
+        self.works = {
+            "r1": {"source_key": "r1", "citation_count": 0,
+                   "identity": {"title": "Community media policy", "author": "Smith, J.",
+                                "year": "2020"},
+                   "extraction": str(self.extraction)},
+            "r2": {"source_key": "r2", "citation_count": 0,
+                   "identity": {"title": "Urban transport planning", "author": "Jones, A.",
+                                "year": "2019"}},
+            "cited": {"source_key": "cited", "citation_count": 3,
+                      "identity": {"title": "Community media policy", "author": "Smith, J.",
+                                   "year": "2020"}},
+        }
+        self.candidates = [
+            {"id": "U1", "paragraph_id": "P1", "outcome": "uncited",
+             "text": "Community media policy shaped local broadcasting.",
+             "signals": ["quote"]},
+            {"id": "U2", "paragraph_id": "P2", "outcome": "uncited",
+             "text": "Smith (2020) found that community media policy shaped broadcasting.",
+             "signals": ["fact", "name"]},
+            {"id": "U3", "paragraph_id": "P3", "outcome": "possible_continuation",
+             "text": "Community media policy still shapes broadcasting today.",
+             "signals": ["quote"]},
+        ]
+
+    def test_high_candidates_are_allowlisted_and_continuations_are_not(self):
+        screen = core_uncited.screen(self.candidates, self.works,
+                                     {"r1": {"text": "Community media policy shaped local broadcasting."}})
+        self.assertEqual(screen["screened_u"], 2)
+        self.assertIn("r1", screen["allowlist"])
+        first = next(row for row in screen["entries"] if row["u_id"] == "U1")
+        self.assertEqual(first["status"], "full_text_matched")
+        self.assertEqual(first["candidates"][0]["confidence"], "high")
+        self.assertNotIn("U3", [row["u_id"] for row in screen["entries"]])
+        self.assertNotIn("cited", screen["allowlist"])
+
+    def test_abstract_only_and_candidate_not_acquired_statuses(self):
+        works = {"r2": {"source_key": "r2", "citation_count": 0,
+                        "identity": {"title": "Urban transport planning", "author": "Jones, A.",
+                                     "year": "2019"}}}
+        candidate = [{"id": "U4", "outcome": "uncited",
+                      "text": "Jones (2019) analysed urban transport planning in a comparative study.",
+                      "signals": ["fact", "name"]}]
+        with_abstract = core_uncited.screen(candidate, works,
+                                            {"r2": {"text": "Urban transport planning."}})
+        self.assertEqual(with_abstract["entries"][0]["status"], "abstract_only")
+        without = core_uncited.screen(candidate, works, {})
+        self.assertEqual(without["entries"][0]["status"], "candidate_not_acquired")
+
+    def test_screen_stage_writes_artifact_and_allowlist(self):
+        (self.root / "source_registry.json").write_text(
+            json.dumps({"works": self.works}), encoding="utf-8")
+        (self.root / "_work" / "paper" / "candidates.json").write_text(
+            json.dumps({"uncited_candidates": self.candidates}), encoding="utf-8")
+        result = su.run(str(self.root), ["paper"])
+        self.assertEqual(result["papers"], 1)
+        artifact = json.loads((self.root / "_work" / "paper" / "uncited-screen.json").read_text(
+            encoding="utf-8"))
+        self.assertEqual(artifact["screened_u"], 2)
+        allow = json.loads((self.root / "_work" / "uncited-allowlist.json").read_text(
+            encoding="utf-8"))
+        self.assertIn("r1", allow)
+
+    def test_cited_source_match_is_labelled_and_never_a_judgment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = "Community media policy shaped local broadcasting."
+            path = root / "a.txt"
+            path.write_text(text, encoding="utf-8")
+            works = {"a": {"source_key": "a", "citation_count": 2,
+                           "identity": {"r_id": "R1", "title": "Community media policy",
+                                        "author": "Smith, J.", "year": "2020"},
+                           "extraction": str(path)},
+                     "b": {"source_key": "b", "citation_count": 1,
+                           "identity": {"r_id": "R2", "title": "Another work",
+                                        "author": "Jones, A.", "year": "2019"},
+                           "extraction": str(path)}}
+            candidate = [{"id": "U5", "outcome": "uncited",
+                          "text": text, "signals": ["quote"]}]
+            screen = core_uncited.screen(candidate, works)
+            entry = screen["entries"][0]
+            self.assertEqual(entry["cited_status"], "ambiguous_cited_match")
+            screen = core_uncited.screen(candidate, {"a": works["a"]})
+            entry = screen["entries"][0]
+            self.assertEqual(entry["cited_status"], "full_text_matched")
+            self.assertEqual(entry["label"], "uncited_use_of_cited_source")
+            self.assertTrue(entry["cited_candidates"][0]["evidence"]["text"])
+
+    def test_cited_match_can_be_misplaced_attribution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.txt"
+            text = "Community media policy shaped local broadcasting."
+            path.write_text(text, encoding="utf-8")
+            works = {"a": {"source_key": "a", "citation_count": 2,
+                           "identity": {"r_id": "R1", "title": "Community media policy",
+                                        "author": "Smith, J.", "year": "2020"},
+                           "extraction": str(path)},
+                     "b": {"source_key": "b", "citation_count": 1,
+                           "identity": {"r_id": "R2", "title": "Another work",
+                                        "author": "Jones, A.", "year": "2019"}}}
+            candidate = [{"id": "U6", "outcome": "uncited", "text": text,
+                          "signals": ["quote"], "citation_ids": ["X1"]}]
+            citations = [{"id": "X1", "likely_r_ids": ["R2"]}]
+            screen = core_uncited.screen(candidate, works, citations=citations)
+            self.assertEqual(screen["entries"][0]["label"],
+                             "misplaced_attribution_to_cited_source")
+
+    def test_model_rank_is_bounded_to_existing_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            screen = {"schema": core_uncited.VERSION, "entries": [
+                {"u_id": "U7", "model_review": []}],
+                "model_review": [{"u_id": "U7", "reason": "ambiguous",
+                                  "text": "A substantive uncited passage.",
+                                  "refs": [{"source_key": "r1", "title": "Candidate"}]}]}
+            (work / "uncited-screen.json").write_text(json.dumps(screen), encoding="utf-8")
+            emitted = sumodel.emit(str(root), "paper")
+            self.assertEqual(emitted["status"], "ready")
+            request = json.loads(Path(emitted["request"]).read_text(encoding="utf-8"))
+            response = {"paper": "paper", "decisions": [
+                {"u_id": "U7", "source_key": "r1", "confidence": "medium",
+                 "reason": "title and topic overlap"}]}
+            path = root / "response.json"
+            path.write_text(json.dumps(response), encoding="utf-8")
+            recorded = sumodel.record(str(root), "paper", str(path))
+            self.assertEqual(recorded["decisions"], 1)
+            allow = json.loads((root / "_work" / "uncited-allowlist.json").read_text(
+                encoding="utf-8"))
+            self.assertIn("r1", allow)
+            bad = {"paper": "paper", "decisions": [
+                {"u_id": "U7", "source_key": "r2", "confidence": "high",
+                 "reason": "invented"}]}
+            path.write_text(json.dumps(bad), encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                sumodel.record(str(root), "paper", str(path))
+
+    def test_allowlist_admits_an_uncited_source_to_o1(self):
+        record = {"citation_count": 0, "identity": {"title": "An uncited reference title"},
+                  "work_kind": "article"}
+        self.assertTrue(sr.is_acquirable(record, {"r1"}, "r1"))
+        self.assertEqual(ru.skip_reason(record, allowlist={"r1"}, key="r1"), "")
+        self.assertEqual(ru.skip_reason(record, allowlist=set(), key="r1"), "uncited")
+
+
+class O2SourceIndexTests(unittest.TestCase):
+    def test_index_is_content_addressed_and_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text_path = root / "_sources" / "s1" / "text.txt"
+            text_path.parent.mkdir(parents=True)
+            text = ("=== PDF p1 | printed p1 | native\n"
+                    "Community media policy shaped local broadcasting.\n\n"
+                    "The second paragraph discusses licensing and access.\n")
+            text_path.write_text(text, encoding="utf-8")
+            (text_path.parent / "pages.csv").write_text(
+                "pdf_page,printed_folio\n1,1\n", encoding="utf-8")
+            _, first = core_source_index.load_or_build(str(root), str(text_path))
+            self.assertEqual(first["version"], core_source_index.VERSION)
+            self.assertGreaterEqual(first["paragraph_count"], 2)
+            files = list((root / "_work" / "_indexes").glob("*.json"))
+            self.assertEqual(len(files), 1)
+            _, second = core_source_index.load_or_build(str(root), str(text_path))
+            self.assertEqual(second["text_sha256"], first["text_sha256"])
+            ranked = core_source_index.rank_paragraphs(
+                second, ["community", "media", "policy"])
+            self.assertTrue(ranked)
+            self.assertIn("community", " ".join(ranked[0][1]["tokens"]))
+
+    def test_paragraph_rescue_uses_the_persisted_index(self):
+        text = ("=== PDF p1 | printed p1 | native\nFirst paragraph about quotas.\n\n"
+                "Companies established themselves in Luxembourg.\n\n"
+                "Third paragraph about unrelated material.")
+        index = core_source_index.build(text, {})
+        hits = mt.paragraph_rescue(text, index["marks"], {},
+                                    ["companies", "established", "luxembourg"],
+                                    100, None, 1, [], index=index)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("Luxembourg", hits[0]["text"])
+
+    def test_changed_text_invalidates_the_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "text.txt"
+            path.write_text("=== PDF p1 | printed p1 | native\nFirst paragraph.\n",
+                            encoding="utf-8")
+            _, first = core_source_index.load_or_build(str(root), str(path))
+            path.write_text("=== PDF p1 | printed p1 | native\nChanged paragraph.\n",
+                            encoding="utf-8")
+            _, second = core_source_index.load_or_build(str(root), str(path))
+            self.assertNotEqual(first["text_sha256"], second["text_sha256"])
+            self.assertEqual(len(list((root / "_work" / "_indexes").glob("*.json"))), 2)
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):

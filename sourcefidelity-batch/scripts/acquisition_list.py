@@ -23,6 +23,7 @@ if _BOOTSTRAP_HERE not in _bootstrap_sys.path:
 import paper_index  # noqa: E402
 import pathlib
 import re
+import unicodedata
 import sys
 from collections import defaultdict
 
@@ -56,7 +57,8 @@ def worst(statuses):
 
 
 def slug(text):
-    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")
+    value = unicodedata.normalize("NFKC", text or "").casefold()
+    return re.sub(r"[^\w]+", "-", value, flags=re.UNICODE).strip("-")
 
 
 def surname_year(entry):
@@ -108,15 +110,22 @@ def discriminator(entry):
     if ids["isbn"]:
         return "i" + _short_digest(normalize_identifier(ids["isbn"]))
     title = reference_title(entry).casefold().replace("&", " and ")
-    return "t" + _short_digest(re.sub(r"[^a-z0-9]+", "", title))
+    normalised = re.sub(r"[^\w]+", "", title, flags=re.UNICODE)
+    return "t" + _short_digest(normalised)
 
 
 def key_from_entry(entry):
-    """Build a stable source_key from a reference-like string."""
+    """Build a stable source_key from a reference-like string, including CJK."""
     text = re.sub(r"[*_`]", "", entry or "").strip()
     text = text.lstrip("\"'([ ")
+    cjk = re.match(r"([\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]{1,8})[.\uff0c,]", text)
+    nonlatin = re.match(r"([\u0400-\u04ff\u0600-\u06ff\u0590-\u05ff\u0900-\u097f\u0e00-\u0e7f]{1,40})[.\uff0c,]", text)
     m = re.match(r"((?:[Dd]e|[Vv]an|[Vv]on|[Dd]el|[Dd]a|[Dd]i|[Ll]e|[Ll]a)\s+)?([A-Z][A-Za-z'\-]+)", text)
-    if m:
+    if cjk:
+        surname = cjk.group(1).casefold()
+    elif nonlatin:
+        surname = nonlatin.group(1).casefold()
+    elif m:
         surname = ((m.group(1) or "").strip() + " " + m.group(2)).strip().lower()
     else:
         surname = "unknown"
@@ -127,6 +136,9 @@ def key_from_entry(entry):
     if len(after) == 2:
         title = after[1].split(". ", 1)[0]
     words = [w for w in re.findall(r"[A-Za-z]{4,}", title)][:3]
+    if not words:
+        cjk_title = re.sub(r"[^\w]+", "", title, flags=re.UNICODE)[:12]
+        words = [cjk_title] if cjk_title else []
     base = slug("-".join([surname, year] + words)) or "unknown"
     return f"{base}-{discriminator(entry)}"
 
@@ -425,6 +437,15 @@ def main():
                 })
 
     grouped, merges = merge(works)
+    allow_path = root / "_work" / "uncited-allowlist.json"
+    try:
+        allowlist = set(json.loads(allow_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        allowlist = set()
+    uncited = [w for w in grouped
+               if int(w.get("citation_count") or 0) <= 0 and w["source_key"] not in allowlist]
+    grouped = [w for w in grouped
+               if int(w.get("citation_count") or 0) > 0 or w["source_key"] in allowlist]
     if registry_path.exists():
         try:
             payload = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -480,6 +501,7 @@ def main():
     lines = ["# Sources to acquire", "",
              f"**Batch:** `{root}`  ",
              f"**Works cited:** {len(grouped)}  ",
+             f"**Uncited references (not acquired):** {len(uncited)}  ",
              f"**Awaiting a copy:** {len(acquirable)}  ",
              f"**Unverifiable — confirm before acquiring:** {len(unverifiable)}  ",
              f"**Identity unresolved or conflicting:** {len(unresolved)}  ",

@@ -54,7 +54,7 @@ def choose(candidates):
     return sorted(candidates, key=rank)[0][0]
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
     ap.add_argument("--limit", type=int, default=0)
@@ -63,7 +63,7 @@ def main():
                     help="OCR page cap per file (default 80)")
     ap.add_argument("--allow-full-ocr", action="store_true",
                     help="remove the OCR cap; use only for a deliberate full scan")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     ocr_limit = 0 if args.allow_full_ocr else args.max_ocr_pages
     if not args.allow_full_ocr and ocr_limit <= 0:
         ap.error("--max-ocr-pages must be positive unless --allow-full-ocr is set")
@@ -71,7 +71,6 @@ def main():
     registry = json.load(open(os.path.join(root, "source_registry.json"),
                               encoding="utf-8")).get("works", {})
     existing = sr.extraction_index(root)
-
     groups = {}
     for key, record in registry.items():
         path = record.get("supplied_file") or ""

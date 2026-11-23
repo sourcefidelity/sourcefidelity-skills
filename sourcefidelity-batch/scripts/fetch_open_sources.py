@@ -116,8 +116,18 @@ def resolve(record):
 
 def collect(root, limit=0, dry_run=False):
     works = registry_works(root)
-    index, found, limited = {}, 0, 0
+    allowlist_path = os.path.join(root, "_work", "uncited-allowlist.json")
+    allowlist = set()
+    try:
+        allowlist = set(load(allowlist_path, {}))
+    except (TypeError, ValueError):
+        allowlist = set()
+    index, found, limited, uncited = {}, 0, 0, 0
     for key, record in works.items():
+        if ("citation_count" in record and not int(record.get("citation_count") or 0)
+                and key not in allowlist):
+            uncited += 1
+            continue
         if limit and found + limited >= limit:
             break
         if record.get("supplied_file") or record.get("extraction"):
@@ -143,7 +153,8 @@ def collect(root, limit=0, dry_run=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(index, handle, ensure_ascii=False, indent=1)
-    return {"works": len(works), "open_text": found, "limited": limited, "dry_run": dry_run}
+    return {"works": len(works), "open_text": found, "limited": limited,
+            "uncited_skipped": uncited, "dry_run": dry_run}
 
 
 def main():
