@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Structural inventory bootstrap.** `bootstrap_inventory.py` creates
+  citations, references and uncited entries from candidates without making a
+  judgment; `one_paper --bootstrap-inventory --bounded` can then emit claim
+  packets. 602 tests.
+
 - **Host-search acquisition ingestion.** `search_acquire.py` fetches candidate
   URLs, verifies title/author/year from the fetched HTML/PDF content, saves only
   verified copies under `_work/search-acquired/`, and records rejects. Wired

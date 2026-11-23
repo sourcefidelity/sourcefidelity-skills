@@ -136,9 +136,15 @@ def main(argv=None):
                     help="host web-search results to verify/acquire after prep")
     ap.add_argument("--bounded", action="store_true",
                     help="emit bounded claim requests for an existing prepared root")
+    ap.add_argument("--bootstrap-inventory", action="store_true",
+                    help="create a structural inventory before --bounded")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
+    if args.bootstrap_inventory:
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
+                        "--batch", args.out, "--paper", "paper"], check=True)
+        args.inventory = os.path.join(args.out, "_work", "paper", "inventory.json")
     if args.bounded:
         if not args.inventory:
             ap.error("--bounded requires --inventory")
