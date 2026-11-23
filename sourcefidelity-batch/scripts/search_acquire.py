@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import fetch_abstracts as abstract_fetch  # noqa: E402
 import public_fetch  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
+from sourcefidelity_core import web_page  # noqa: E402
 
 
 def load(path, default=None):
@@ -148,15 +149,16 @@ def run(root, results_path):
                 completeness = validation["completeness"]
             else:
                 parsed = _html_candidate(body, candidate)
-                validation = source_validator.validate_html(body, identity)
+                validation = web_page.validate(body, identity)
                 if validation["identity_confidence"] == "rejected":
                     rejected.append({"source_key": key, "url": url,
                                      "reason": "identity_not_verified"})
                     continue
                 suffix = "html"
-                complete = False
-                quality = "unassessed_html"
-                completeness = "html_identity_only"
+                complete = bool(validation["accept"])
+                quality = "html" if complete else "unassessed_html"
+                completeness = ("complete_html" if complete
+                                else "html_identity_only")
             target = os.path.join(out_dir, key + "." + suffix)
             with open(target, "wb") as handle:
                 handle.write(body)

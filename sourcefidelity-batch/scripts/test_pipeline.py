@@ -93,6 +93,7 @@ from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
+from sourcefidelity_core import web_page  # noqa: E402
 import abstract_scope as abstract_cli  # noqa: E402
 import fetch_abstracts as abstract_fetch  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
@@ -7894,6 +7895,37 @@ class SingleBoundedTests(unittest.TestCase):
             plan = json.loads(Path(path).read_text(encoding="utf-8"))
         self.assertEqual([row["occurrence_id"] for row in plan], ["C1", "C2"])
         self.assertEqual(plan[0]["end"], len("First claim."))
+
+
+class WebPageValidatorTests(unittest.TestCase):
+    def _page(self, extra="", words=1200):
+        body = " ".join(["article body content"] * words)
+        return ("<html><head><meta name='citation_title' content='A Distinctive Work'>"
+                "<meta name='citation_author' content='Smith'>"
+                "<meta name='citation_publication_date' content='2024-01-01'>"
+                "</head><body><h1>A Distinctive Work</h1><p>" + body + "</p>"
+                + extra + "</body></html>").encode()
+
+    def test_complete_html_passes_identity_and_completeness(self):
+        result = web_page.validate(self._page(), {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertTrue(result["accept"])
+        self.assertEqual(result["identity_confidence"], "high")
+        self.assertEqual(result["completeness"], "complete")
+
+    def test_cutoff_and_pagination_are_incomplete(self):
+        cutoff = web_page.validate(self._page("Sign in to continue reading"), {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertFalse(cutoff["accept"])
+        paginated = web_page.validate(self._page("<link rel='next' href='/2'>"), {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertFalse(paginated["accept"])
+
+    def test_material_title_conflict_is_rejected(self):
+        body = self._page().replace(b"A Distinctive Work", b"An Unrelated Subject")
+        result = web_page.validate(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertEqual(result["identity_confidence"], "rejected")
 
 
 class SourceValidatorTests(unittest.TestCase):
