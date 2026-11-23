@@ -7,13 +7,13 @@
 
 | Item | Value |
 |---|---|
-| Branch | `codex/sourcefidelity-dev`; R44 recovery changes uncommitted; stable `main` is `v1.1.2` |
+| Branch | `codex/sourcefidelity-dev`; working tree clean; stable `main` is `v1.1.2` |
 | Source version | `1.1.2` (`VERSION`); dev branch, no new release tag |
 | Scope | APA 7 only; 15,000-word target; no glossary, other styles or chapter topology |
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 567 pipeline tests. Style and PDF suites passed. |
+| Test suites | 577 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 567 passed |
+| Pipeline regressions | `test_pipeline.py` | 577 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
@@ -71,7 +71,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O2 source index | `source_index.py`; make_task; tests | 570 tests. One content-addressed paragraph index per extraction, keyed by text and pages.csv hashes; `make_task` reuses it across citations and papers; BM25 rescue reads persisted paragraph tokens and offsets, not the source text. |
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
-| R34 preflight | tests, docs, parity, installer | 567 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
+| R34 preflight | tests, docs, parity, installer | 577 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
 | R37 checkpoint/resume | `checkpoint.py`; 160-claim / 15k+ word fixture | 160 total; 10 records resumed to 10/150; `--budget 5` wrote a `partial` run status with five next IDs; all 160 completed; every packet ≤4,000 bytes. Full 150+ model run and real paper remain. |
 | R36/R39 long-form | 18k words, 140 citations; 140-claim model run; TV regression | 29 Supports, 111 Qualified, 0 Not Judged; checkpoint 140/0; render 0.269 s; 20.38M tokens, $0.92 off-peak, 41 min. TV gate: C1/C2/C5/C9/C15/C18 under-flagged, C16/C17 confirmed, no over-flag at B; judgments unchanged. Real long paper open. |
 | R35 bounded model rescue | `rescue_select.py` `emit`/`record`/`apply`; tests | On failure, numbers up to 30 candidates, one bounded model selects 0-3 IDs; validated rescue windows are prioritized. C19 selected the Luxembourg paragraph and judged Supports. |
