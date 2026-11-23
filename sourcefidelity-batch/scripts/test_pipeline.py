@@ -90,6 +90,9 @@ from sourcefidelity_core import reference_language as core_reference_language  #
 from sourcefidelity_core import source_index as core_source_index  # noqa: E402
 from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
+from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
+import abstract_scope as abstract_cli  # noqa: E402
+import fetch_abstracts as abstract_fetch  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
 from sourcefidelity_core import script_detect as core_script  # noqa: E402
 from sourcefidelity_core import segmentation as core_seg  # noqa: E402
@@ -7800,6 +7803,115 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class R43AbstractScopeTests(unittest.TestCase):
+    def _packet(self, confidence="high"):
+        packet = abstract_core.packet_for(
+            "s1", "This study examines the effects of a new chemistry curriculum "
+                  "on undergraduate laboratory anxiety.",
+            [{"claim_id": "C1.1", "occurrence_id": "C1",
+              "text": "The study finds that video games improve historical empathy."}])
+        response = {"packet_sha256": abstract_core.digest(packet), "assessments": [{
+            "claim_id": "C1.1", "category": "different_subject",
+            "confidence": confidence,
+            "claim_span": "video games improve historical empathy",
+            "abstract_span": "new chemistry curriculum",
+            "rationale": "The abstract studies chemistry education, not historical empathy from games."}]}
+        return packet, response
+
+    def test_high_confidence_explicit_mismatch_is_accepted(self):
+        packet, response = self._packet()
+        rows = abstract_core.accepted(packet, response)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["category"], "different_subject")
+        self.assertEqual(rows[0]["claim_sha256"],
+                         packet["claims"][0]["sha256"])
+
+    def test_low_confidence_and_omission_produce_no_marks(self):
+        packet, response = self._packet("low")
+        self.assertEqual(abstract_core.accepted(packet, response), [])
+        omitted = {"packet_sha256": abstract_core.digest(packet), "assessments": []}
+        self.assertEqual(abstract_core.accepted(packet, omitted), [])
+
+    def test_bad_span_or_hash_fails_closed(self):
+        packet, response = self._packet()
+        response["assessments"][0]["abstract_span"] = "not in the abstract"
+        with self.assertRaises(ValueError):
+            abstract_core.accepted(packet, response)
+        response = self._packet()[1]
+        response["packet_sha256"] = "0" * 64
+        with self.assertRaises(ValueError):
+            abstract_core.accepted(packet, response)
+
+    def test_abstract_over_budget_is_not_called(self):
+        with self.assertRaises(ValueError):
+            abstract_core.packet_for("s1", "x" * (abstract_core.MAX_ABSTRACT_CHARS + 1),
+                                     [{"claim_id": "C1.1", "occurrence_id": "C1",
+                                       "text": "A claim."}])
+
+
+class R43IdentityTests(unittest.TestCase):
+    def test_identity_requires_title_author_and_year(self):
+        identity = {"title": "Different Selves in Cross-Media Narratives",
+                    "author": "Zhou, W.", "year": "2025",
+                    "container_title": "Literature"}
+        good = {"title": "Different Selves in Cross-Media Narratives",
+                "authors": ["Zhou"], "year": 2025, "container": "Literature"}
+        self.assertTrue(abstract_fetch.identity_agrees(identity, good))
+        bad_author = {**good, "authors": ["Smith"]}
+        self.assertFalse(abstract_fetch.identity_agrees(identity, bad_author))
+        bad_year = {**good, "year": 2024}
+        self.assertFalse(abstract_fetch.identity_agrees(identity, bad_year))
+        bad_container = {"title": good["title"], "authors": ["Zhou"], "year": 2025,
+                         "container": "Another Journal"}
+        self.assertFalse(abstract_fetch.identity_agrees(
+            identity, bad_container, "possible_match"))
+
+
+class R43PipelineTests(unittest.TestCase):
+    def test_prepare_emit_record_attach(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            source = {"source_key": "s1", "identity_status": "supplied_confirmed",
+                      "work_kind": "article", "extraction": ""}
+            (work / "task.json").write_text(json.dumps({
+                "sources": {"R1": source},
+                "candidates": {"citations": [{"id": "X1"}]},
+            }), encoding="utf-8")
+            statement = "The study finds that games improve empathy."
+            (work / "inventory.json").write_text(json.dumps({
+                "occurrences": [{"id": "C1", "candidate_id": "X1",
+                                 "paragraph_id": "P1", "marker": "(Smith, 2024)",
+                                 "statement": statement, "cited_r_ids": ["R1"]}],
+            }), encoding="utf-8")
+            (work / "claims.json").write_text(json.dumps([{
+                "occurrence_id": "C1", "start": 0, "end": len(statement),
+                "kind": "claim"}]), encoding="utf-8")
+            abstract = "This study examines chemistry curriculum effects on laboratory anxiety."
+            (root / "_work" / "abstracts.json").write_text(json.dumps({"s1": {
+                "text": abstract, "provider": "test", "identity_sha256": "idhash",
+                "truncated": False}}), encoding="utf-8")
+            prepared = abstract_cli.prepare(str(root), "P1")
+            self.assertEqual(prepared["calls"], 1)
+            call = abstract_cli.calls_of(str(root), "P1")[0]
+            packet = call["packet"]
+            response = {"packet_sha256": abstract_core.digest(packet), "assessments": [{
+                "claim_id": "C1.1", "category": "different_subject",
+                "confidence": "high", "claim_span": "games improve empathy",
+                "abstract_span": "chemistry curriculum",
+                "rationale": "The abstract studies chemistry, not games and empathy."}]}
+            response_path = root / "response.json"
+            response_path.write_text(json.dumps(response), encoding="utf-8")
+            recorded = abstract_cli.record(str(root), "P1", call["call_id"], response)
+            self.assertEqual(recorded["accepted"], 1)
+            attached = abstract_cli.attach(str(root), "P1")
+            self.assertEqual(attached["marks"], 1)
+            marks = json.loads((work / "abstract-attention.json").read_text())["marks"]
+            self.assertEqual(marks[0]["source_key"], "s1")
+            self.assertEqual(marks[0]["confidence"], "high")
 
 
 class O3CacheTests(unittest.TestCase):

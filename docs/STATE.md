@@ -13,7 +13,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 588 pipeline tests. Style and PDF suites passed. |
+| Test suites | 594 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 588 passed |
+| Pipeline regressions | `test_pipeline.py` | 594 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
@@ -57,7 +57,6 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R40-R42 batch integrity | reappraisal sync, extraction gate and source coverage | P240958 repair 3/8/1/1 and parity clean; P240914/P241006/P241028 recovery; batch coverage 191 works (21 identity, 17 full text/supplied, 17 blocked, 174 missing); 486 tests. |
 | R44 full-text recovery | `test_pipeline.py`; real batch queue/record; apply in a findings-consistent copy; batch report | 510 tests pass. Queued 21 of 23 full-text-unjudged occurrences; two were unbound. Recorded P240958 C9 Not Judged (`no_relevant_full_text`); P241004 C1 Qualified, C5 Not Judged (`no_relevant_full_text`), C12 Qualified. Apply added recovery windows, rerendered and kept pre-recovery copies on a findings-consistent copy; the original batch was refused because findings and summary disagree. Report totals: 21 unjudged, 21 queued, 2 judged, 2 no relevant, 17 pending. |
 | R45 reading gate | `reading_gate.py`; shared `reading_gate`; TV fixture; `render_review.py --require-gate` | 510 tests pass. Gate covered all 20 TV occurrences: C1 A+B, C2 B, C5 B, C9 B, C15 A+B, C16 B, C17 B, C18 A+B; 12 occurrences with findings, 15 findings (A7/B8), 2 pass, 5 declined and 1 inconclusive with reasons. Apply added only new A/B issues, preserved existing C16/C17 findings, rerendered and kept pre-gate copies. |
-| R45 comparison | `reading_gate.py compare` against the prior TV checks | 9 confirmed, 0 current missed, 5 current-new, 0 both absent. Disagreements are classified, not scored. |
 | R44 packet and regression checks | `FullTextRecoveryTests`; synthetic batch | Page-range first, rare-term ranking, neighbours, passage/byte caps, provenance, no-relevant recording, apply refusal and unchanged normal packets pass. |
 | R47a Unicode/script foundation | generated CJK fixtures; PDF quality suite; test suites | 524 tests. Native CJK is no longer OCR'd; script-aware gate; OCR routes chi_sim+chi_tra/jpn/kor and reports missing packs; HTML charset fallback (GBK/Big5/Shift-JIS/EUC-KR); shared zh/ja/ko segmentation. No English regression. |
 | R47b CJK identity/retrieval | `acceptance_cjk.py`; real samples; one-claim model checks | 6/7 real samples (Korean government page hash changed); identity 1.0 on zh/ja/ko; three English→CJK model Supports with gloss; same-language Chinese Not Judged; query translation, gloss and CJK gate tests; 532 tests. |
@@ -70,10 +69,11 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O2 source index | `source_index.py`; make_task; tests | 570 tests. One content-addressed paragraph index per extraction, keyed by text and pages.csv hashes; `make_task` reuses it across citations and papers; BM25 rescue reads persisted paragraph tokens and offsets, not the source text. |
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
+| R43 abstract-only attention | `fetch_abstracts.py`; `abstract_scope.py`; core tests | 594 tests. Identity-gated provider/landing abstracts; one bounded scope request per source/chunk; high-confidence explicit different-subject or stated-scope marks only; no Supports/Contradicts and no claim-record change. Real model acceptance open. |
 | R46 O7 metrics | `optimization_metrics.py`; text-free fixture; R37 metrics | 588 tests. Counts stage/acquire time, claims, judgments, reasons, retries, sources, windows/index/response-cache reuse and optional token usage; no paper/source text. |
 | R46 O6 parallel pipeline | `parallel_pipeline.py`; bounded executor/retry tests | 587 tests. Papers run through task→route→screen with bounded overlap; claims are emitted only for checkpoint-pending packets and completed claims are skipped. |
 | R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |
-| R34 preflight | tests, docs, parity, installer | 588 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. R37 settled; R39 source-limited. Release bump/tag/publish pending. |
+| R34 preflight | tests, docs, parity, installer | 594 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. R37 settled; R39 source-limited. Release bump/tag/publish pending. |
 | R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
 | R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |

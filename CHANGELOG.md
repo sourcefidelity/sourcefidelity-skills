@@ -42,6 +42,13 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Abstract-only topical attention (R43).** Identity-gated abstracts are
+  fetched from OpenAlex, Crossref, Semantic Scholar or a DOI landing page and
+  checked by one bounded scope request per source/chunk. Only high-confidence,
+  explicit different-subject or incompatible-stated-scope results become
+  report-only marks; omission, low confidence, truncation and span/hash faults
+  produce nothing. 594 tests pass.
+
 - **Text-free optimization metrics (R46 O7).** `optimization_metrics.py`
   records stage, acquisition, claim, judgment, retry, source, window and cache
   counts without paper or source text; token usage is included when a

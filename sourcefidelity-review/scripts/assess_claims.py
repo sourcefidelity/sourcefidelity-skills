@@ -250,6 +250,12 @@ def assemble(work, paper_id, task, inventory, prepared, metadata):
         source = task.get("sources", {}).get(ref["id"], {})
         if source.get("source_key"):
             ref["source_key"] = source["source_key"]
+    try:
+        attention = load(Path(work) / "abstract-attention.json")
+    except (OSError, ValueError):
+        attention = {}
+    if attention.get("marks"):
+        findings["abstract_attention"] = attention["marks"]
     findings["status"] = ("partial" if any(not rows or any(row[0] == "Not Judged" for row in rows)
                                             for rows in results.values())
                           else findings.get("status", "complete"))

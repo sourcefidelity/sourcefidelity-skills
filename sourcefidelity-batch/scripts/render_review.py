@@ -304,6 +304,8 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     lines.append(f"References: {len(findings.get('references', []))} entries. "
                  f"Works discussed: {len(findings.get('works', []))}.")
     lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
+    if findings.get("abstract_attention"):
+        lines.append(f"Abstract-only topical attention: {len(findings['abstract_attention'])}.")
     link_scope = hyperlink_scope_lines(summary)
     if link_scope:
         lines.extend(link_scope)
@@ -355,6 +357,23 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
                 lines.append(f"**{label.replace('_', ' ').title()}:** {note}")
         if occ.get("note"):
             lines.append(f"**Note:** {occ['note']}")
+        lines.append("")
+
+    attention = findings.get("abstract_attention") or []
+    if attention:
+        lines.append("## 2b. Abstract-only topical attention")
+        lines.append("")
+        lines.append("These are report-only scope signals. The abstract is never evidence and "
+                     "does not change any claim judgment.")
+        lines.append("")
+        for mark in attention:
+            claim = mark.get("claim_span", "")
+            abstract = mark.get("abstract_span", "")
+            lines.append(
+                f"- **{mark.get('occurrence_id', '')} / {mark.get('claim_id', '')} — "
+                f"Abstract-only – Possible Topical Mismatch** "
+                f"({mark.get('category', '')}). Claim: \"{claim}\"; abstract: \"{abstract}\". "
+                f"{mark.get('rationale', '')}")
         lines.append("")
 
     lines.append("## 3. Bibliography review, in submitted order")
@@ -525,6 +544,7 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
             "citation_findings": len(findings.get("summary", {}).get("category_b_citation", []) or []),
             "uncited_passages": len(findings.get("uncited", [])),
         },
+        "abstract_attention": len(findings.get("abstract_attention", []) or []),
         "sources": list(by_key.values()),
         "misrepresented_sources": misrepresented,
         "nonexistent_sources": nonexistent,
@@ -588,6 +608,13 @@ def render_ledger(paper, findings, occ_counts):
     for item in findings.get("uncited", []):
         lines.append(f"| {item.get('id','')} | {cell(item.get('locator'), 40)} | "
                      f"{cell(item.get('statement'))} | {cell(item.get('source_status'), 80)} | B |")
+    lines += ["", "## 4b. Abstract-only topical attention", "",
+              "| C | Claim ID | Source | Category | Confidence | Rationale |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for mark in findings.get("abstract_attention", []) or []:
+        lines.append(f"| {cell(mark.get('occurrence_id'), 20)} | {cell(mark.get('claim_id'), 20)} | "
+                     f"{cell(mark.get('source_key'), 80)} | {cell(mark.get('category'), 40)} | "
+                     f"{cell(mark.get('confidence'), 10)} | {cell(mark.get('rationale'))} |")
     lines += ["", "## 5. Pending items", ""]
     pending = findings.get("pending", []) or []
     if pending:
