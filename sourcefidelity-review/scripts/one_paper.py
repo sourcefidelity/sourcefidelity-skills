@@ -163,6 +163,8 @@ def main(argv=None):
                     help="record host-model responses for bounded requests")
     ap.add_argument("--finalize", action="store_true",
                     help="render claim records and the final review")
+    ap.add_argument("--gate", action="store_true",
+                    help="run/apply the reading gate before rendering")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
@@ -196,11 +198,31 @@ def main(argv=None):
         if render.returncode:
             print(render.stderr or render.stdout, file=sys.stderr)
             return render.returncode
+        claim_findings = os.path.join(args.out, "_work", "paper", "claim-findings.json")
+        paper_dir = os.path.join(args.out, "paper")
+        os.makedirs(paper_dir, exist_ok=True)
+        findings_path = os.path.join(paper_dir, "findings.json")
+        with open(claim_findings, "rb") as source, open(findings_path, "wb") as target:
+            target.write(source.read())
+        gate_args = []
+        if args.gate:
+            gate = os.path.join(BATCH, "reading_gate.py")
+            run = subprocess.run([sys.executable, "-I", gate, "run", "--batch", args.out,
+                                  "--paper", "paper"], capture_output=True, text=True)
+            if run.returncode:
+                print(run.stderr or run.stdout, file=sys.stderr)
+                return run.returncode
+            applied = subprocess.run([sys.executable, "-I", gate, "apply", "--batch",
+                                      args.out, "--paper", "paper"],
+                                     capture_output=True, text=True)
+            if applied.returncode:
+                print(applied.stderr or applied.stdout, file=sys.stderr)
+                return applied.returncode
+            gate_args = ["--require-gate"]
         return subprocess.run([sys.executable, "-I", RENDER, "--batch", args.out,
                                "--paper", "paper", "--inventory", inventory,
-                               "--findings", os.path.join(args.out, "_work", "paper",
-                                                          "claim-findings.json"),
-                               "--strict-inventory"]).returncode
+                               "--findings", findings_path,
+                               "--strict-inventory"] + gate_args).returncode
     if args.collect_bounded:
         if not args.inventory:
             ap.error("--collect-bounded requires --inventory")

@@ -46,6 +46,10 @@
   preparation and acquisition before inventory/route/bounded stages; the
   pipeline no longer runs against an unprepared root. 603 tests.
 
+- **Bounded finalize gate path.** `one_paper --finalize --gate` copies
+  `claim-findings.json` to `paper/findings.json`, runs/applies the reading gate,
+  and renders with `--require-gate`. 603 tests.
+
 - **Finalize path for bounded single reviews.** `one_paper --finalize` renders
   claim records and the final review from a prepared inventory/claims root;
   missing records remain Not Judged. 603 tests.
