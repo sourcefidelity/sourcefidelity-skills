@@ -7929,6 +7929,15 @@ class SourceValidatorTests(unittest.TestCase):
         self.assertFalse(result["accept"])
         self.assertTrue(result["doi_conflict"])
 
+    def test_isbn_conflict_is_rejected(self):
+        body = self._pdf("A Distinctive Work by Smith 2024. ISBN 978-1-4028-9462-6 " +
+                         "Body. " * 300)
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024",
+            "isbn": "9780306406157"})
+        self.assertFalse(result["accept"])
+        self.assertTrue(result["isbn_conflict"])
+
     def test_ranking_prefers_pdf_and_official_host(self):
         ranked = source_validator.rank_candidates([
             {"url": "https://vlex.com/landing", "title": "A Distinctive Work"},

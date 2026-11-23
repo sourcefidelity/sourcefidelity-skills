@@ -13,6 +13,8 @@ VERSION = "source-validation-v1"
 _BAD_PAGE = re.compile(r"\b(table of contents|search results|sign in|log in|access denied|"
                        r"cookie settings|subscription required)\b", re.I)
 _DOI = re.compile(r"10\.\d{4,9}/[^\s\"<>]+", re.I)
+_ISBN = re.compile(r"\b(?:97[89][\d -]{10,17}|\d{9}[\dXx])\b")
+_UNSAFE = re.compile(rb"/(?:JavaScript|JS|Launch|EmbeddedFile)\b")
 
 
 def _norm(value):
@@ -42,6 +44,8 @@ def validate_pdf(content, expected):
     """Validate a retrieved PDF; never accept a scan-only or listing page."""
     if not bytes(content).startswith(b"%PDF"):
         return _result(False, "rejected", "uncertain", "skipped", "not a PDF")
+    if _UNSAFE.search(bytes(content)):
+        return _result(False, "rejected", "uncertain", "skipped", "unsafe PDF feature")
     try:
         import pymupdf
         with pymupdf.open(stream=content, filetype="pdf") as pdf:
@@ -52,6 +56,7 @@ def validate_pdf(content, expected):
     if not pages:
         return _result(False, "rejected", "empty", "unreadable", "no pages")
     front = "\n".join(pages[:3])[:24000]
+    back = "\n".join(pages[-2:]) if len(pages) > 1 else pages[-1]
     words = sum(len(page.split()) for page in pages)
     last_words = len(pages[-1].split())
     quality = "pure_scan" if words < 50 else "scan_ocr" if words < 500 else "digital"
@@ -68,12 +73,18 @@ def validate_pdf(content, expected):
     title_tokens = [word for word in _norm(title).split() if len(word) > 3]
     title_match = (bool(title_tokens) and
                    sum(word in front_norm for word in title_tokens) >= max(2, len(title_tokens) // 2))
+    back_matter = bool(re.search(r"\b(references|bibliography|works cited|notes)\b",
+                                 back, re.I))
     author_match = not author or author in front_norm
     year_match = not year or year in front
     doi = str(expected.get("doi") or "").replace("https://doi.org/", "").strip()
     found_dois = {item.rstrip(".,;)").casefold() for item in _DOI.findall(front)}
     doi_conflict = bool(doi and found_dois and doi.casefold() not in found_dois)
     doi_match = bool(doi and doi.casefold() in found_dois)
+    isbn = re.sub(r"[^0-9Xx]", "", str(expected.get("isbn") or "")).upper()
+    found_isbns = {re.sub(r"[^0-9Xx]", "", item).upper() for item in _ISBN.findall(front)}
+    isbn_conflict = bool(isbn and found_isbns and isbn not in found_isbns
+                         and len(found_isbns - {""}) >= 1)
     meta_title = str(metadata.get("title") or "")
     meta_ratio = _ratio(title, meta_title)
     identity = ("high" if not doi_conflict and (doi_match or (title_match and author_match and year_match))
@@ -83,12 +94,19 @@ def validate_pdf(content, expected):
         return _result(False, "rejected", completeness, quality,
                        "DOI conflict in front matter", page_count=len(pages),
                        observed_identity={"doi": sorted(found_dois)}, doi_conflict=True)
+    if isbn_conflict:
+        return _result(False, "rejected", completeness, quality,
+                       "ISBN conflict in front matter", page_count=len(pages),
+                       observed_identity={"isbn": sorted(found_isbns)},
+                       isbn_conflict=True)
     accept = identity == "high" and complete and quality != "pure_scan"
     return _result(accept, identity, completeness, quality,
                    "accepted" if accept else "identity/completeness/quality gate",
                    page_count=len(pages), text_words=words,
-                   observed_identity={"title": meta_title, "doi": sorted(found_dois)},
-                   doi_match=doi_match, doi_conflict=doi_conflict)
+                   observed_identity={"title": meta_title, "doi": sorted(found_dois),
+                                      "isbn": sorted(found_isbns)},
+                   doi_match=doi_match, doi_conflict=doi_conflict,
+                   isbn_conflict=isbn_conflict, back_matter=back_matter)
 
 
 def validate_html(body, expected):
