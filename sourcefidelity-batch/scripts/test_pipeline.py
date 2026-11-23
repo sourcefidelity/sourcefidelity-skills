@@ -107,6 +107,7 @@ import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
+import search_acquire as search_acquire_cli  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -118,6 +119,7 @@ import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
+import search_acquire as search_acquire_cli  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
@@ -7806,6 +7808,32 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class SearchAcquireTests(unittest.TestCase):
+    def test_only_identity_verified_search_copy_is_saved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_work").mkdir()
+            (root / "source_registry.json").write_text(json.dumps({"works": {
+                "s1": {"identity_status": "unresolved",
+                       "identity": {"title": "A Distinctive Work", "author": "Smith, A",
+                                    "year": "2024"}},
+            }}), encoding="utf-8")
+            results = root / "results.json"
+            results.write_text(json.dumps({"s1": [{"url": "https://example.org/a",
+                                                   "title": "A Distinctive Work",
+                                                   "authors": ["Smith"], "year": "2024"}]}),
+                               encoding="utf-8")
+            body = (b'<html><head><meta name="citation_title" content="A Distinctive Work">'
+                    b'<meta name="citation_author" content="Smith">'
+                    b'<meta name="citation_publication_date" content="2024">'
+                    b'</head><body>A Distinctive Work by Smith</body></html>')
+            with mock.patch.object(search_acquire_cli, "_fetch",
+                                   return_value=(200, "https://example.org/a", "text/html", body)):
+                manifest = search_acquire_cli.run(str(root), str(results))
+        self.assertEqual(manifest["verified_count"], 1)
+        self.assertEqual(manifest["rejected_count"], 0)
 
 
 class SearchPlanTests(unittest.TestCase):

@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Host-search acquisition ingestion.** `search_acquire.py` fetches candidate
+  URLs, verifies title/author/year from the fetched HTML/PDF content, saves only
+  verified copies under `_work/search-acquired/`, and records rejects. Wired
+  to `one_paper --search-results`. 602 tests.
+
 - **Single-paper acquisition hooks and reappraisal window reuse.** `one_paper
   --acquire` runs provider acquisition and rebuilds windows; `--search-plan`
   writes the cited unacquired search plan. Reappraisal windows now use the
