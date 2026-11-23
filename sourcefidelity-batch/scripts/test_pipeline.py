@@ -7962,6 +7962,26 @@ class SourceValidatorTests(unittest.TestCase):
         self.assertFalse(result["accept"])
         self.assertTrue(result["isbn_conflict"])
 
+    def test_source_kind_conflict_is_rejected(self):
+        body = self._pdf("Journal Volume 1 Issue 2. A Distinctive Work by Smith 2024. " +
+                         "Body. " * 300)
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024",
+            "kind": "book"})
+        self.assertFalse(result["accept"])
+        self.assertTrue(result["source_kind_verdict"] in ("incompatible", "compatible"))
+
+    def test_ocr_derived_text_requires_identity_and_completeness(self):
+        result = source_validator.validate_text(
+            "A Distinctive Work by Smith 2024. " + "Body. " * 300,
+            {"title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertTrue(result["accept"])
+        incomplete = source_validator.validate_text(
+            "A Distinctive Work by Smith 2024.", {
+                "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"},
+            complete=False)
+        self.assertFalse(incomplete["accept"])
+
     def test_ranking_prefers_pdf_and_official_host(self):
         ranked = source_validator.rank_candidates([
             {"url": "https://vlex.com/landing", "title": "A Distinctive Work"},

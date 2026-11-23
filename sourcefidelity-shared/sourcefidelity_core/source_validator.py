@@ -78,6 +78,17 @@ def validate_pdf(content, expected):
     quality = "pure_scan" if words < 50 else "scan_ocr" if words < 500 else "digital"
     complete = len(pages) >= 2 and words >= 500 and last_words >= 20
     completeness = "complete" if complete else "incomplete_or_truncated"
+    expected_kind = _norm(expected.get("kind"))
+    kind_verdict = ("incompatible" if (
+        (expected_kind == "article" and observed_kind == "book")
+        or (expected_kind in {"book", "chapter", "edited_collection"}
+            and observed_kind == "article"))
+        else "compatible" if observed_kind != "unknown" else "unverified")
+    if kind_verdict == "incompatible":
+        return _result(False, "rejected", completeness, quality,
+                       f"source-kind conflict: expected {expected_kind}, saw {observed_kind}",
+                       page_count=len(pages), observed_kind=observed_kind,
+                       source_kind_verdict=kind_verdict)
     listing = _BAD_PAGE.search(front)
     if listing and words < 1500:
         return _result(False, "rejected", completeness, quality,
@@ -123,7 +134,8 @@ def validate_pdf(content, expected):
                                       "isbn": sorted(found_isbns)},
                    doi_match=doi_match, doi_conflict=doi_conflict,
                    isbn_conflict=isbn_conflict, back_matter=back_matter,
-                   title_prominent=prominent, observed_kind=observed_kind)
+                   title_prominent=prominent, observed_kind=observed_kind,
+                   source_kind_verdict=kind_verdict)
 
 
 def validate_html(body, expected):
@@ -137,6 +149,31 @@ def validate_html(body, expected):
                 else "medium" if title and _norm(title) in _norm(text) else "rejected")
     return _result(False, identity, "identity_only", "unassessed_html",
                    "HTML is identity-only", observed_words=len(text.split()))
+
+
+def validate_text(text, expected, *, complete=True, page_count=0):
+    """Validate OCR-derived/plain text without inventing PDF layout evidence."""
+    text = str(text or "")
+    if not text.strip() or len(text) > 20_000_000:
+        return _result(False, "rejected", "uncertain", "scan_ocr", "empty or oversized text")
+    front = text[:24000]
+    listing = _BAD_PAGE.search(front)
+    if listing:
+        return _result(False, "rejected", "uncertain", "scan_ocr",
+                       f"non-work page: {listing.group(1).lower()}")
+    title = expected.get("title") or ""
+    author = _surname(expected.get("author"))
+    year = str(expected.get("year") or "")
+    body = _norm(front)
+    tokens = [word for word in _norm(title).split() if len(word) > 3]
+    title_match = bool(tokens) and sum(word in body for word in tokens) >= max(2, len(tokens) // 2)
+    identity = ("high" if title_match and (not author or author in body)
+                and (not year or year in text)
+                else "medium" if title_match else "rejected")
+    accept = identity == "high" and complete
+    return _result(accept, identity, "complete" if complete else "incomplete",
+                   "scan_ocr", "accepted" if accept else "OCR identity/completeness gate",
+                   page_count=page_count, text_words=len(text.split()))
 
 
 def rank_candidates(candidates, expected):
