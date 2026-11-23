@@ -98,6 +98,7 @@ import stage_receipt as stg  # noqa: E402
 import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
 import fetch_open_sources as fos  # noqa: E402
+import resolve_dois as rd  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -3441,6 +3442,13 @@ class RetrievalPortTests(unittest.TestCase):
             result = fos.resolve(record)
         self.assertEqual(result["provider"], "crossref")
         self.assertEqual(attempts[-1][1], "https://example.org/a.pdf")
+
+    def test_mdpi_file_server_and_extracted_pdf_classification(self):
+        self.assertEqual(
+            rd._mdpi_file_server_urls("10.3390/literature5020007"),
+            ["https://mdpi-res.com/d_attachment/literature/literature-05-00007/article_deploy/literature-05-00007.pdf"])
+        text = "=== PDF p1 | printed p1 | native\n" + ("article body " * 400) + "lending library"
+        self.assertEqual(fos.classify_extracted(text), "full_text")
 
     def test_internet_archive_metadata_finds_text_and_lending(self):
         meta = {"metadata": {"title": "Stars", "date": "2004"},

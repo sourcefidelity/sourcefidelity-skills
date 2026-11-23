@@ -21,6 +21,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import web_cache  # noqa: E402
 from retrieval import providers, transport  # noqa: E402
+REVIEW = os.path.join(os.path.dirname(os.path.dirname(HERE)), "sourcefidelity-review", "scripts")
+if REVIEW not in sys.path:
+    sys.path.insert(0, REVIEW)
+import resolve_dois  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -73,6 +77,13 @@ def store_text(root, key, provider, access_url, text, classification):
             "classification": classification}
 
 
+def classify_extracted(text):
+    """A PDF extraction with page markers is full text even if an article uses words like 'lending'."""
+    if "=== PDF p" in (text or "") and len((text or "").split()) >= 300:
+        return "full_text"
+    return web_cache.classify_text(text or "")
+
+
 def try_text(provider_name, url):
     text, result = transport.get_text(url, provider_name)
     if not text:
@@ -89,6 +100,25 @@ def resolve(record):
     title = ident["title"]
     if not title:
         return {"provider": "", "limitation": "no_title"}
+    if ident.get("doi"):
+        try:
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix="sf-oa-") as tmp:
+                acquired = resolve_dois.resolve_copy(ident["doi"], tmp)
+                pdf = acquired.get("pdf") or ""
+                if pdf and os.path.exists(pdf):
+                    extraction = resolve_dois.extract_pdf(pdf, tmp)
+                    directory = extraction.get("dir") or ""
+                    if directory:
+                        path = os.path.join(directory, "text.txt")
+                        if os.path.exists(path):
+                            text = open(path, encoding="utf-8", errors="replace").read()
+                            if classify_extracted(text) == "full_text":
+                                return {"provider": "doi:" + str(acquired.get("resolver") or "resolver"),
+                                        "access_url": acquired.get("final_url") or "",
+                                        "classification": "full_text", "text": text}
+        except Exception:
+            pass
     oa = (providers.openalex_by_doi(ident["doi"])
           if ident.get("doi") else providers.openalex_search(
               title, ident["author"], ident["year"]))

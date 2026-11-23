@@ -28,6 +28,14 @@
   inconclusive R45 checks for the gate model. A gate pass never skips the
   claim judgment. 574 tests pass.
 
+- **OA acquisition promoted from the review engine (R46/O1).** Batch
+  `fetch_open_sources.py` now reuses `resolve_dois.resolve_copy` for DOI
+  resolution, Unpaywall/OpenAlex/Semantic Scholar/Europe PMC/CORE locations,
+  landing-page PDF discovery and Crossref links, and adds the MDPI file-server
+  fallback. A PDF extraction with page markers is classified as full text even
+  if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
+  R6/R20 publisher routes remain blocked. 582 tests pass.
+
 - **Per-source paragraph index (R46 O2).** `source_index.py` stores one
   content-addressed paragraph index per extraction under `_work/_indexes/`,
   keyed by the text and pages.csv hashes. `make_task.py` reuses it across

@@ -1428,13 +1428,46 @@ def _unpaywall_oa(doi, mailto):
             for key in ("url_for_pdf", "url")]
 
 
+MDPI_PREFIX = "10.3390/"
+_MDPI_SUFFIX = re.compile(r"([a-z]+)(\d{7,10})")
+_MAX_MDPI_ISSUE = 24
+
+
+def _mdpi_file_server_urls(doi):
+    """MDPI's own file host, for DOIs whose publisher page blocks automation."""
+    value = str(doi or "").strip().casefold()
+    if not value.startswith(MDPI_PREFIX):
+        return []
+    match = _MDPI_SUFFIX.fullmatch(value[len(MDPI_PREFIX):])
+    if not match:
+        return []
+    code, digits = match.groups()
+    urls = []
+    for article_digits in (4, 5):
+        volume = digits[:-(2 + article_digits)]
+        issue = digits[-(2 + article_digits):-article_digits]
+        article = digits[-article_digits:]
+        if (not volume or volume.startswith("0") or len(volume) > 3
+                or not issue.isdigit() or not 1 <= int(issue) <= _MAX_MDPI_ISSUE
+                or not article.isdigit() or int(article) == 0):
+            continue
+        if article_digits == 5 and (article.startswith("0") or int(volume) < 10):
+            continue
+        stem = f"{code}-{int(volume):02d}-{int(article):05d}"
+        url = f"https://mdpi-res.com/d_attachment/{code}/{stem}/article_deploy/{stem}.pdf"
+        if url not in urls:
+            urls.append(url)
+    return urls
+
+
 def _oa_pdf_candidates(doi, mailto, per_provider=None):
     """Yield distinct candidate URLs in provider order as downloads need them."""
     routes = (("unpaywall", _unpaywall_oa, (doi, mailto)),
               ("openalex", _openalex_oa, (doi,)),
               ("semantic_scholar", _semantic_scholar_oa, (doi,)),
               ("europe_pmc", _europepmc_oa, (doi,)),
-              ("core", _core_oa, (doi,)))
+              ("core", _core_oa, (doi,)),
+              ("mdpi_file_server", lambda value: _mdpi_file_server_urls(value), (doi,)))
     seen = set()
     for provider, lookup, args in routes:
         try:
