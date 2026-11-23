@@ -46,6 +46,11 @@
   preparation and acquisition before inventory/route/bounded stages; the
   pipeline no longer runs against an unprepared root. 603 tests.
 
+- **Blind audit classifies coverage disagreements.** Disagreements where the
+  first judgment had evidence but the packet lacked it are recorded as
+  coverage-limited, separately from semantic disagreements. TV: 6 agree,
+  2 coverage-limited, 0 semantic. 603 tests.
+
 - **Reappraisal task checkpoint.** Reappraisal now records the applied task
   hash under `_reappraise/<run>/applied/` and skips an identical task unless
   `--force` is given. 603 tests.

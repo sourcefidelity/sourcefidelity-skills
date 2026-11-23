@@ -72,7 +72,8 @@ def collect(root, paper, inventory_path, claims_path):
     plan = load(claims_path)
     findings = load(os.path.join(work, "claim-findings.json")) or load(
         os.path.join(root, "paper", "findings.json"))
-    first = {row["id"]: row.get("judgment") for row in findings.get("occurrences", [])}
+    first_rows = {row["id"]: row for row in findings.get("occurrences", [])}
+    first = {row_id: row.get("judgment") for row_id, row in first_rows.items()}
     specs = {cid: spec for cid, spec in core.claim_specs(inventory, plan)}
     rows = []
     for name in sorted(os.listdir(os.path.join(work, "blind-requests"))):
@@ -94,13 +95,29 @@ def collect(root, paper, inventory_path, claims_path):
             rows.append({"claim_id": claim_id, "status": "invalid_response"})
             continue
         occurrence_id = specs[claim_id]["occurrence_id"] if claim_id in specs else ""
+        first_row = first_rows.get(occurrence_id, {})
+        first_has_evidence = any(source.get("evidence") for source in
+                                 (first_row.get("sources") or []))
+        status = "agree" if first.get(occurrence_id) == second else "disagree"
+        kind = ""
+        if status == "disagree":
+            if second == "Not Judged" and first_has_evidence:
+                kind = "coverage_limited_packet"
+            elif first.get(occurrence_id) == "Not Judged" and second != "Not Judged":
+                kind = "new_evidence"
+            else:
+                kind = "semantic"
         rows.append({"claim_id": claim_id, "occurrence_id": occurrence_id,
                      "first": first.get(occurrence_id, ""), "second": second,
-                     "status": "agree" if first.get(occurrence_id) == second
-                     else "disagree"})
+                     "status": status, "disagreement_kind": kind,
+                     "first_has_evidence": first_has_evidence})
     result = {"schema": "blind-audit-v1", "paper": paper, "rows": rows,
               "agree": sum(1 for row in rows if row["status"] == "agree"),
               "disagree": sum(1 for row in rows if row["status"] == "disagree"),
+              "coverage_disagreements": sum(1 for row in rows if row.get("disagreement_kind") ==
+                                            "coverage_limited_packet"),
+              "semantic_disagreements": sum(1 for row in rows if row.get("disagreement_kind") ==
+                                            "semantic"),
               "missing": sum(1 for row in rows if row["status"] in
                              ("missing_response", "invalid_response")),
               "no_packet": load(os.path.join(work, "blind-manifest.json")).get("no_packet", [])}

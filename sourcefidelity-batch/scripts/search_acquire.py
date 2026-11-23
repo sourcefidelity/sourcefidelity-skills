@@ -59,12 +59,18 @@ def _html_candidate(body, fallback):
         return html.unescape(match.group(1)) if match else ""
     title = meta("citation_title") or meta("dc.title")
     if not title:
-        match = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
+        match = re.search(r"<h1[^>]*>(.*?)</h1>", page, re.I | re.S)
+        if not match:
+            match = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
         title = html.unescape(re.sub(r"<[^>]+>", " ", match.group(1))).strip() if match else ""
+        title = re.sub(r"\s*[-|]\s*vLex.*$", "", title, flags=re.I)
+    authors = [meta("citation_author")] if meta("citation_author") else list(
+        fallback.get("authors") or [])
     return {"title": title or fallback.get("title", ""),
-            "authors": [meta("citation_author")] if meta("citation_author") else [],
+            "authors": authors,
             "year": meta("citation_publication_date")[:4] or fallback.get("year", ""),
-            "container": meta("citation_journal_title"), "text": page}
+            "container": meta("citation_journal_title") or fallback.get("container", ""),
+            "text": page}
 
 
 def _pdf_candidate(body, fallback):
