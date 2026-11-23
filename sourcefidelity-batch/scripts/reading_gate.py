@@ -27,6 +27,7 @@ SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import batch_paths  # noqa: E402
+from sourcefidelity_core import artifact_transaction  # noqa: E402
 from sourcefidelity_core import finding_counts  # noqa: E402
 from sourcefidelity_core import reading_gate  # noqa: E402
 from sourcefidelity_core import recovery  # noqa: E402
@@ -243,34 +244,32 @@ def apply(root, paper):
             "with recorded reasons.")
     limitations = findings.get("limitations") or ""
     findings["limitations"] = (limitations + " " + note).strip()
-    originals = {name: Path(os.path.join(paths["folder"], name)).read_bytes()
-                 if os.path.exists(os.path.join(paths["folder"], name)) else None
-                 for name in ("review.md", "ledger.md", "summary.json", "findings.json")}
+    artifacts = [os.path.join(paths["folder"], name)
+                 for name in ("review.md", "ledger.md", "summary.json", "findings.json")]
     for name in ("review.md", "ledger.md", "summary.json", "findings.json"):
         source = os.path.join(paths["folder"], name)
         target = os.path.join(paths["folder"], name.replace(".", ".pre-gate.", 1))
         if os.path.exists(source) and not os.path.exists(target):
             shutil.copy2(source, target)
-    try:
+    result = {}
+
+    def mutate():
         write_json(paths["findings"], findings)
-        result = subprocess.run([sys.executable, "-I", RENDER, "--batch", root,
-                                 "--paper", paper, "--inventory", paths["inventory"],
-                                 "--findings", paths["findings"], "--strict-inventory",
-                                 "--require-gate"],
-                                capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
+        result.update(subprocess.run(
+            [sys.executable, "-I", RENDER, "--batch", root, "--paper", paper,
+             "--inventory", paths["inventory"], "--findings", paths["findings"],
+             "--strict-inventory", "--require-gate"],
+            capture_output=True, text=True).__dict__)
+        if result.get("returncode") != 0:
+            raise RuntimeError(result.get("stderr") or result.get("stdout"))
+
+    try:
+        artifact_transaction.apply(artifacts, mutate)
     except Exception as error:
-        for name, data in originals.items():
-            path = os.path.join(paths["folder"], name)
-            if data is None:
-                Path(path).unlink(missing_ok=True)
-            else:
-                Path(path).write_bytes(data)
         raise SystemExit(f"{paper}: reading-gate apply rolled back: {error}") from error
     return {"paper": paper, "applied": applied, "existing": existing,
             "declined": len(declines), "inconclusive": len(inconclusive),
-            "render": result.stdout.strip()}
+            "render": (result.get("stdout") or "").strip()}
 
 
 def status(root):

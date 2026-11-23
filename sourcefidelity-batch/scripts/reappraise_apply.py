@@ -39,6 +39,7 @@ import finding_counts  # noqa: E402
 import link_states  # noqa: E402
 import render_review  # noqa: E402
 from sourcefidelity_core import admissibility  # noqa: E402
+from sourcefidelity_core import artifact_transaction  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -534,11 +535,12 @@ def apply_all(folder, task, judgments, day, link_block=None):
     ledger_path = paths["ledger.md"]
     summary_path = paths["summary.json"]
     findings_path = os.path.join(folder, "findings.json")
-    originals = {path: Path(path).read_bytes() if os.path.exists(path) else None
-                 for path in (review_path, ledger_path, summary_path, findings_path)}
+    artifact_paths = [review_path, ledger_path, summary_path, findings_path]
     changes = judgments.get("changes", [])
     summary_old = load(summary_path, {})
-    review_old = originals[review_path].decode("utf-8")
+    review_old = Path(review_path).read_bytes().decode("utf-8")
+    ledger_old = (Path(ledger_path).read_bytes()
+                  if os.path.exists(ledger_path) else None)
     review_text, rows, ledger_updated = review_old, [], []
     ledger_text = None
     if changes:
@@ -546,9 +548,9 @@ def apply_all(folder, task, judgments, day, link_block=None):
                   if summary_old.get("occurrences") else None)
         normalized = review_old.replace("\r\n", "\n")
         review_text, rows = render_review_text(normalized, task, judgments, day, counts)
-        if originals[ledger_path] is not None:
+        if ledger_old is not None:
             ledger_text, ledger_updated = render_ledger_text(
-                originals[ledger_path].decode("utf-8"), changes, day)
+                ledger_old.decode("utf-8"), changes, day)
     summary_new = render_summary_data(summary_old, task, judgments, day)
     findings_old = load(findings_path, {})
     findings_new = (render_findings_data(findings_old, summary_new, judgments, day)
@@ -570,28 +572,20 @@ def apply_all(folder, task, judgments, day, link_block=None):
         staged[findings_path] = json.dumps(findings_new, ensure_ascii=False, indent=1)
 
     items = []
-    try:
+
+    def commit():
         for path, body in staged.items():
             items.append((stage_text(path, body), path))
         if changes:
             shutil.copy2(review_path, paths["review.pre-reappraisal.md"])
-        try:
-            commit_staged(items)
-            problems = artifact_problems(folder)
-            if problems:
-                raise RuntimeError("artifact parity failed after reappraisal: "
-                                   + "; ".join(problems))
-        except Exception as error:
-            rollback_errors = []
-            for path in staged:
-                try:
-                    _restore(path, originals[path])
-                except OSError as restore_error:
-                    rollback_errors.append(f"{path}: {restore_error}")
-            if rollback_errors:
-                raise RuntimeError("reappraisal rollback incomplete: "
-                                   + "; ".join(rollback_errors)) from error
-            raise
+        commit_staged(items)
+        problems = artifact_problems(folder)
+        if problems:
+            raise RuntimeError("artifact parity failed after reappraisal: "
+                               + "; ".join(problems))
+
+    try:
+        artifact_transaction.apply(artifact_paths, commit)
     finally:
         for tmp, _ in items:
             Path(tmp).unlink(missing_ok=True)

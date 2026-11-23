@@ -93,6 +93,7 @@ from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
 from sourcefidelity_core import admission as core_admission  # noqa: E402
 from sourcefidelity_core import admissibility  # noqa: E402
+from sourcefidelity_core import artifact_transaction  # noqa: E402
 from sourcefidelity_core import bounded_request  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
@@ -8078,6 +8079,40 @@ class AdmissibilityPolicyTests(unittest.TestCase):
         for use in ("affirmative", "judgment_window", "recovery", "negative",
                     "absence", "pagination"):
             self.assertFalse(admissibility.decide(observation, use)["allowed"], use)
+
+
+class ArtifactTransactionTests(unittest.TestCase):
+    def test_failed_mutation_restores_existing_and_missing_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = root / "review.md"
+            existing.write_text("old", encoding="utf-8")
+            missing = root / "summary.json"
+
+            def mutate():
+                existing.write_text("new", encoding="utf-8")
+                missing.write_text("new", encoding="utf-8")
+                raise RuntimeError("render failed")
+
+            with self.assertRaises(RuntimeError):
+                artifact_transaction.apply([existing, missing], mutate)
+            self.assertEqual(existing.read_text(encoding="utf-8"), "old")
+            self.assertFalse(missing.exists())
+
+    def test_verification_failure_rolls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "findings.json"
+            path.write_text("old", encoding="utf-8")
+
+            def mutate():
+                path.write_text("new", encoding="utf-8")
+
+            def verify():
+                raise RuntimeError("parity failed")
+
+            with self.assertRaises(RuntimeError):
+                artifact_transaction.apply([path], mutate, verify)
+            self.assertEqual(path.read_text(encoding="utf-8"), "old")
 
 
 class BoundedRequestTests(unittest.TestCase):

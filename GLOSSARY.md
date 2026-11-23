@@ -38,3 +38,7 @@ observation; they do not match raw scope or edition statuses.
 **Bounded request**: one claim's model-facing payload plus its digest binding.
 Every emitter writes the same envelope; ordinary assessment and full-text recovery
 differ only in packet fields and verdict policy.
+
+**Artifact transaction**: the one commit path for paper artifacts. A caller names
+the paths it may touch and a mutation; the transaction snapshots, mutates,
+verifies and restores every path on failure.

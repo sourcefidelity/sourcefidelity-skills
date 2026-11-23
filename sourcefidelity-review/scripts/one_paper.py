@@ -18,11 +18,13 @@ import os
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
+from sourcefidelity_core import artifact_transaction  # noqa: E402
 from sourcefidelity_core import assessment  # noqa: E402
 
 PREP = os.path.join(HERE, "prep_single.py")
@@ -179,50 +181,61 @@ def main(argv=None):
         inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
         claims = args.claims or os.path.join(args.out, "_work", "paper", "claims.json")
         metadata_path = os.path.join(args.out, "_work", "paper", "metadata.json")
-        if not os.path.exists(metadata_path):
-            inv = json.load(open(inventory, encoding="utf-8"))
-            metadata = {"references": inv.get("references", []),
-                        "works": inv.get("works", []),
-                        "uncited": inv.get("uncited", []),
-                        "status": "complete",
-                        "summary": {"category_a": [],
-                                    "category_b": (["uncited substantive passages"]
-                                                   if inv.get("uncited") else []),
-                                    "hyperlinks_missing": []}}
-            with open(metadata_path, "w", encoding="utf-8") as handle:
-                json.dump(metadata, handle, ensure_ascii=False, indent=1)
-        render = subprocess.run([sys.executable, "-I", ASSESS, "--root", args.out,
-                                 "--paper", "paper", "--inventory", inventory,
-                                 "--claims", claims, "render", "--metadata", metadata_path],
-                                capture_output=True, text=True)
-        if render.returncode:
-            print(render.stderr or render.stdout, file=sys.stderr)
-            return render.returncode
         claim_findings = os.path.join(args.out, "_work", "paper", "claim-findings.json")
         paper_dir = os.path.join(args.out, "paper")
         os.makedirs(paper_dir, exist_ok=True)
         findings_path = os.path.join(paper_dir, "findings.json")
-        with open(claim_findings, "rb") as source, open(findings_path, "wb") as target:
-            target.write(source.read())
-        gate_args = []
-        if args.gate:
-            gate = os.path.join(BATCH, "reading_gate.py")
-            run = subprocess.run([sys.executable, "-I", gate, "run", "--batch", args.out,
-                                  "--paper", "paper"], capture_output=True, text=True)
-            if run.returncode:
-                print(run.stderr or run.stdout, file=sys.stderr)
-                return run.returncode
-            applied = subprocess.run([sys.executable, "-I", gate, "apply", "--batch",
+        artifacts = [metadata_path, claim_findings, findings_path,
+                     os.path.join(paper_dir, "review.md"),
+                     os.path.join(paper_dir, "ledger.md"),
+                     os.path.join(paper_dir, "summary.json")]
+
+        def finalize():
+            if not os.path.exists(metadata_path):
+                inv = json.load(open(inventory, encoding="utf-8"))
+                artifact_transaction.write_json(metadata_path, {
+                    "references": inv.get("references", []),
+                    "works": inv.get("works", []),
+                    "uncited": inv.get("uncited", []),
+                    "status": "complete",
+                    "summary": {"category_a": [],
+                                "category_b": (["uncited substantive passages"]
+                                               if inv.get("uncited") else []),
+                                "hyperlinks_missing": []}})
+            render = subprocess.run(
+                [sys.executable, "-I", ASSESS, "--root", args.out, "--paper", "paper",
+                 "--inventory", inventory, "--claims", claims, "render",
+                 "--metadata", metadata_path], capture_output=True, text=True)
+            if render.returncode:
+                raise RuntimeError(render.stderr or render.stdout)
+            Path(findings_path).write_bytes(Path(claim_findings).read_bytes())
+            gate_args = []
+            if args.gate:
+                gate = os.path.join(BATCH, "reading_gate.py")
+                run = subprocess.run([sys.executable, "-I", gate, "run", "--batch",
                                       args.out, "--paper", "paper"],
                                      capture_output=True, text=True)
-            if applied.returncode:
-                print(applied.stderr or applied.stdout, file=sys.stderr)
-                return applied.returncode
-            gate_args = ["--require-gate"]
-        return subprocess.run([sys.executable, "-I", RENDER, "--batch", args.out,
-                               "--paper", "paper", "--inventory", inventory,
-                               "--findings", findings_path,
-                               "--strict-inventory"] + gate_args).returncode
+                if run.returncode:
+                    raise RuntimeError(run.stderr or run.stdout)
+                applied = subprocess.run([sys.executable, "-I", gate, "apply", "--batch",
+                                          args.out, "--paper", "paper"],
+                                         capture_output=True, text=True)
+                if applied.returncode:
+                    raise RuntimeError(applied.stderr or applied.stdout)
+                gate_args = ["--require-gate"]
+            final = subprocess.run(
+                [sys.executable, "-I", RENDER, "--batch", args.out, "--paper", "paper",
+                 "--inventory", inventory, "--findings", findings_path,
+                 "--strict-inventory"] + gate_args, capture_output=True, text=True)
+            if final.returncode:
+                raise RuntimeError(final.stderr or final.stdout)
+            return 0
+
+        try:
+            return artifact_transaction.apply(artifacts, finalize)
+        except Exception as error:
+            print(f"finalize rolled back: {error}", file=sys.stderr)
+            return 1
     if args.collect_bounded:
         if not args.inventory:
             ap.error("--collect-bounded requires --inventory")

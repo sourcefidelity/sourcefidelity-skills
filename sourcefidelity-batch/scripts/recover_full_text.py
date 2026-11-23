@@ -34,6 +34,7 @@ SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import batch_paths  # noqa: E402
+from sourcefidelity_core import artifact_transaction  # noqa: E402
 from sourcefidelity_core import bounded_request  # noqa: E402
 from sourcefidelity_core import claim_assessment as core  # noqa: E402
 from sourcefidelity_core import recovery  # noqa: E402
@@ -577,26 +578,25 @@ def apply(root, paper):
                os.path.join(paths["folder"], "review.md"),
                os.path.join(paths["folder"], "ledger.md"),
                os.path.join(paths["folder"], "summary.json")]
-    originals = {path: Path(path).read_bytes() if os.path.exists(path) else None
-                 for path in touched}
-    try:
+    rendered = {}
+
+    def mutate():
         write_json(paths["task"], task)
         write_json(paths["findings"], findings)
-        result = subprocess.run([sys.executable, "-I", RENDER, "--batch", root,
-                                 "--paper", paper, "--inventory", paths["inventory"],
-                                 "--findings", paths["findings"], "--strict-inventory"],
-                                capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr or result.stdout)
+        completed = subprocess.run(
+            [sys.executable, "-I", RENDER, "--batch", root, "--paper", paper,
+             "--inventory", paths["inventory"], "--findings", paths["findings"],
+             "--strict-inventory"], capture_output=True, text=True)
+        rendered["stdout"] = completed.stdout
+        if completed.returncode != 0:
+            raise RuntimeError(completed.stderr or completed.stdout)
+
+    try:
+        artifact_transaction.apply(touched, mutate)
     except Exception as error:
-        for path, data in originals.items():
-            if data is None:
-                Path(path).unlink(missing_ok=True)
-            else:
-                Path(path).write_bytes(data)
         raise SystemExit(f"{paper}: recovery apply rolled back: {error}") from error
     return {"paper": paper, "applied": applied, "skipped": skipped,
-            "render": result.stdout.strip(),
+            "render": (rendered.get("stdout") or "").strip(),
             "not_judged_reasons": reasons}
 
 
