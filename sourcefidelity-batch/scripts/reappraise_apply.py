@@ -615,6 +615,8 @@ def main():
     ap.add_argument("--date", default=date.today().isoformat())
     ap.add_argument("--repair-findings", action="store_true",
                     help="rebuild findings.json from the recorded reappraisal block")
+    ap.add_argument("--force", action="store_true",
+                    help="reapply even when this task hash was already applied")
     args = ap.parse_args()
 
     root = os.path.abspath(args.batch)
@@ -623,9 +625,29 @@ def main():
     if not task or not judgments:
         raise SystemExit("task or judgments file unreadable")
     pid = task["paper_id"]
+    task_sha = file_sha256(args.task)
+    task_id = (task.get("binding") or {}).get("task_id", "")
+    status_path = os.path.join(os.path.dirname(os.path.abspath(args.task)),
+                               "applied", task_id + ".json") if task_id else ""
+    if status_path and not args.force and os.path.exists(status_path):
+        status = load(status_path, {}) or {}
+        if status.get("task_sha256") == task_sha:
+            print(json.dumps({"paper": pid, "date": args.date, "changes": 0,
+                              "note": "task already applied; checkpoint matched",
+                              "status": status_path}, indent=1))
+            return 0
     if judgments.get("paper_id") not in (None, pid):
         raise SystemExit("judgments paper_id does not match the task")
     folder = batch_paths.paper_folder(root, pid)
+    def mark_applied(count):
+        if not status_path:
+            return
+        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+        with open(status_path, "w", encoding="utf-8") as handle:
+            json.dump({"task_sha256": task_sha, "task_id": task_id,
+                       "paper_id": pid, "date": args.date, "changes": count},
+                      handle, indent=1)
+
     if args.repair_findings:
         result = repair_findings(folder)
         print(json.dumps({"paper": pid, **result}, indent=1))
@@ -647,6 +669,7 @@ def main():
                 continue
             kept.append(change)
         if not kept:
+            mark_applied(0)
             print(json.dumps({"paper": pid, "date": args.date, "changes": 0,
                               "note": "already applied; no change made"}, indent=1))
             return 0
@@ -655,6 +678,7 @@ def main():
     block = link_states.load_cached(root, pid)
     result = apply_all(folder, task, judgments, args.date, link_block=block)
     if not changes:
+        mark_applied(0)
         print(json.dumps({"paper": pid, "date": args.date, "changes": 0,
                           "unchanged": judgments.get("unchanged", []),
                           "note": "no judgment changed; source retrieval recorded",
@@ -666,6 +690,7 @@ def main():
     total = data.get("occurrences", {}).get("total", 0)
     summed = sum(int(data.get("occurrences", {}).get(k, 0)) for k in
                  ("supports", "qualified", "contradicts", "not_supported", "not_judged"))
+    mark_applied(rows)
     print(json.dumps({
         "paper": pid, "date": args.date, "changes": rows,
         "ledger_rows_updated": ledger_updated,

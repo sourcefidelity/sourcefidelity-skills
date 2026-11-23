@@ -46,6 +46,10 @@
   preparation and acquisition before inventory/route/bounded stages; the
   pipeline no longer runs against an unprepared root. 603 tests.
 
+- **Reappraisal task checkpoint.** Reappraisal now records the applied task
+  hash under `_reappraise/<run>/applied/` and skips an identical task unless
+  `--force` is given. 603 tests.
+
 - **Bounded finalize gate path.** `one_paper --finalize --gate` copies
   `claim-findings.json` to `paper/findings.json`, runs/applies the reading gate,
   and renders with `--require-gate`. 603 tests.
