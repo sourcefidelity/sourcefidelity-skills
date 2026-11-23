@@ -10,7 +10,10 @@ ID and a category; free text in `summary.category_a` must agree with them.
 
 from __future__ import annotations
 
+import re
+
 CATEGORIES = ("A", "B", "HL")
+ID_RE = re.compile(r"\b([CRU]\d+)\b")
 SUMMARY_KEYS = {"A": "category_a", "B": "category_b", "HL": "hyperlinks_missing"}
 
 
@@ -97,11 +100,36 @@ def render_counts(findings):
     return counts
 
 
+def _summary_ids(text):
+    return sorted(set(ID_RE.findall(str(text or ""))))
+
+
+def _item_categories(findings):
+    by_id = {}
+    for item, categories, _kind in _items(findings):
+        by_id[item["id"]] = set(categories)
+    return by_id
+
+
 def reconcile(findings):
     """Summary discrepancies: counts that do not match evidenced finding IDs."""
     derived = issue_counts(findings)
     summary = findings.get("summary", {}) or {}
     messages = []
+    by_id = _item_categories(findings)
+    reported = set()
+    for category in ("A", "B"):
+        key = SUMMARY_KEYS[category]
+        for line in summary.get(key) or []:
+            for item_id in _summary_ids(line):
+                marker = (key, item_id)
+                if marker in reported:
+                    continue
+                if category not in by_id.get(item_id, set()):
+                    reported.add(marker)
+                    messages.append(
+                        f"summary {key} mentions {item_id}, but findings category is "
+                        f"{', '.join(sorted(by_id.get(item_id, {'missing'})))}")
     for category in ("A", "B"):
         listed = summary.get(SUMMARY_KEYS[category]) or []
         if derived[category]["ids"] and len(listed) != len(derived[category]["issues"]):

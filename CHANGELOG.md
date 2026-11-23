@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Summary-ID reconciliation.** The render gate now rejects a Category A or B
+  summary line that names an ID whose findings category is only HL or the other
+  category; this catches reports whose prose overstates evidenced findings.
+  595 tests pass.
+
 - **Abstract-only topical attention (R43).** Identity-gated abstracts are
   fetched from OpenAlex, Crossref, Semantic Scholar or a DOI landing page and
   checked by one bounded scope request per source/chunk. Only high-confidence,

@@ -8291,6 +8291,12 @@ class FindingCountsTests(unittest.TestCase):
                          {"A": 2, "B": 0, "HL": 1})
         self.assertEqual(fc.reconcile(self._findings()), [])
 
+    def test_summary_ids_must_match_their_category(self):
+        findings = self._findings()
+        findings["summary"]["category_a"] = ["missing link (R1)"]
+        messages = fc.reconcile(findings)
+        self.assertTrue(any("mentions R1" in message for message in messages))
+
     def test_summary_count_mismatch_is_reported(self):
         findings = self._findings()
         findings["summary"]["category_a"] = ["one issue"]
