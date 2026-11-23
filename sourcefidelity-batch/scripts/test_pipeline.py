@@ -4921,6 +4921,37 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(complete["complete_count"], 1)
         self.assertEqual(complete["pending_count"], 0)
 
+    def test_no_eligible_evidence_is_accounted_not_pending(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            ref = {"id": "R1", "verbatim": "Smith, A. (2020). Work."}
+            citation = {"id": "X1", "marker": "(Smith, 2020)", "paragraph_id": "P1",
+                        "sentence": "A claim with no source window."}
+            candidates = {"citations": [citation], "references": [ref],
+                          "paragraphs": [{"id": "P1", "text":
+                              citation["sentence"] + " (Smith, 2020) "
+                              + ref["verbatim"]}]}
+            inventory = {"occurrences": [{"id": "C1", "candidate_id": "X1",
+                                          "paragraph_id": "P1", "marker": "(Smith, 2020)",
+                                          "statement": citation["sentence"],
+                                          "cited_r_ids": ["R1"]}],
+                         "references": [ref], "works": [], "uncited": [],
+                         "dispositions": {"X1": "confirmed", "R1": "confirmed"},
+                         "coverage": {"paragraphs_scanned": ["P1"]}}
+            plan = [{"occurrence_id": "C1", "start": 0,
+                     "end": len(citation["sentence"]), "kind": "claim"}]
+            (work / "task.json").write_text(json.dumps({"candidates": candidates,
+                                                        "sources": {}, "windows": {}}))
+            (work / "candidates.json").write_text(json.dumps(candidates))
+            (root / "inventory.json").write_text(json.dumps(inventory))
+            (root / "claims.json").write_text(json.dumps(plan))
+            state = cp.status(str(root), "paper", inventory, plan)
+        self.assertEqual(state["status"], "complete")
+        self.assertEqual(state["not_judged_count"], 1)
+        self.assertEqual(state["pending_count"], 0)
+
 
 class LongScaleCheckpointTests(unittest.TestCase):
     def setUp(self):

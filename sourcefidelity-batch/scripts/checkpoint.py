@@ -42,11 +42,12 @@ def status(root, paper, inventory, plan, budget=0):
     result = validate_inventory.validate(candidates, inventory, strict=True)
     if not result["ok"]:
         raise ValueError("inventory: " + "; ".join(result["errors"]))
-    complete, pending = [], []
+    complete, pending, not_judged = [], [], []
     max_packet_bytes = 0
     for cid, _oid, packet, _limitation in assess_claims.packets(task, inventory, plan):
         if packet is None:
-            pending.append({"claim_id": cid, "reason": "no eligible evidence"})
+            not_judged.append({"claim_id": cid, "reason": "no eligible evidence",
+                               "judgment": "Not Judged"})
             continue
         max_packet_bytes = max(max_packet_bytes, len(core.request_bytes(packet)))
         path = assess_claims.claim_record(
@@ -60,9 +61,11 @@ def status(root, paper, inventory, plan, budget=0):
             pending.append({"claim_id": cid, "reason": "stale"})
             continue
         complete.append(cid)
-    state = {"paper": paper, "total": len(complete) + len(pending),
-             "complete": complete, "pending": pending,
+    state = {"paper": paper,
+             "total": len(complete) + len(pending) + len(not_judged),
+             "complete": complete, "pending": pending, "not_judged": not_judged,
              "complete_count": len(complete), "pending_count": len(pending),
+             "not_judged_count": len(not_judged),
              "status": "complete" if not pending else "partial",
              "max_packet_bytes": max_packet_bytes}
     if budget:

@@ -281,10 +281,26 @@ def candidate_sources(root):
     for path in sorted(glob.glob(os.path.join(root, "_work", "*", "candidates.json"))):
         data = json.load(open(path, encoding="utf-8"))
         pid = data.get("paper_id")
+        refs = []
         for ref in data.get("references", []):
             key = acquisition_list.key_from_entry(ref.get("verbatim", ""))
+            parsed = parse_source({"source": ref.get("verbatim", "")})
+            refs.append((key, parsed))
             works[key]["papers"].add(pid)
             works[key]["entries"].append({"source": ref.get("verbatim", ""), "source_key": key})
+        # Before a worker summary exists, count in-text citations from the
+        # candidate inventory so O1 does not treat a fresh paper as uncited.
+        for citation in data.get("citations", []):
+            text = " ".join(str(citation.get(field) or "")
+                            for field in ("marker", "sentence", "text"))
+            year = re.search(r"(?:19|20)\d{2}", text)
+            for key, parsed in refs:
+                surname = surname_of(parsed.get("author", ""))
+                if (surname and re.search(r"\b" + re.escape(surname) + r"\b",
+                                          text, re.I)
+                        and (not parsed.get("year") or not year
+                             or parsed["year"] in text)):
+                    works[key]["citations"] += 1
     return works
 
 

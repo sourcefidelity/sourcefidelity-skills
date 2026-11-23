@@ -153,7 +153,13 @@ def validate(cand, inv, strict=False):
         if not verbatim:
             fail(errors, f"{rid}: empty verbatim entry")
         elif not any(verbatim in text for text in paragraphs.values()):
-            fail(errors, f"{rid}: verbatim entry is not a substring of the paper")
+            spans = ref.get("spans") or []
+            span_ok = bool(spans) and all(
+                (span.get("text") or "").strip()
+                and (span.get("text") or "").strip() in paragraphs.get(span.get("paragraph_id", ""), "")
+                for span in spans)
+            if not span_ok:
+                fail(errors, f"{rid}: verbatim entry is not a substring of the paper")
 
     dispositions = inv.get("dispositions", {})
     candidates = {c["id"]: c for c in cand.get("citations", [])}
