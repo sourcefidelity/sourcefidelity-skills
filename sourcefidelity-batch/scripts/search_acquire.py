@@ -27,7 +27,7 @@ SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-review", "scripts"))
 import fetch_abstracts as abstract_fetch  # noqa: E402
-import resolve_dois  # noqa: E402
+import public_fetch  # noqa: E402
 
 
 def load(path, default=None):
@@ -78,9 +78,12 @@ def _pdf_candidate(body, fallback):
 
 
 def _fetch(url):
-    status, final, headers, body = resolve_dois._request(
-        url, accept="application/pdf,text/html;q=0.9", timeout=20)
-    return status, final, headers.get("Content-Type", ""), body
+    result = public_fetch.fetch(
+        url, timeout=20, max_bytes=50 * 1024 * 1024, include_body=True,
+        headers={"Accept": "application/pdf,text/html;q=0.9"},
+        mode=public_fetch.policy_mode())
+    return (result.get("status") or 0, result.get("final_url") or url,
+            result.get("content_type") or "", result.get("body") or b"")
 
 
 def run(root, results_path):
