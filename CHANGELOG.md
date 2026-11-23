@@ -48,8 +48,10 @@
 
 - **Blind audit classifies coverage disagreements.** Disagreements where the
   first judgment had evidence but the packet lacked it are recorded as
-  coverage-limited, separately from semantic disagreements. TV: 6 agree,
-  2 coverage-limited, 0 semantic. 603 tests.
+  coverage-limited, separately from semantic disagreements. An exploratory
+  8-window TV run exposed a vLex landing page being accepted as a full HTML
+  copy; HTML candidates are now identity-only and are not mapped as evidence
+  unless complete. Restored TV packet audit: 4/4 agree. 603 tests.
 
 - **Reappraisal task checkpoint.** Reappraisal now records the applied task
   hash under `_reappraise/<run>/applied/` and skips an identical task unless

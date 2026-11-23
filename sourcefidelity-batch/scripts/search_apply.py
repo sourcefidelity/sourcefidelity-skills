@@ -31,7 +31,8 @@ def run(root, paper, dry_run=False):
     registry = load(os.path.join(root, "source_registry.json")).get("works", {})
     acquired = load(os.path.join(root, "_work", "search-acquired.json"))
     verified = [row for row in acquired.get("verified", [])
-                if row.get("source_key") and os.path.exists(row.get("path", ""))]
+                if row.get("source_key") and row.get("complete", False)
+                and os.path.exists(row.get("path", ""))]
     maps = {key: record["supplied_file"] for key, record in registry.items()
             if record.get("supplied_file") and os.path.exists(record["supplied_file"])}
     for row in verified:

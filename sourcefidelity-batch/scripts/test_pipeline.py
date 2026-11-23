@@ -7822,7 +7822,8 @@ class SearchApplyTests(unittest.TestCase):
             (root / "source_registry.json").write_text(json.dumps({"works": {}}),
                                                        encoding="utf-8")
             (root / "_work" / "search-acquired.json").write_text(json.dumps({
-                "verified": [{"source_key": "s1", "path": str(source)}],
+                "verified": [{"source_key": "s1", "path": str(source),
+                              "complete": True}],
                 "rejected": [{"source_key": "s2", "path": str(source)}],
             }), encoding="utf-8")
             result = search_apply_cli.run(str(root), "paper", dry_run=True)

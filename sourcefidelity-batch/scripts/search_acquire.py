@@ -132,7 +132,10 @@ def run(root, results_path):
                 handle.write(body)
             verified.append({"source_key": key, "url": final, "path": target,
                              "content_type": content_type, "bytes": len(body),
-                             "provider": "host_search", "identity_status": "verified"})
+                             "provider": "host_search", "identity_status": "verified",
+                             "complete": suffix == "pdf",
+                             "completeness": ("pdf_copy" if suffix == "pdf"
+                                               else "html_identity_only")})
             break
     manifest = {"schema": "search-acquired-v1", "verified": verified,
                 "rejected": rejected,
