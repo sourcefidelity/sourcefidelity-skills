@@ -7945,6 +7945,26 @@ class SourceValidatorTests(unittest.TestCase):
             "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
         self.assertTrue(result.get("title_prominent"))
 
+    def test_abstract_only_pdf_is_rejected(self):
+        body = self._pdf("Abstract. A Distinctive Work by Smith 2024. " + "Abstract text. " * 300)
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertFalse(result["accept"])
+        self.assertTrue(result.get("abstract_only"))
+
+    def test_encrypted_pdf_is_rejected(self):
+        import pymupdf
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_textbox((72, 72, 520, 760), "A Distinctive Work by Smith 2024. " + "Body. " * 300)
+        body = doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256,
+                           user_pw="x", owner_pw="y")
+        doc.close()
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertFalse(result["accept"])
+        self.assertIn("encrypted", result["reason"])
+
     def test_unsafe_pdf_feature_is_rejected(self):
         body = self._pdf("A Distinctive Work by Smith 2024. " + "Body. " * 300)
         unsafe = body.replace(b"%%EOF", b"/JavaScript %%EOF")

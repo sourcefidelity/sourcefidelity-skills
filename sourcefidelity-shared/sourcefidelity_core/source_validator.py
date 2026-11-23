@@ -15,7 +15,7 @@ _BAD_PAGE = re.compile(r"\b(table of contents|search results|sign in|log in|acce
                        r"download pdf|purchase this|preview only)\b", re.I)
 _DOI = re.compile(r"10\.\d{4,9}/[^\s\"<>]+", re.I)
 _ISBN = re.compile(r"\b(?:97[89][\d -]{10,17}|\d{9}[\dXx])\b")
-_UNSAFE = re.compile(rb"/(?:JavaScript|JS|Launch|EmbeddedFile|OpenAction|AA|RichMedia|XFA)\b")
+_UNSAFE = re.compile(rb"/(?:JavaScript|JS|Launch|EmbeddedFile|EmbeddedFiles|OpenAction|AA|RichMedia|XFA)\b")
 
 
 def _norm(value):
@@ -47,9 +47,15 @@ def validate_pdf(content, expected):
         return _result(False, "rejected", "uncertain", "skipped", "not a PDF")
     if _UNSAFE.search(bytes(content)):
         return _result(False, "rejected", "uncertain", "skipped", "unsafe PDF feature")
+    if len(content) > 50 * 1024 * 1024:
+        return _result(False, "rejected", "uncertain", "skipped", "PDF exceeds size limit")
     try:
         import pymupdf
         with pymupdf.open(stream=content, filetype="pdf") as pdf:
+            if pdf.is_encrypted or pdf.needs_pass:
+                return _result(False, "rejected", "uncertain", "unreadable", "encrypted PDF")
+            if pdf.page_count > 5000:
+                return _result(False, "rejected", "uncertain", "unreadable", "PDF page limit")
             pages = [page.get_text() for page in pdf]
             metadata = pdf.metadata or {}
             layout = pdf[0].get_text("dict") if pages else {}
@@ -90,9 +96,21 @@ def validate_pdf(content, expected):
                        page_count=len(pages), observed_kind=observed_kind,
                        source_kind_verdict=kind_verdict)
     listing = _BAD_PAGE.search(front)
+    abstract_only = (re.search(r"\babstract\b", front, re.I)
+                     and words < 1500
+                     and not re.search(r"\b(introduction|method|results|discussion|references)\b",
+                                       front, re.I))
     if listing and words < 1500:
         return _result(False, "rejected", completeness, quality,
                        f"non-work page: {listing.group(1).lower()}", page_count=len(pages))
+    if abstract_only:
+        return _result(False, "rejected", completeness, quality,
+                       "abstract-only page", page_count=len(pages), abstract_only=True)
+    lines = [line.strip() for line in front.splitlines() if line.strip()]
+    byline = next((line for line in lines
+                   if re.search(r"\b(by|author[s]?)\b", line, re.I)
+                   and len(line.split()) <= 12), "")
+    years = sorted(set(re.findall(r"\b(?:19|20)\d{2}\b", front)))
     title = expected.get("title") or ""
     author = _surname(expected.get("author"))
     year = str(expected.get("year") or "")
@@ -135,7 +153,8 @@ def validate_pdf(content, expected):
                    doi_match=doi_match, doi_conflict=doi_conflict,
                    isbn_conflict=isbn_conflict, back_matter=back_matter,
                    title_prominent=prominent, observed_kind=observed_kind,
-                   source_kind_verdict=kind_verdict)
+                   source_kind_verdict=kind_verdict, observed_byline=byline,
+                   observed_years=years, abstract_only=abstract_only)
 
 
 def validate_html(body, expected):
@@ -161,6 +180,11 @@ def validate_text(text, expected, *, complete=True, page_count=0):
     if listing:
         return _result(False, "rejected", "uncertain", "scan_ocr",
                        f"non-work page: {listing.group(1).lower()}")
+    lines = [line.strip() for line in front.splitlines() if line.strip()]
+    byline = next((line for line in lines
+                   if re.search(r"\b(by|author[s]?)\b", line, re.I)
+                   and len(line.split()) <= 12), "")
+    years = sorted(set(re.findall(r"\b(?:19|20)\d{2}\b", front)))
     title = expected.get("title") or ""
     author = _surname(expected.get("author"))
     year = str(expected.get("year") or "")
