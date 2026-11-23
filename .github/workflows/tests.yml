@@ -42,6 +42,13 @@ jobs:
         run: |
           choco install tesseract --no-progress -y
           tesseract --version
+      - name: Add Tesseract to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Split-Path (Get-Command tesseract).Source
+          $dir | Out-File -FilePath $env:GITHUB_PATH -Append
+          Write-Host "Added $dir"
       - name: Verify Tesseract languages
         shell: bash
         run: |
