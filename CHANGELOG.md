@@ -42,6 +42,12 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Search-plan bridge and single-paper driver.** `search-plan.json` now lists
+  every cited unacquired work with DOI/title/web queries and provider status;
+  `one_paper --bounded` emits one packet per checkpoint-pending claim. The
+  review protocol requires web search and two fallback locations after one
+  202/403. 601 tests pass.
+
 - **Single-paper bounded requests (R46 O6 adaptation).** `one_paper.py
   --bounded --inventory` generates a claim plan when absent, reads
   checkpoint-pending packet-ready claims, and emits one request per claim in

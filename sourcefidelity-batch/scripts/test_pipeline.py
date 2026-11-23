@@ -106,6 +106,7 @@ import fetch_open_sources as fos  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
+import search_plan as search_plan_cli  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -116,6 +117,7 @@ import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
+import search_plan as search_plan_cli  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
@@ -7804,6 +7806,28 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class SearchPlanTests(unittest.TestCase):
+    def test_every_cited_unacquired_work_gets_queries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            (work / "task.json").write_text(json.dumps({"sources": {
+                "R1": {"source_key": "s1"}, "R2": {"source_key": "s2"},
+            }}), encoding="utf-8")
+            (root / "source_registry.json").write_text(json.dumps({"works": {
+                "s1": {"citation_count": 1, "identity_status": "unresolved",
+                       "identity": {"title": "A Work", "author": "Smith, A",
+                                    "year": "2024"}},
+                "s2": {"citation_count": 1, "identity_status": "supplied_confirmed",
+                       "supplied_file": "x.pdf"},
+            }}), encoding="utf-8")
+            result = search_plan_cli.run(str(root), "paper")
+        self.assertEqual(result["total"], 1)
+        self.assertTrue(result["rows"][0]["needs_web_search"])
+        self.assertTrue(any("filetype:pdf" in q for q in result["rows"][0]["queries"]))
 
 
 class SingleBoundedTests(unittest.TestCase):
