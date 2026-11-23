@@ -34,6 +34,7 @@ import hyperlink_audit as ha  # noqa: E402
 import pdf_quality  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import source_scope  # noqa: E402
+from sourcefidelity_core import admissibility  # noqa: E402
 from sourcefidelity_core import contracts as core_contracts  # noqa: E402
 
 PREPARE = os.path.join(HERE, "prepare_source.py")
@@ -182,8 +183,8 @@ def _observe(entry, result, why=""):
         entry["text"], pages, meta, scope_kind=reference_kind(entry))
     edition = source_scope.observe_edition(entry["text"], pages, meta)
     observation["edition"] = edition
-    observation["absence_allowed"] = bool(
-        observation.get("absence_allowed") and edition.get("absence_allowed"))
+    observation["absence_allowed"] = admissibility.decide(
+        observation, "absence")["allowed"]
     head = str(meta.get("first_page_head") or "")
     metadata = meta.get("pdf_metadata") or {}
     year = re.search(r"\b((?:19|20)\d{2})\b", head)

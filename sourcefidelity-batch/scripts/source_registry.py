@@ -47,6 +47,7 @@ sys.path.insert(0, SHARED_PACKAGE)
 import acquisition_list  # noqa: E402
 import prepare_html  # noqa: E402
 from sourcefidelity_core import acquired as core_acquired  # noqa: E402
+from sourcefidelity_core import admissibility  # noqa: E402
 from sourcefidelity_core import reference_language, script_detect, segmentation  # noqa: E402
 from sourcefidelity_core import understanding as core_understanding  # noqa: E402
 import detect_structure  # noqa: E402
@@ -765,7 +766,7 @@ def copy_observation(record, digest=""):
     edition = source_scope.observe_edition(
         "", [], {}, identity_status=record.get("identity_status", ""))
     unknowns.extend(edition.get("unknowns") or [])
-    return {
+    observation = {
         "source_file": (record.get("selected_representation")
                         or record.get("supplied_file", "")),
         "sha256": digest,
@@ -781,10 +782,12 @@ def copy_observation(record, digest=""):
         },
         "scope": scope,
         "edition": edition,
-        "absence_allowed": bool(scope.get("absence_allowed")
-                                and edition.get("absence_allowed")),
         "unknowns": unknowns,
     }
+    observation["status"] = scope.get("status", "")
+    observation["absence_allowed"] = admissibility.decide(
+        observation, "absence")["allowed"]
+    return observation
 
 
 def apply_scope(registry, root):

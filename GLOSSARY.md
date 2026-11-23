@@ -29,3 +29,8 @@ copies respectively. Supplied and manual mappings keep their existing statuses.
 
 **Registry ingest adapter**: the thin persistence adapter that writes an admission
 record into the source registry without translating its verdicts.
+
+**Copy admissibility**: the single policy that answers whether one observed copy
+may establish an affirmative judgment, a negative/absence conclusion, pagination,
+a recovery window or a reappraisal change. Consumers pass the use and the copy
+observation; they do not match raw scope or edition statuses.

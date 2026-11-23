@@ -6,6 +6,8 @@ import hashlib
 import json
 import re
 
+from . import admissibility
+
 VERSION = "claim-assessment-v1"
 MAX_PASSAGES = 3
 MAX_CLAIM_CHARS = 1000
@@ -98,13 +100,13 @@ def passages_for(task, inventory, occurrence):
             rid = window.get("r_id")
             source = sources.get(rid, {})
             observation = source.get("copy_observation") or {}
-            edition = (observation.get("edition") or {}).get("status")
+            decision = (admissibility.decide(observation, "judgment_window")
+                        if observation else {"allowed": True})
             if (rid not in cited or not refs.get(rid) or task_refs.get(rid) != refs[rid]
                     or source.get("identity_status") not in CONFIRMED
                     or not window.get("source_key")
                     or source.get("source_key") != window.get("source_key")
-                    or observation.get("status") in ("inadequate", "unresolved")
-                    or edition in ("later_edition", "alternate_edition", "translation", "abridgment")
+                    or not decision["allowed"]
                     or window.get("fallback") == "title_terms"):
                 continue
             locator = window.get("locator")

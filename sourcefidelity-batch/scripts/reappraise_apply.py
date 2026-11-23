@@ -38,6 +38,7 @@ from reappraise_prepare import file_sha256  # noqa: E402
 import finding_counts  # noqa: E402
 import link_states  # noqa: E402
 import render_review  # noqa: E402
+from sourcefidelity_core import admissibility  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -184,23 +185,14 @@ def render_review_text(original, task, judgments, day, counts=None):
             list(task.get("sources", {}))[0] if task.get("sources") else "")
         observation = (task.get("sources", {}).get(source_key, {})
                        .get("copy_observation") or {})
-        if observation and new != "Not Judged" and observation.get("status") in (
-                "inadequate", "unresolved"):
-            raise SystemExit(
-                f"{cid}: {source_key} copy coverage is {observation['status']} "
-                f"({observation.get('reason', 'coverage unresolved')}); "
-                "return Not Judged or record the coverage limitation")
-        if (observation and new in ("Contradicts", "Not Supported")
-                and not observation.get("absence_allowed")):
-            raise SystemExit(
-                f"{cid}: {source_key} coverage does not permit an absence "
-                "conclusion; return Not Judged")
-        edition = observation.get("edition") or {}
-        if (new in ("Contradicts", "Not Supported")
-                and edition and not edition.get("absence_allowed")):
-            raise SystemExit(
-                f"{cid}: {source_key} edition ({edition.get('status')}) does not "
-                "permit an absence conclusion; return Not Judged")
+        if observation:
+            use = ("negative" if new in ("Contradicts", "Not Supported")
+                   else "affirmative")
+            decision = admissibility.decide(observation, use)
+            if not decision["allowed"]:
+                raise SystemExit(
+                    f"{cid}: {source_key} copy is not admissible for {use} "
+                    f"({decision['reason']}); return Not Judged")
         block = set_judgment(block, new)
         evidence = (change.get("evidence") or "").strip()
         locator = (change.get("locator") or "").strip()

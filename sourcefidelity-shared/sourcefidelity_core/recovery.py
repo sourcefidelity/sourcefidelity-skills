@@ -18,6 +18,7 @@ import math
 import os
 import re
 
+from . import admissibility
 from . import claim_assessment as core
 from . import script_detect, segmentation
 from . import source_index as shared_index
@@ -477,19 +478,12 @@ def eligible(record):
         return False, "extraction_missing"
     if (record or {}).get("identity_status") not in CONFIRMED:
         return False, "identity_unresolved"
+    observation = dict((record or {}).get("copy_observation") or {})
     scope = (record or {}).get("scope") or {}
-    if scope.get("status") in BLOCKED_SCOPES:
-        return False, "scope_" + str(scope.get("status"))
-    observation = (record or {}).get("copy_observation") or {}
-    edition = observation.get("edition")
-    status = edition.get("status", "") if isinstance(edition, dict) else ""
-    if not status:
-        observed = observation.get("observed") or {}
-        observed_edition = observed.get("edition")
-        status = (observed_edition.get("status", "") if isinstance(observed_edition, dict)
-                  else str(observed_edition or ""))
-    if status.casefold() in BLOCKED_EDITIONS:
-        return False, "edition_" + status
+    observation.setdefault("status", scope.get("status", ""))
+    decision = admissibility.decide(observation, "recovery")
+    if not decision["allowed"]:
+        return False, str(decision["reason"]).replace("copy_scope_", "scope_")
     return True, ""
 
 

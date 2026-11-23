@@ -275,9 +275,8 @@ def main():
                         f"{identity.get('title', '')}.")
         observation["edition"] = source_scope.observe_edition(
             edition_text, [], {}, identity_status=rec.get("identity_status", ""))
-        observation["absence_allowed"] = bool(
-            observation.get("absence_allowed")
-            and observation["edition"].get("absence_allowed", True))
+        observation["absence_allowed"] = admissibility.decide(
+            observation, "absence")["allowed"]
         text_cache = None
         if extraction and os.path.exists(extraction):
             text_cache = make_task.page_index(extraction)

@@ -92,6 +92,7 @@ from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
 from sourcefidelity_core import admission as core_admission  # noqa: E402
+from sourcefidelity_core import admissibility  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
 from sourcefidelity_core import web_page  # noqa: E402
@@ -8050,6 +8051,32 @@ class WebPageValidatorTests(unittest.TestCase):
         result = web_page.validate(body, {
             "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
         self.assertEqual(result["identity_confidence"], "rejected")
+
+
+class AdmissibilityPolicyTests(unittest.TestCase):
+    def test_same_edition_permits_every_use(self):
+        observation = {"status": "adequate", "absence_allowed": True,
+                       "edition": {"status": "same_year_or_unstated",
+                                   "absence_allowed": True, "affirmative_use": True,
+                                   "pagination_allowed": True}}
+        for use in ("affirmative", "judgment_window", "recovery", "negative",
+                    "absence", "pagination", "reappraisal_affirmative"):
+            self.assertTrue(admissibility.decide(observation, use)["allowed"], use)
+
+    def test_later_edition_permits_affirmative_but_not_absence_or_windows(self):
+        observation = {"status": "adequate", "absence_allowed": False,
+                       "edition": {"status": "later_edition",
+                                   "absence_allowed": False, "affirmative_use": True,
+                                   "pagination_allowed": False}}
+        self.assertTrue(admissibility.decide(observation, "affirmative")["allowed"])
+        for use in ("judgment_window", "recovery", "negative", "absence", "pagination"):
+            self.assertFalse(admissibility.decide(observation, use)["allowed"], use)
+
+    def test_inadequate_scope_blocks_all_uses(self):
+        observation = {"status": "unresolved", "edition": {"status": ""}}
+        for use in ("affirmative", "judgment_window", "recovery", "negative",
+                    "absence", "pagination"):
+            self.assertFalse(admissibility.decide(observation, use)["allowed"], use)
 
 
 class SourceValidatorTests(unittest.TestCase):
