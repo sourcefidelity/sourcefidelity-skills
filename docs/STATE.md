@@ -7,7 +7,7 @@
 
 | Item | Value |
 |---|---|
-| Branch | `codex/sourcefidelity-dev`; working tree clean; stable `main` is `v1.1.2` |
+| Branch | `codex/sourcefidelity-dev`; stable `main` is `v1.1.2` |
 | Source version | `1.1.2` (`VERSION`); dev branch, no new release tag |
 | Scope | APA 7 only; 15,000-word target; no glossary, other styles or chapter topology |
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
@@ -73,7 +73,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O7 metrics | `optimization_metrics.py`; text-free fixture; R37 metrics | 588 tests. Counts stage/acquire time, claims, judgments, reasons, retries, sources, windows/index/response-cache reuse and optional token usage; no paper/source text. |
 | R46 O6 parallel pipeline | `parallel_pipeline.py`; bounded executor/retry tests | 587 tests. Papers run through task→route→screen with bounded overlap; claims are emitted only for checkpoint-pending packets and completed claims are skipped. |
 | R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |
-| R34 preflight | tests, docs, parity, installer | 588 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
+| R34 preflight | tests, docs, parity, installer | 588 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. R37 settled; R39 source-limited. Release bump/tag/publish pending. |
 | R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
 | R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
