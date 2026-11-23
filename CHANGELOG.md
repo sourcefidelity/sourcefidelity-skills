@@ -9,12 +9,12 @@
   fixture resumed from 10/150 to 160/0 with every packet at or under 4,000 bytes.
 
 - **Real long-paper R37 orchestration.** A 9.8k-word paper with 36 claims was
-  run end to end: 36/36 accounted, one model-eligible claim judged Not Judged,
-  35 source-unavailable claims deterministically Not Judged, checkpoint
-  partial→complete, max packet 3,544 bytes. Supporting fixes count fresh
-  candidate citations before a worker summary exists, validate multi-line
-  reference spans, and account no-evidence claims as complete rather than
-  pending. 578 tests pass.
+  run end to end: 36/36 accounted, three model-eligible claims judged Not
+  Judged, 33 source-unavailable claims deterministically Not Judged,
+  checkpoint partial→complete, max packet 3,544 bytes. Supporting fixes count
+  fresh candidate citations before a worker summary exists, validate multi-line
+  reference spans, account no-evidence claims as complete rather than pending,
+  and add DOI/Crossref open-access fallback. 581 tests pass.
 
 - **Terse schema-bound output (R46 O5).** Judgment reasons are capped at 400
   characters, evidence contributions at 240, and a reason that reproduces an

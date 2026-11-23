@@ -40,6 +40,10 @@ def openalex_search(title, author="", year=""):
         {"search": query, "per-page": "1", "mailto": transport.CONTACT or "noreply@example.org"})
     data, result = get_json(url, "openalex")
     work = ((data or {}).get("results") or [{}])[0]
+    return _openalex_work(work, result)
+
+
+def _openalex_work(work, result):
     location = work.get("best_oa_location") or work.get("primary_location") or {}
     access = (location.get("pdf_url") or location.get("landing_page_url")
               or (work.get("open_access") or {}).get("oa_url") or "")
@@ -53,6 +57,30 @@ def openalex_search(title, author="", year=""):
         "is_oa": bool((work.get("open_access") or {}).get("is_oa")),
         "limitation": result.get("limitation", ""),
     }
+
+
+def openalex_by_doi(doi):
+    """Resolve one exact DOI to its OpenAlex OA location, not a title guess."""
+    doi = str(doi or "").strip().replace("https://doi.org/", "")
+    if not doi:
+        return {"provider": "openalex", "found": False, "access_url": "",
+                "limitation": "no_doi"}
+    url = OPENALEX + "/https://doi.org/" + doi
+    data, result = get_json(url, "openalex")
+    work = data or {}
+    return _openalex_work(work, result)
+
+
+def crossref_pdf_links(doi):
+    """PDF links Crossref records for an exact DOI, in declared order."""
+    doi = str(doi or "").strip().replace("https://doi.org/", "")
+    if not doi:
+        return []
+    data, _result = get_json("https://api.crossref.org/works/" + doi, "crossref")
+    message = (data or {}).get("message") or {}
+    return list(dict.fromkeys(
+        link.get("URL", "") for link in message.get("link") or []
+        if link.get("content-type") == "application/pdf" and link.get("URL")))
 
 
 def ia_metadata(identifier):

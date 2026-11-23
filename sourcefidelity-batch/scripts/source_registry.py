@@ -942,6 +942,12 @@ def main():
     root = os.path.abspath(args.batch)
     has_summaries = bool(paper_index.summary_paths(root))
     works = summary_sources(root) if has_summaries else candidate_sources(root)
+    # A worker summary can exist before its sources array is populated; keep
+    # the fresh candidate citation counts so O1 does not regress to uncited.
+    for key, candidate in candidate_sources(root).items():
+        if key in works:
+            works[key]["citations"] += candidate.get("citations", 0)
+            works[key]["papers"] |= candidate.get("papers", set())
     aliases = canonicalise(works)
 
     manual = {}

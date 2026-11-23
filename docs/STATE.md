@@ -13,7 +13,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 578 pipeline tests. Style and PDF suites passed. |
+| Test suites | 581 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 578 passed |
+| Pipeline regressions | `test_pipeline.py` | 581 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
@@ -71,12 +71,11 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O2 source index | `source_index.py`; make_task; tests | 570 tests. One content-addressed paragraph index per extraction, keyed by text and pages.csv hashes; `make_task` reuses it across citations and papers; BM25 rescue reads persisted paragraph tokens and offsets, not the source text. |
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
-| R34 preflight | tests, docs, parity, installer | 578 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
-| R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 1 model Not Judged, 35 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
-| R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 1 model Not Judged, 35 source-unavailable; source quality/coverage open. |
+| R34 preflight | tests, docs, parity, installer | 581 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
+| R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
+| R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
 | R35 bounded model rescue | `rescue_select.py` `emit`/`record`/`apply`; tests | On failure, numbers up to 30 candidates, one bounded model selects 0-3 IDs; validated rescue windows are prioritized. C19 selected the Luxembourg paragraph and judged Supports. |
 | R35 broad calibration | 16 one-call DeepSeek-V4.1-Flash packets after normalization, binding and model rescue | 12/16 exact: C1/C3/C4/C5/C8/C9/C11/C13/C14/C17/C18/C19 matched. C2 Supports vs manual Qualified; C7/C16/C20 conservative/adjacent. No Supports/Contradicts split. 16/20 occurrences judged (11 Supports, 5 Qualified); 4 Not Judged. Rerender hashes identical. |
-| R35 reference whitespace repair | `claim_assessment.py` and `render_review.py` normalise trailing reference whitespace; fixture and real replay | C1/C4/C5/C11/C14/C16/C17/C18/C20 became eligible instead of being hidden by a trailing space; 454 tests pass; broad render reproducible with identical hashes. |
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
 | One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |
 | Shared assessment and parity | Pipeline packet, judgment and parity CLI fixtures | Comparable runs in separate roots pass. Missing or invalid artifacts and differences in copy hashes, locators or spans fail. Full single/batch parity remains open. |
@@ -117,6 +116,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Full-text recovery apply is coordinator-side | `apply` updates one paper and refuses when findings and summary disagree; it does not repair a stale batch. | Rerender first. Without a claims plan, one occurrence is one claim. The 2026-11-22 batch was applied in a copy. |
 | KISS/RISS are fixture-tested | Live probes and recorded responses for the two Korean indexes are not yet stored; J-STAGE/CiNii live probes passed. | R47d or a live probe run; replace fixtures with recorded responses. |
 | CJK evidence is excerpt-tested | `acceptance_cjk` covers 6/7 real samples; the Korean government page hash changed; the same-language model check was Not Judged; no full real paper. | R47d real batch; re-download and re-hash changed pages. |
+| Source acquisition gap | Manual DOI checks retrieved R1 (Crossref), R9 (OpenAlex PDF) and R30 (MDPI mirror); the first automated pass found only R1. DOI/Crossref fallback is now implemented, but MDPI/Elsevier mirrors were blocked in this run. | Retry with the new DOI route and alternate mirrors; a source folder remains the reliable path. |
 | Long documents are source-limited | Real 9.8k-word paper has 36 claims but only one retrievable full text; 35 claims are source-unavailable Not Judged. R37 orchestration settled; R39 quality/source coverage remains open. | Obtain a source folder or more open copies before a quality claim. |
 | Batch and single review retrieve different sources | A one-paper batch registers only supplied-folder files unless acquired copies are ingested; the Television batch left fetched CORE PDFs in `_work` and produced 4 windows. | Land R30: canonical acquired-source staging and registration using the same acquisition engine as the single review |
 | The current single review cannot finish under the provider filter | Repeated long-context runs fail with `Content Exists Risk` before writing the review. | Move both paths to bounded per-citation assessment (R32); use another provider only as a fallback |

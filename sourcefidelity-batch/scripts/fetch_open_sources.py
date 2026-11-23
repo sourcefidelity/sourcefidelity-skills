@@ -55,6 +55,7 @@ def identity_of(record):
         "author": ident.get("author") or "",
         "year": ident.get("year") or "",
         "url": ident.get("url") or "",
+        "doi": ident.get("doi") or "",
     }
 
 
@@ -88,9 +89,20 @@ def resolve(record):
     title = ident["title"]
     if not title:
         return {"provider": "", "limitation": "no_title"}
-    oa = providers.openalex_search(title, ident["author"], ident["year"])
+    oa = (providers.openalex_by_doi(ident["doi"])
+          if ident.get("doi") else providers.openalex_search(
+              title, ident["author"], ident["year"]))
+    if not oa.get("access_url") and ident.get("doi"):
+        oa = providers.openalex_search(title, ident["author"], ident["year"])
+    urls = []
     if oa.get("access_url"):
-        attempt = try_text("openalex", oa["access_url"])
+        urls.append(("openalex", oa["access_url"]))
+    if ident.get("doi"):
+        for url in providers.crossref_pdf_links(ident["doi"]):
+            if url not in {item[1] for item in urls}:
+                urls.append(("crossref", url))
+    for provider_name, url in urls:
+        attempt = try_text(provider_name, url)
         if attempt.get("classification") == "full_text":
             return attempt
     ia = providers.ia_search(title, ident["year"])

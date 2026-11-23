@@ -3392,6 +3392,56 @@ class RetrievalPortTests(unittest.TestCase):
         self.assertEqual(found["access_url"], "https://example.org/oa.pdf")
         self.assertTrue(found["is_oa"])
 
+    def test_openalex_by_doi_resolves_the_exact_doi(self):
+        work = {"id": "https://openalex.org/W1", "title": "Work",
+                "doi": "https://doi.org/10.1234/x", "publication_year": 2024,
+                "open_access": {"is_oa": True},
+                "best_oa_location": {"pdf_url": "https://example.org/x.pdf"}}
+        with mock.patch.object(providers, "get_json", return_value=(work, {})):
+            found = providers.openalex_by_doi("10.1234/x")
+        self.assertEqual(found["doi"], "10.1234/x")
+        self.assertEqual(found["access_url"], "https://example.org/x.pdf")
+        self.assertTrue(found["is_oa"])
+
+    def test_open_fetch_prefers_a_doi_location_over_a_title_guess(self):
+        record = {"identity": {"title": "A Work", "doi": "10.1234/x"}}
+        with mock.patch.object(fos.providers, "openalex_by_doi",
+                               return_value={"access_url": "https://example.org/x.pdf"}) as by_doi, \
+                mock.patch.object(fos.providers, "openalex_search") as by_title, \
+                mock.patch.object(fos, "try_text",
+                                  return_value={"access_url": "https://example.org/x.pdf",
+                                                "classification": "full_text", "text": "text"}):
+            result = fos.resolve(record)
+        self.assertEqual(result["classification"], "full_text")
+        by_doi.assert_called_once()
+        by_title.assert_not_called()
+
+    def test_crossref_pdf_links_and_doi_fallback(self):
+        payload = {"message": {"link": [
+            {"content-type": "application/pdf", "URL": "https://example.org/a.pdf"},
+            {"content-type": "text/html", "URL": "https://example.org/a"}]}}
+        with mock.patch.object(providers, "get_json", return_value=(payload, {})):
+            self.assertEqual(providers.crossref_pdf_links("10.1/x"),
+                             ["https://example.org/a.pdf"])
+        record = {"identity": {"title": "A Work", "doi": "10.1/x"}}
+        attempts = []
+
+        def fake_text(provider, url):
+            attempts.append((provider, url))
+            if provider == "crossref":
+                return {"provider": provider, "access_url": url,
+                        "classification": "full_text", "text": "text"}
+            return {"provider": provider, "access_url": url, "limitation": "blocked"}
+
+        with mock.patch.object(fos.providers, "openalex_by_doi",
+                               return_value={"access_url": "https://example.org/oa.pdf"}), \
+                mock.patch.object(fos.providers, "crossref_pdf_links",
+                                  return_value=["https://example.org/a.pdf"]), \
+                mock.patch.object(fos, "try_text", side_effect=fake_text):
+            result = fos.resolve(record)
+        self.assertEqual(result["provider"], "crossref")
+        self.assertEqual(attempts[-1][1], "https://example.org/a.pdf")
+
     def test_internet_archive_metadata_finds_text_and_lending(self):
         meta = {"metadata": {"title": "Stars", "date": "2004"},
                 "files": [{"name": "stars_djvu.txt", "format": "DjVuTXT"}]}
