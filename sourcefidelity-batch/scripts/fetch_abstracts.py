@@ -137,6 +137,9 @@ def fetch_one(record):
     identity = record.get("identity") or {}
     doi = identity.get("doi") or ""
     if not doi:
+        match = re.search(r"10\.\d{4,9}/[^\s,;)\]]+", str(identity.get("verbatim") or ""))
+        doi = match.group(0) if match else ""
+    if not doi:
         return {}
     if str(doi).startswith("https://doi.org/"):
         doi = str(doi)[len("https://doi.org/"):]
@@ -180,7 +183,8 @@ def run(root, paper, force=False):
         key = source.get("source_key") or ""
         record = registry.get(key) or {}
         status = record.get("identity_status") or source.get("identity_status") or ""
-        if status not in {"confirmed", "supplied_confirmed", "possible_match"}:
+        if status not in {"confirmed", "supplied_confirmed", "possible_match",
+                          "resolved_external"}:
             continue
         if record.get("extraction"):
             continue

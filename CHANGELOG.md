@@ -47,7 +47,8 @@
   checked by one bounded scope request per source/chunk. Only high-confidence,
   explicit different-subject or incompatible-stated-scope results become
   report-only marks; omission, low confidence, truncation and span/hash faults
-  produce nothing. 594 tests pass.
+  produce nothing. Real R37: 7 abstracts, 4 calls/6 claims, 0 marks; positive
+  calibration produced 1 high-confidence mark. 594 tests pass.
 
 - **Text-free optimization metrics (R46 O7).** `optimization_metrics.py`
   records stage, acquisition, claim, judgment, retry, source, window and cache
