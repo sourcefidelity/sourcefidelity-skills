@@ -88,6 +88,7 @@ from sourcefidelity_core import recovery as core_recovery  # noqa: E402
 from sourcefidelity_core import reading_gate as core_gate  # noqa: E402
 from sourcefidelity_core import reference_language as core_reference_language  # noqa: E402
 from sourcefidelity_core import source_index as core_source_index  # noqa: E402
+from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
 from sourcefidelity_core import script_detect as core_script  # noqa: E402
 from sourcefidelity_core import segmentation as core_seg  # noqa: E402
@@ -7630,6 +7631,45 @@ class O2SourceIndexTests(unittest.TestCase):
             _, second = core_source_index.load_or_build(str(root), str(path))
             self.assertNotEqual(first["text_sha256"], second["text_sha256"])
             self.assertEqual(len(list((root / "_work" / "_indexes").glob("*.json"))), 2)
+
+
+class O4RoutingTests(unittest.TestCase):
+    def _task(self, statement, evidence):
+        citation = {"id": "X1", "sentence": statement, "marker": "(Smith, 2020)",
+                    "likely_r_ids": ["R1"]}
+        windows = [{"r_id": "R1", "source_key": "s1", "locator": "printed p. 1",
+                    "text": evidence, "text_sha256": "h"}] if evidence else []
+        return {"candidates": {"citations": [citation]}, "windows": {"X1": windows}}
+
+    def test_no_evidence_skips_the_model(self):
+        route = core_fast_paths.build_routes(self._task("A claim.", ""))
+        row = route["routes"][0]
+        self.assertEqual(row["route"], "no_evidence")
+        self.assertFalse(row["model_judgment"])
+
+    def test_exact_quote_and_gate_pass_do_not_skip_judgment(self):
+        task = self._task('The report calls it "community media policy" in practice.',
+                          "The report calls it community media policy in practice.")
+        route = core_fast_paths.build_routes(task)["routes"][0]
+        self.assertTrue(route["exact_quote"])
+        self.assertIn(route["route"], ("gate_pass", "gate_model", "risky"))
+        self.assertTrue(route["model_judgment"])
+
+    def test_risky_gate_routes_to_the_gate_model(self):
+        task = self._task("Cities should adopt community media policy immediately.",
+                          "Cities should adopt community media policy immediately.")
+        route = core_fast_paths.build_routes(task)["routes"][0]
+        self.assertEqual(route["route"], "risky")
+        self.assertTrue(route["model_gate"])
+
+    def test_identical_cache_key_reuses_without_a_judgment_call(self):
+        task = self._task("The directive creates a common market.",
+                          "The directive creates a common market.")
+        citation = task["candidates"]["citations"][0]
+        key = core_fast_paths.cache_key(citation, task["windows"]["X1"])
+        route = core_fast_paths.build_routes(task, {key: {"record": "c1.json"}})
+        self.assertEqual(route["routes"][0]["route"], "reuse")
+        self.assertFalse(route["routes"][0]["model_judgment"])
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):

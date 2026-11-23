@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** In progress as R46. O1 (cited-only acquisition and U screen) and O2 (source index) are implemented; O3–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index) and O4 (deterministic routing) are implemented; O3, O5–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 
@@ -65,6 +65,8 @@ Use content-addressed caches for:
 Invalidate only when the packet, source text, extraction options, policy version or schema changes. Reuse completed claims on replay and reappraisal. Never reuse a stored judgment whose packet hash no longer matches.
 
 ## 4. Deterministic fast paths
+
+Implemented as `fast_paths.py` and `route_claims.py`. The route artifact may skip a missing packet and reuse an identical validated record; it never skips the claim judgment because the reading gate passed. Risky or inconclusive gate checks are marked `model_gate`.
 
 Before any model call:
 

@@ -8,6 +8,12 @@
   unavailable source into an absence finding. A 160-claim / 15k+ word synthetic
   fixture resumed from 10/150 to 160/0 with every packet at or under 4,000 bytes.
 
+- **Deterministic claim routing (R46 O4).** `fast_paths.py` and
+  `route_claims.py` route no-evidence claims away from a model call, reuse
+  identical validated records, flag exact quotations, and mark risky or
+  inconclusive R45 checks for the gate model. A gate pass never skips the
+  claim judgment. 574 tests pass.
+
 - **Per-source paragraph index (R46 O2).** `source_index.py` stores one
   content-addressed paragraph index per extraction under `_work/_indexes/`,
   keyed by the text and pages.csv hashes. `make_task.py` reuses it across

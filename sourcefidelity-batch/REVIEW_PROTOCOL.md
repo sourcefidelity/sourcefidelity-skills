@@ -58,6 +58,8 @@ Ledger tables:
 
 Use explicit pending/completed/limited states; a found URL or extracted file is not a completed assessment. Reconcile narrative and after-punctuation occurrences with the original document before proceeding.
 
+**Claim routing is not a judgment.** No source window means no model claim call; an identical validated record may be reused; exact quotations are flagged but still judged. Only risky or inconclusive reading-gate checks go to the bounded gate model. A gate pass never substitutes for the claim judgment.
+
 **Completion criterion:** every citation occurrence, quotation needing inspection, reference entry, work discussed, and substantive uncited passage is accounted for.
 
 ## 3. Resolve sources and coverage
