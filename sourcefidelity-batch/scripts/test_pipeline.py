@@ -6732,6 +6732,15 @@ class CjkFoundationTests(unittest.TestCase):
         if not shutil.which("tesseract"):
             self.skipTest("Tesseract not available")
         try:
+            listed = subprocess.run(["tesseract", "--list-langs"],
+                                    capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError):
+            listed = ""
+        present = {line.strip() for line in listed.splitlines() if line.strip()}
+        missing = {"chi_sim", "chi_tra"} - present
+        if missing:
+            self.skipTest(f"Tesseract Chinese languages unavailable: {sorted(missing)}")
+        try:
             import pymupdf
         except ImportError:
             self.skipTest("PyMuPDF not available")
@@ -6816,6 +6825,15 @@ class CjkFoundationTests(unittest.TestCase):
         if not shutil.which("tesseract"):
             self.skipTest("Tesseract not available")
         try:
+            listed = subprocess.run(["tesseract", "--list-langs"],
+                                    capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError):
+            listed = ""
+        present = {line.strip() for line in listed.splitlines() if line.strip()}
+        missing = {"chi_sim", "chi_tra"} - present
+        if missing:
+            self.skipTest(f"Tesseract Chinese languages unavailable: {sorted(missing)}")
+        try:
             import pymupdf
         except ImportError:
             self.skipTest("PyMuPDF not available")
@@ -6854,6 +6872,15 @@ class CjkFoundationTests(unittest.TestCase):
     def test_generated_ocr_fixture_reports_cjk_script(self):
         if not shutil.which("tesseract"):
             self.skipTest("Tesseract not available")
+        try:
+            listed = subprocess.run(["tesseract", "--list-langs"],
+                                    capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.SubprocessError):
+            listed = ""
+        present = {line.strip() for line in listed.splitlines() if line.strip()}
+        missing = {"chi_sim", "chi_tra"} - present
+        if missing:
+            self.skipTest(f"Tesseract Chinese languages unavailable: {sorted(missing)}")
         try:
             import pymupdf
         except ImportError:
