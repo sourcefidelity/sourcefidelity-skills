@@ -42,6 +42,13 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Single-paper bounded requests (R46 O6 adaptation).** `one_paper.py
+  --bounded --inventory` generates a claim plan when absent, reads
+  checkpoint-pending packet-ready claims, and emits one request per claim in
+  parallel. A single 202/403/challenge URL no longer closes a search: the
+  protocol requires exact-title/identifier web search and at least two
+  independent fallback locations. 600 tests pass.
+
 - **Judgment consistency gate.** A Supports judgment is rejected when its own
   occurrence carries “No supporting evidence,” no source evidence, or a
   no-supporting-evidence note; Qualified or Mixed may still carry the missing

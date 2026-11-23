@@ -7806,6 +7806,22 @@ class O5TerseOutputTests(unittest.TestCase):
         self.assertIn("common market", response["reason"])
 
 
+class SingleBoundedTests(unittest.TestCase):
+    def test_claims_plan_is_generated_from_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_work" / "paper").mkdir(parents=True)
+            inventory = root / "inventory.json"
+            inventory.write_text(json.dumps({"occurrences": [
+                {"id": "C1", "statement": "First claim."},
+                {"id": "C2", "statement": "Second claim."},
+            ]}), encoding="utf-8")
+            path = op._claims_from_inventory(str(root), str(inventory))
+            plan = json.loads(Path(path).read_text(encoding="utf-8"))
+        self.assertEqual([row["occurrence_id"] for row in plan], ["C1", "C2"])
+        self.assertEqual(plan[0]["end"], len("First claim."))
+
+
 class JudgmentGuardTests(unittest.TestCase):
     def test_supports_cannot_carry_no_evidence(self):
         findings = {"occurrences": [{
