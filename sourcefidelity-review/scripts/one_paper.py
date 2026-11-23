@@ -118,6 +118,23 @@ def bounded_requests(root, inventory, claims="", jobs=4):
     return manifest
 
 
+def _run_pipeline(args):
+    inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
+    if not os.path.exists(inventory):
+        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
+                        "--batch", args.out, "--paper", "paper"], check=True)
+        args.inventory = inventory
+    subprocess.run([sys.executable, "-I", os.path.join(BATCH, "route_claims.py"),
+                    "--batch", args.out, "--paper", "paper"], check=False)
+    manifest = bounded_requests(args.out, inventory, args.claims, args.jobs)
+    subprocess.run([sys.executable, "-I", os.path.join(BATCH, "search_plan.py"),
+                    "--root", args.out, "--paper", "paper"], check=False)
+    subprocess.run([sys.executable, "-I", os.path.join(BATCH, "optimization_metrics.py"),
+                    "--root", args.out], check=False)
+    print(json.dumps({"pipeline": manifest}, indent=1))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--paper")
@@ -149,9 +166,10 @@ def main(argv=None):
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
     ap.add_argument("--jobs", type=int, default=4, help="parallel request emitters")
     args = ap.parse_args(argv)
+    preparing = bool(args.paper and args.sources)
     if args.pipeline and not args.inventory:
         args.bootstrap_inventory = True
-    if args.bootstrap_inventory:
+    if args.bootstrap_inventory and not preparing:
         subprocess.run([sys.executable, "-I", os.path.join(BATCH, "bootstrap_inventory.py"),
                         "--batch", args.out, "--paper", "paper"], check=True)
         args.inventory = os.path.join(args.out, "_work", "paper", "inventory.json")
@@ -210,17 +228,8 @@ def main(argv=None):
                         "--write", "--write-status"], check=False)
         print(json.dumps({"recorded": recorded, "responses": resp_dir}, indent=1))
         return 0
-    if args.pipeline:
-        inventory = args.inventory or os.path.join(args.out, "_work", "paper", "inventory.json")
-        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "route_claims.py"),
-                        "--batch", args.out, "--paper", "paper"], check=False)
-        manifest = bounded_requests(args.out, inventory, args.claims, args.jobs)
-        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "search_plan.py"),
-                        "--root", args.out, "--paper", "paper"], check=False)
-        subprocess.run([sys.executable, "-I", os.path.join(BATCH, "optimization_metrics.py"),
-                        "--root", args.out], check=False)
-        print(json.dumps({"pipeline": manifest}, indent=1))
-        return 0
+    if args.pipeline and not preparing:
+        return _run_pipeline(args)
     if args.bounded:
         if not args.inventory:
             ap.error("--bounded requires --inventory")
@@ -270,6 +279,8 @@ def main(argv=None):
         if args.apply_search:
             subprocess.run([sys.executable, "-I", os.path.join(BATCH, "search_apply.py"),
                             "--batch", args.out, "--paper", "paper"], check=False)
+    if args.pipeline:
+        return _run_pipeline(args)
     result = write_packets(task_path)
     result["prep"] = json.loads(proc.stdout) if proc.stdout.strip().startswith("{") else {}
     print(json.dumps(result, indent=1))

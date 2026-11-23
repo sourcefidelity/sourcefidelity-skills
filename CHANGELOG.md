@@ -42,6 +42,10 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Pipeline ordering fix.** `one_paper --paper ... --pipeline` now completes
+  preparation and acquisition before inventory/route/bounded stages; the
+  pipeline no longer runs against an unprepared root. 603 tests.
+
 - **Finalize path for bounded single reviews.** `one_paper --finalize` renders
   claim records and the final review from a prepared inventory/claims root;
   missing records remain Not Judged. 603 tests.
