@@ -7,10 +7,11 @@
     {"source_key": [{"url": "...", "title": "...", "authors": ["Smith"],
                      "year": "2024", "container": "..."}]}
 
-Each URL is fetched once. HTML/PDF content must carry the cited title and an
-author surname (and year when available) before the copy is saved under
-`_work/search-acquired/`. This is acquisition metadata, not evidence: the copy
-still has to be mapped/extracted and pass the normal evidence gates.
+Each URL is fetched once. HTML content is identity-only. PDF content must carry
+the cited title and author surname in the front matter, have at least two pages,
+contain readable text, and have a nonempty final page before it is marked a
+complete copy. This is still acquisition metadata, not evidence: the copy must
+be mapped/extracted and pass the normal evidence gates.
 """
 from __future__ import annotations
 
@@ -48,7 +49,10 @@ def _contains(identity, text, candidate):
     title = _norm(identity.get("title"))
     body = _norm(text)
     words = [word for word in title.split() if len(word) > 3]
-    return bool(words) and sum(word in body for word in words) >= max(1, len(words) // 2)
+    if not words or sum(word in body for word in words) < max(1, len(words) // 2):
+        return False
+    surname = str(identity.get("author") or "").split(",")[0].strip().casefold()
+    return not surname or surname in body
 
 
 def _html_candidate(body, fallback):
@@ -77,10 +81,18 @@ def _pdf_candidate(body, fallback):
     try:
         import pymupdf
         with pymupdf.open(stream=body, filetype="pdf") as pdf:
-            text = "\n".join(page.get_text() for page in pdf[:3])
+            pages = [page.get_text() for page in pdf]
     except Exception:
         return {}
-    return {**fallback, "text": text}
+    text = "\n".join(pages[:3]) + "\n" + (pages[-1] if pages else "")
+    words = len(text.split())
+    last_words = len(pages[-1].split()) if pages else 0
+    quality = ("pure_scan" if words < 50 else "scan_ocr" if words < 500 else "digital")
+    complete = len(pages) >= 2 and words >= 500 and last_words >= 20
+    return {**fallback, "text": text, "page_count": len(pages),
+            "text_words": words, "last_page_words": last_words,
+            "quality": quality, "complete": complete,
+            "completeness": "complete_pdf" if complete else "incomplete_or_truncated_pdf"}
 
 
 def _fetch(url):
@@ -133,9 +145,12 @@ def run(root, results_path):
             verified.append({"source_key": key, "url": final, "path": target,
                              "content_type": content_type, "bytes": len(body),
                              "provider": "host_search", "identity_status": "verified",
-                             "complete": suffix == "pdf",
-                             "completeness": ("pdf_copy" if suffix == "pdf"
-                                               else "html_identity_only")})
+                             "complete": bool(parsed.get("complete", False)) if suffix == "pdf" else False,
+                             "completeness": parsed.get("completeness",
+                                                        "html_identity_only"),
+                             "quality": parsed.get("quality", "unassessed_html"),
+                             "page_count": parsed.get("page_count", 0),
+                             "text_words": parsed.get("text_words", 0)})
             break
     manifest = {"schema": "search-acquired-v1", "verified": verified,
                 "rejected": rejected,
