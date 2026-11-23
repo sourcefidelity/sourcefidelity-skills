@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index), O3 (response/window caches and resume), O4 (deterministic routing), O5 (terse output) and O6 (bounded parallel pipeline) are implemented; O7 remains. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index), O3 (response/window caches and resume), O4 (deterministic routing), O5 (terse output), O6 (bounded parallel pipeline) and O7 (text-free optimization metrics) are implemented. The R39 real-paper quality gate remains source-limited. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 

@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Text-free optimization metrics (R46 O7).** `optimization_metrics.py`
+  records stage, acquisition, claim, judgment, retry, source, window and cache
+  counts without paper or source text; token usage is included when a
+  `token-usage.json` is supplied. 588 tests pass.
+
 - **Bounded parallel pipeline (R46 O6).** `parallel_pipeline.py` runs papers
   through task→route→screen with a bounded worker pool, records retries and
   stage wall time, refuses duplicate work, and emits claim requests only for

@@ -101,6 +101,7 @@ import web_cache  # noqa: E402
 import fetch_open_sources as fos  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
+import optimization_metrics as om  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -110,6 +111,7 @@ import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
 import parallel_pipeline as pp  # noqa: E402
+import optimization_metrics as om  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
@@ -7901,6 +7903,47 @@ class ParallelPipelineTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         task = next(stage for stage in result["stages"] if stage["stage"] == "task")
         self.assertEqual(task["attempts"], 2)
+
+
+class OptimizationMetricsTests(unittest.TestCase):
+    def test_metrics_are_text_free_and_count_reuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            (work / "claim-records").mkdir()
+            (work / "claim-records" / "C1.1.json").write_text("{}", encoding="utf-8")
+            (work / "task.json").write_text(json.dumps({
+                "candidates": {"citations": [{"id": "X1"}]},
+                "windows": {"X1": [{"text": "SECRET SOURCE TEXT"}]},
+            }), encoding="utf-8")
+            (work / "run-status.json").write_text(json.dumps({
+                "total": 2, "complete_count": 1, "pending_count": 1,
+                "not_judged_count": 0,
+            }), encoding="utf-8")
+            (work / "claim-findings.json").write_text(json.dumps({
+                "occurrences": [{"id": "C1", "judgment": "Supports",
+                                 "sources": [{"source_key": "s"}]},
+                                {"id": "C2", "judgment": "Not Judged",
+                                 "sources": [{"source_key": "s"}]}],
+                "not_judged_reasons": {"model_abstained": 1},
+            }), encoding="utf-8")
+            (root / "source_registry.json").write_text(json.dumps({"works": {
+                "s": {"citation_count": 1, "identity_status": "supplied_confirmed",
+                      "identity": {"title": "SECRET SOURCE TITLE"}},
+            }}), encoding="utf-8")
+            (root / "_work" / "parallel_metrics.json").write_text(json.dumps({
+                "wall_seconds": 2.0, "stage_seconds": {"task": 1.0},
+                "retries": 1,
+            }), encoding="utf-8")
+            data = om.collect(str(root))
+        encoded = json.dumps(data)
+        self.assertNotIn("SECRET", encoded)
+        self.assertEqual(data["claims"]["total"], 2)
+        self.assertEqual(data["claims"]["full_text_unjudged"], 1)
+        self.assertEqual(data["citations"]["with_windows"], 1)
+        self.assertEqual(data["retries"], 1)
+        self.assertEqual(data["sources"]["cited"], 1)
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):

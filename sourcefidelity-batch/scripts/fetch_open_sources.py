@@ -16,6 +16,8 @@ import argparse
 import json
 import os
 import sys
+import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -157,6 +159,7 @@ def resolve(record):
 
 
 def collect(root, limit=0, dry_run=False):
+    started = time.monotonic()
     works = registry_works(root)
     allowlist_path = os.path.join(root, "_work", "uncited-allowlist.json")
     allowlist = set()
@@ -195,8 +198,13 @@ def collect(root, limit=0, dry_run=False):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(index, handle, ensure_ascii=False, indent=1)
-    return {"works": len(works), "open_text": found, "limited": limited,
-            "uncited_skipped": uncited, "dry_run": dry_run}
+    result = {"works": len(works), "open_text": found, "limited": limited,
+              "uncited_skipped": uncited, "dry_run": dry_run,
+              "wall_seconds": round(time.monotonic() - started, 3)}
+    Path(os.path.join(root, "_work", "acquisition_metrics.json")).write_text(
+        json.dumps({"schema": "acquisition-metrics-v1", **result}, indent=1) + "\n",
+        encoding="utf-8")
+    return result
 
 
 def main():
