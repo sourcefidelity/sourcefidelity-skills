@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import batch_paths  # noqa: E402
 from sourcefidelity_core import claim_assessment as core  # noqa: E402
 from sourcefidelity_core import recovery  # noqa: E402
+from sourcefidelity_core import source_index  # noqa: E402
 
 RENDER = os.path.join(HERE, "render_review.py")
 NOT_JUDGED_REASONS = ("source_missing", "source_unreadable", "identity_unresolved",
@@ -313,9 +314,8 @@ def prepare(root, paper, occurrence, claim_id="", claims_path="", whole_source=F
     extraction = entry.get("extraction", "")
     if not extraction or not os.path.exists(extraction):
         raise SystemExit(f"{paper} {occurrence}: extraction is missing")
-    with open(extraction, encoding="utf-8") as handle:
-        text = handle.read()
-    index = recovery.index_with_text_cached(text, root)
+    text, index = source_index.load_or_build(root, extraction)
+    index["text"] = text
     recorded = entry.get("extraction_text_sha256") or ""
     if recorded and index["text_sha256"] != recorded:
         raise SystemExit(f"{paper} {occurrence}: extraction text changed; rerun queue")

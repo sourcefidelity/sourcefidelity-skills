@@ -1,9 +1,9 @@
-"""Content-addressed per-source paragraph index, shared across citations.
+"""The one content-addressed paragraph index for extracted sources.
 
-The index stores offsets, page coordinates, normalized tokens and span hashes,
-not the source text. It is keyed by the extraction text hash and pages.csv hash,
-so a changed extraction or page map invalidates it. `make_task.py` reuses one
-index across every citation of the same source and across papers in a batch.
+The index owns page parsing, paragraph segmentation, script-aware tokenization,
+back-matter exclusion, offsets and span hashes. It is keyed by extraction text
+and page-map hashes. Window selection, recovery passage selection and reappraisal
+read the same index; their choice policy stays outside this module.
 """
 from __future__ import annotations
 
@@ -13,11 +13,19 @@ import json
 import os
 import re
 
+from . import script_detect, segmentation
 from .search_normalize import normalise_query
 
-VERSION = "source-index-v1"
+VERSION = "source-index-v3"
 PAGE_MARK = re.compile(r"^=== PDF p(\d+) \| printed p([^|]*)\|", re.M)
 PARAGRAPH = re.compile(r"\n\s*\n+")
+SENTENCE = re.compile(r"(?<=[.!?])\s+")
+WORD = re.compile(r"[a-z0-9][a-z0-9'’\-]*")
+UNICODE_WORD = re.compile(r"[^\W\d_][\w'’\-]*", re.UNICODE)
+BACK_MATTER = re.compile(
+    r"(?i)^(references|bibliography|works cited|further reading|suggested reading|notes|index)\b")
+BACK_MATTER_SKIP = 120
+MAX_PASSAGE_CHARS = 1200
 
 
 def sha256(value):
@@ -38,35 +46,85 @@ def _read_pages(path):
     return pages
 
 
+def _split_long(text, start, stop, limit=MAX_PASSAGE_CHARS):
+    if stop - start <= int(limit * 1.4):
+        yield start, stop
+        return
+    cursor = start
+    for match in SENTENCE.finditer(text, start, stop):
+        boundary = match.start()
+        if boundary - cursor < int(limit * 0.75):
+            continue
+        yield cursor, boundary
+        cursor = match.end()
+    if cursor < stop:
+        yield cursor, stop
+
+
 def build(text, pages=None, *, text_hash="", pages_hash=""):
-    marks = [(m.start(), int(m.group(1)), m.group(2).strip())
-             for m in PAGE_MARK.finditer(text)]
+    raw_marks = [(m.start(), m.end(), int(m.group(1)), m.group(2).strip())
+                 for m in PAGE_MARK.finditer(text)]
+    marks = [(start, pdf, printed) for start, _end, pdf, printed in raw_marks]
+    page_blocks = []
+    if not raw_marks:
+        page_blocks.append((0, len(text), "", ""))
+    for position, (_page_start, header_end, pdf, printed) in enumerate(raw_marks):
+        page_end = (raw_marks[position + 1][0] if position + 1 < len(raw_marks)
+                    else len(text))
+        if printed in ("", "—", "-"):
+            printed = ""
+        line_end = text.find("\n", header_end)
+        content_start = line_end + 1 if 0 <= line_end < page_end else header_end
+        page_blocks.append((content_start, page_end, str(pdf), printed))
+    threshold = int(len(page_blocks) * 0.6)
+    back_from = None
+    for position, (page_start, _stop, _pdf, _printed) in enumerate(page_blocks):
+        if position < threshold:
+            continue
+        head = normalise_query(text[page_start:page_start + BACK_MATTER_SKIP]).strip()
+        if BACK_MATTER.match(head):
+            back_from = position
+            break
+    selected = page_blocks[:back_from] if back_from is not None else page_blocks
+    back_matter_from = page_blocks[back_from][3] if back_from is not None else ""
     paragraphs = []
-    for position, (page_start, pdf, printed) in enumerate(marks):
-        page_end = marks[position + 1][0] if position + 1 < len(marks) else len(text)
+    for page_start, page_stop, pdf, printed in selected:
         cursor = page_start
         spans = []
-        for match in PARAGRAPH.finditer(text, page_start, page_end):
+        for match in PARAGRAPH.finditer(text, page_start, page_stop):
             if match.start() > cursor:
                 spans.append((cursor, match.start()))
             cursor = match.end()
-        if cursor < page_end:
-            spans.append((cursor, page_end))
-        for start, end in spans:
-            body = text[start:end]
-            tokens = [token for token in normalise_query(body).split()
-                      if len(token) >= 3]
-            if not tokens:
-                continue
-            paragraphs.append({
-                "start": start, "end": end,
-                "pdf_page": pdf, "printed_page": printed,
-                "tokens": tokens,
-                "sha256": sha256(body),
-            })
+        if cursor < page_stop:
+            spans.append((cursor, page_stop))
+        for start, stop in spans:
+            for part_start, part_stop in _split_long(text, start, stop):
+                chunk = text[part_start:part_stop]
+                language = script_detect.detect(chunk)["language"]
+                minimum = 20 if language in ("zh", "ja", "ko") else 40
+                if len(chunk.strip()) < minimum:
+                    continue
+                norm = normalise_query(chunk)
+                if language in ("zh", "ja", "ko"):
+                    tokens = [item["term"] for item in
+                              segmentation.unique_terms(chunk, language)]
+                elif language == "latin":
+                    tokens = [token for token in WORD.findall(norm) if len(token) >= 3]
+                else:
+                    tokens = [token for token in UNICODE_WORD.findall(norm)
+                              if len(token) >= 2]
+                if len(tokens) < 4:
+                    continue
+                paragraphs.append({
+                    "start": part_start, "end": part_stop,
+                    "pdf_page": pdf, "printed_page": printed,
+                    "norm": norm, "tokens": tokens, "language": language,
+                    "sha256": sha256(chunk),
+                })
     return {"version": VERSION, "text_sha256": text_hash or sha256(text),
             "pages_sha256": pages_hash, "marks": marks,
             "pages": pages or {}, "paragraphs": paragraphs,
+            "blocks": paragraphs, "back_matter_from": back_matter_from,
             "paragraph_count": len(paragraphs)}
 
 
@@ -150,7 +208,7 @@ def rank_paragraphs(index, terms, page_range=None, *, limit=10):
     if not query:
         return []
     folders = []
-    for paragraph in index.get("paragraphs") or []:
+    for paragraph in index.get("paragraphs") or index.get("blocks") or []:
         printed = paragraph.get("printed_page", "")
         if page_range and not _in_range(printed, page_range):
             continue

@@ -119,8 +119,6 @@ def collect(root, selected=None):
             "source_indexes": count_files(root, "_work", "_indexes", "*.json"),
             "ranked_candidate_sets": count_files(root, "_work", "_indexes", "rank",
                                                   "*.json"),
-            "recovery_indexes": count_files(root, "_work", "_indexes", "recovery",
-                                             "*.json"),
         },
         "sources": sources,
         "acquisition": acquisition or None,

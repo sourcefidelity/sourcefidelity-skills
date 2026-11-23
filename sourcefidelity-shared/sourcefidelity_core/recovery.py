@@ -20,6 +20,7 @@ import re
 
 from . import claim_assessment as core
 from . import script_detect, segmentation
+from . import source_index as shared_index
 from .search_normalize import normalise_query, word_variants
 
 VERSION = "full-text-recovery-v1"
@@ -103,59 +104,13 @@ BACK_MATTER_SKIP = 120
 
 
 def build_index(text):
-    """One page-aware paragraph index; offsets refer to the extraction text."""
-    blocks = []
-    text_sha = sha256(text)
-    pages = list(_page_blocks(text))
-    threshold = int(len(pages) * 0.6)
-    back_from = None
-    for position, (page_start, _page_stop, _pdf, _printed_page) in enumerate(pages):
-        if position < threshold:
-            continue
-        head = normalise_query(text[page_start:page_start + BACK_MATTER_SKIP]).strip()
-        if BACK_MATTER.match(head):
-            back_from = position
-            break
-    selected_pages = pages[:back_from] if back_from is not None else pages
-    back_matter_from = pages[back_from][3] if back_from is not None else ""
-    for page_start, page_stop, pdf_page, printed_page in selected_pages:
-        cursor = page_start
-        spans = []
-        for match in PARAGRAPH.finditer(text, page_start, page_stop):
-            if match.start() > cursor:
-                spans.append((cursor, match.start()))
-            cursor = match.end()
-        if cursor < page_stop:
-            spans.append((cursor, page_stop))
-        for start, stop in spans:
-            for part_start, part_stop in _split_long(text, start, stop):
-                chunk = text[part_start:part_stop]
-                language = script_detect.detect(chunk)["language"]
-                minimum = 20 if language in ("zh", "ja", "ko") else 40
-                if len(chunk.strip()) < minimum:
-                    continue
-                norm = normalise_query(chunk)
-                if language in ("zh", "ja", "ko"):
-                    tokens = [item["term"] for item in
-                              segmentation.unique_terms(chunk, language)]
-                elif language == "latin":
-                    tokens = [token for token in WORD.findall(norm) if len(token) >= 3]
-                else:
-                    tokens = [token for token in UNICODE_WORD.findall(norm)
-                              if len(token) >= 2]
-                if len(tokens) < 4:
-                    continue
-                blocks.append({
-                    "start": part_start,
-                    "end": part_stop,
-                    "pdf_page": pdf_page,
-                    "printed_page": printed_page,
-                    "norm": norm,
-                    "tokens": tokens,
-                    "sha256": sha256(chunk),
-                })
-    return {"version": VERSION, "text_sha256": text_sha, "blocks": blocks,
-            "back_matter_from": back_matter_from}
+    """Build through the shared source index; recovery keeps only its policy."""
+    built = shared_index.build(text)
+    return {"version": shared_index.VERSION,
+            "text_sha256": built["text_sha256"],
+            "blocks": built["paragraphs"],
+            "paragraphs": built["paragraphs"],
+            "back_matter_from": built.get("back_matter_from", "")}
 
 
 def claim_terms(claim, limit=40):
@@ -495,24 +450,8 @@ def index_with_text(text):
 
 
 def index_with_text_cached(text, root):
-    """Content-addressed recovery index shared by every occurrence of a source."""
-    text_hash = sha256(text)
-    path = os.path.join(root, "_work", "_indexes", "recovery", text_hash + ".json")
-    try:
-        with open(path, encoding="utf-8") as handle:
-            cached = json.load(handle)
-        if cached.get("version") == VERSION and cached.get("text_sha256") == text_hash:
-            cached["text"] = text
-            return cached
-    except (OSError, ValueError):
-        pass
-    index = index_with_text(text)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    payload = dict(index)
-    payload.pop("text", None)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, indent=1)
-    return index
+    """Compatibility wrapper: the shared index cache owns persistence."""
+    return index_with_text(text)
 
 
 def locator_page_range(locator):
