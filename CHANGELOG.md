@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Bounded parallel pipeline (R46 O6).** `parallel_pipeline.py` runs papers
+  through task→route→screen with a bounded worker pool, records retries and
+  stage wall time, refuses duplicate work, and emits claim requests only for
+  checkpoint-pending packets. 587 tests pass.
+
 - **Per-source paragraph index (R46 O2).** `source_index.py` stores one
   content-addressed paragraph index per extraction under `_work/_indexes/`,
   keyed by the text and pages.csv hashes. `make_task.py` reuses it across

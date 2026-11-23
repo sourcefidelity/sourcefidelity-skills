@@ -13,7 +13,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 585 pipeline tests. Style and PDF suites passed. |
+| Test suites | 587 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 585 passed |
+| Pipeline regressions | `test_pipeline.py` | 587 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
@@ -38,7 +38,6 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Controlled dev verification | Fresh install after R23/R24; one real paper run | 14m 02s vs stable 13m 51s; 14.28M vs 9.14M prompt tokens; $0.1291 vs $0.0906; link audit clean; C2/C4/U and R1 page range fixed, but C1 still p.503 and C11 lost its B finding |
 | Fetch transport | Real DOI/Cambridge link and full paper link audit | Auto mode follows the OS path: 8 reachable, 1 blocked, 0 `private_host`; literal private targets still refused; strict mode retained |
 | Chapter boundaries | Real Berry source pack | Index shows file pages 55-82 and cited pages 57-82 separately; scope kind is `chapter_edited_collection`; 401 tests |
-| Stage receipts | A synthetic batch and the real Television batch | Requests/retries/reuse and latency counted separately; receipt carries no text; offline verify passes and detects a changed task input |
 | Recoverable reappraisal | Stale, member and interrupted-commit fixtures | Binding checked even with unchanged judgments. Interrupted writes restore exact artifact bytes. Canonical occurrence counts and saved link observations update with the summary. |
 | Finding counts | Derived-count, mismatch and no-ID fixtures; protocol copies | Category/issue counts come from ID-bearing findings; a summary count mismatch is rejected; all three protocols carry the same hyperlink row and HL definition |
 | Academic checks | Positive, negative and abstention fixtures; real Berry quotation | Quote matched at span and page; locator `p. 63` matched; mismatches and short/empty inputs abstain rather than fail silently |
@@ -71,8 +70,9 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O2 source index | `source_index.py`; make_task; tests | 570 tests. One content-addressed paragraph index per extraction, keyed by text and pages.csv hashes; `make_task` reuses it across citations and papers; BM25 rescue reads persisted paragraph tokens and offsets, not the source text. |
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
+| R46 O6 parallel pipeline | `parallel_pipeline.py`; bounded executor/retry tests | 587 tests. Papers run through task→route→screen with bounded overlap; claims are emitted only for checkpoint-pending packets and completed claims are skipped. |
 | R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |
-| R34 preflight | tests, docs, parity, installer | 585 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
+| R34 preflight | tests, docs, parity, installer | 587 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
 | R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
 | R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
 | R35 broad calibration | 16 one-call DeepSeek-V4.1-Flash packets after normalization, binding and model rescue | 12/16 exact: C1/C3/C4/C5/C8/C9/C11/C13/C14/C17/C18/C19 matched. C2 Supports vs manual Qualified; C7/C16/C20 conservative/adjacent. No Supports/Contradicts split. 16/20 occurrences judged (11 Supports, 5 Qualified); 4 Not Judged. Rerender hashes identical. |

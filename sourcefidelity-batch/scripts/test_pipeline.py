@@ -100,6 +100,7 @@ import validate_inventory as vi  # noqa: E402
 import web_cache  # noqa: E402
 import fetch_open_sources as fos  # noqa: E402
 import resolve_dois as rd  # noqa: E402
+import parallel_pipeline as pp  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -108,6 +109,7 @@ from retrieval import providers  # noqa: E402
 import which_python as wp  # noqa: E402
 import word_count as wc  # noqa: E402
 import resolve_dois as rd  # noqa: E402
+import parallel_pipeline as pp  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
@@ -7857,6 +7859,48 @@ class O3CacheTests(unittest.TestCase):
             self.assertEqual(judgment, "Supports")
             self.assertTrue(sources)
             self.assertTrue(claims_cli.claim_record(str(work), "C1.1").exists())
+
+
+class ParallelPipelineTests(unittest.TestCase):
+    def test_bounded_paper_executor_limits_active_workers(self):
+        import threading
+        lock = threading.Lock()
+        active = 0
+        maximum = 0
+
+        def worker(paper):
+            nonlocal active, maximum
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return {"paper": paper, "ok": True, "stages": []}
+
+        started = time.monotonic()
+        results = pp.run_papers(["P1", "P2", "P3", "P4"], 2, worker)
+        elapsed = time.monotonic() - started
+        self.assertEqual(len(results), 4)
+        self.assertLessEqual(maximum, 2)
+        self.assertGreaterEqual(maximum, 2)
+        self.assertLess(elapsed, 0.35)
+
+    def test_stage_retry_is_recorded(self):
+        calls = {"task": 0}
+
+        def fake_command(label, command, timeout=900):
+            if label == "task":
+                calls["task"] += 1
+                return {"stage": label, "ok": calls["task"] > 1,
+                        "seconds": 0.01, "returncode": 0 if calls["task"] > 1 else 1}
+            return {"stage": label, "ok": True, "seconds": 0.01, "returncode": 0}
+
+        with mock.patch.object(pp, "run_command", side_effect=fake_command):
+            result = pp.run_paper("/tmp/root", "P1", retries=1)
+        self.assertTrue(result["ok"])
+        task = next(stage for stage in result["stages"] if stage["stage"] == "task")
+        self.assertEqual(task["attempts"], 2)
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):
