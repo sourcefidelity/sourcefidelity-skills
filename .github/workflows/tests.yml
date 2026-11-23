@@ -46,9 +46,18 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $dir = Split-Path (Get-Command tesseract).Source
-          $dir | Out-File -FilePath $env:GITHUB_PATH -Append
-          Write-Host "Added $dir"
+          $candidates = @(
+            "${env:ProgramFiles}\Tesseract-OCR",
+            "C:\ProgramData\chocolatey\bin"
+          )
+          $found = $candidates | Where-Object {
+            Test-Path (Join-Path $_ "tesseract.exe")
+          }
+          if (-not $found) {
+            throw "Tesseract executable not found in known Windows locations"
+          }
+          $found | Out-File -FilePath $env:GITHUB_PATH -Append
+          Write-Host "Added $($found -join ', ')"
       - name: Verify Tesseract languages
         shell: bash
         run: |
