@@ -128,14 +128,46 @@ def collect(root, paper, inventory_path, claims_path):
     return result
 
 
+def resolve(root, paper, claim, judgment, reason):
+    work = _work(root, paper)
+    path = os.path.join(work, "blind-audit.json")
+    audit = load(path)
+    if not audit:
+        raise ValueError("run blind audit collect first")
+    if judgment not in {"Supports", "Qualified or Mixed", "Contradicts",
+                        "Not Supported", "Not Judged"}:
+        raise ValueError("invalid resolution judgment")
+    for row in audit.get("rows", []):
+        if row.get("claim_id") == claim:
+            row["resolved_judgment"] = judgment
+            row["resolution_reason"] = reason
+            row["status"] = "resolved"
+            break
+    else:
+        raise ValueError("unknown claim")
+    audit["resolved"] = sum(1 for row in audit["rows"] if row.get("status") == "resolved")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(audit, handle, ensure_ascii=False, indent=1)
+    return {"claim": claim, "resolved_judgment": judgment, "out": path}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", required=True)
     ap.add_argument("--paper", default="paper")
-    ap.add_argument("--inventory", required=True)
-    ap.add_argument("--claims", required=True)
-    ap.add_argument("mode", choices=("prepare", "collect"))
+    ap.add_argument("--inventory", default="")
+    ap.add_argument("--claims", default="")
+    ap.add_argument("--claim", default="")
+    ap.add_argument("--judgment", default="")
+    ap.add_argument("--reason", default="")
+    ap.add_argument("mode", choices=("prepare", "collect", "resolve"))
     args = ap.parse_args(argv)
+    if args.mode == "resolve":
+        print(json.dumps(resolve(os.path.abspath(args.root), args.paper,
+                                 args.claim, args.judgment, args.reason), indent=1))
+        return 0
+    if not args.inventory or not args.claims:
+        ap.error("prepare/collect require --inventory and --claims")
     fn = prepare if args.mode == "prepare" else collect
     print(json.dumps(fn(os.path.abspath(args.root), args.paper,
                         args.inventory, args.claims), indent=1))
