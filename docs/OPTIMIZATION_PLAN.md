@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index) and O4 (deterministic routing) and O5 (terse output) are implemented; O3 and O6–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index), O3 (response/window caches and resume), O4 (deterministic routing) and O5 (terse output) are implemented; O6–O7 remain. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 
@@ -52,6 +52,8 @@ Implemented as `source_index.py` under `_work/_indexes/`: one content-addressed 
 This directly supports R44 and removes repeated tokenization/window work.
 
 ## 3. Cache and reuse
+
+Implemented: `packet_cache.py` reuses a validated response only when the packet hash and schema/output profile match; `window_cache.py` reuses identical source/citation window results; extraction/page-index reuse and checkpoint/resume already existed.
 
 Use content-addressed caches for:
 

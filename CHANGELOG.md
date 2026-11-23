@@ -28,6 +28,12 @@
   inconclusive R45 checks for the gate model. A gate pass never skips the
   claim judgment. 574 tests pass.
 
+- **Response and window caches (R46 O3).** `packet_cache.py` reuses a
+  validated model response only when the packet hash, assessment schema and
+  output profile match; `window_cache.py` persists identical source/citation
+  window results. A cached response populates a missing local claim record, so
+  checkpoint resume does not repeat the call. 585 tests pass.
+
 - **OA acquisition promoted from the review engine (R46/O1).** Batch
   `fetch_open_sources.py` now reuses `resolve_dois.resolve_copy` for DOI
   resolution, Unpaywall/OpenAlex/Semantic Scholar/Europe PMC/CORE locations,

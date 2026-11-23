@@ -34,6 +34,7 @@ from sourcefidelity_core.search_normalize import (  # noqa: E402
     SearchText, normalise_query, surface_phrases, word_variants,
 )
 from sourcefidelity_core import source_index  # noqa: E402
+from sourcefidelity_core import window_cache  # noqa: E402
 import source_registry  # noqa: E402
 import web_cache  # noqa: E402
 
@@ -641,6 +642,13 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
                 meta.get("text_sha256", ""), built)
         (text, marks, pages, text_sha256, source_sha256, extraction_version,
          extraction_options, page_map_sha256, extraction_text_sha256, built) = cache[path]
+        wkey = window_cache.key(text_sha256, phrases, page_range, width, limit,
+                                quotes, source)
+        cached_windows = window_cache.load(root, wkey)
+        if cached_windows is not None:
+            merged = dict(status)
+            merged.update(cached_windows.get("status") or {})
+            return cached_windows["hits"], merged
         hits = windows(text, marks, pages, phrases, width, page_range, limit=limit,
                        quotes=quotes)
         if len(hits) < limit and citation is not None:
@@ -681,6 +689,7 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
                 provider = source.get("open_provider", "open")
                 url = source.get("open_url", "")
                 hit.update(locator=f"{provider}: {url}", source_url=url)
+        window_cache.store(root, wkey, hits, status)
     elif source.get("work_kind") == "web" and source.get("url"):
         urls = [{"r_id": rid, "url": source["url"]}]
         hits = web_windows(root, urls, phrases, width, limit)

@@ -13,7 +13,7 @@
 | Latest published release | `v1.1.2`, with the release asset and `sha256` recorded in `latest.json` on `main` |
 | `latest.json` availability | On `main`; stable `1.1.2` only |
 | Installed copy | `~/.dsh/skills`, version `1.1.2`, channel `dev`; shared core included; shared venv intact |
-| Test suites | 582 pipeline tests. Style and PDF suites passed. |
+| Test suites | 585 pipeline tests. Style and PDF suites passed. |
 | Docs check | `scripts/check_docs.py`, added with this documentation set |
 
 The package now contains the review, batch and reappraisal skills, the dossier-first workflow, the source pack, the open-access and host-state fetch helpers, and the weekly update check with the release installer.
@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 582 passed |
+| Pipeline regressions | `test_pipeline.py` | 585 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
 | Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
@@ -71,10 +71,10 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O2 source index | `source_index.py`; make_task; tests | 570 tests. One content-addressed paragraph index per extraction, keyed by text and pages.csv hashes; `make_task` reuses it across citations and papers; BM25 rescue reads persisted paragraph tokens and offsets, not the source text. |
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
-| R34 preflight | tests, docs, parity, installer | 582 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
+| R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |
+| R34 preflight | tests, docs, parity, installer | 585 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. Release bump/tag/publish pending. |
 | R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
 | R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
-| R35 bounded model rescue | `rescue_select.py` `emit`/`record`/`apply`; tests | On failure, numbers up to 30 candidates, one bounded model selects 0-3 IDs; validated rescue windows are prioritized. C19 selected the Luxembourg paragraph and judged Supports. |
 | R35 broad calibration | 16 one-call DeepSeek-V4.1-Flash packets after normalization, binding and model rescue | 12/16 exact: C1/C3/C4/C5/C8/C9/C11/C13/C14/C17/C18/C19 matched. C2 Supports vs manual Qualified; C7/C16/C20 conservative/adjacent. No Supports/Contradicts split. 16/20 occurrences judged (11 Supports, 5 Qualified); 4 Not Judged. Rerender hashes identical. |
 | Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
 | One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |

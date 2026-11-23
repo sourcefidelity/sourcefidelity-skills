@@ -89,6 +89,7 @@ from sourcefidelity_core import reading_gate as core_gate  # noqa: E402
 from sourcefidelity_core import reference_language as core_reference_language  # noqa: E402
 from sourcefidelity_core import source_index as core_source_index  # noqa: E402
 from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
+from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
 from sourcefidelity_core import script_detect as core_script  # noqa: E402
 from sourcefidelity_core import segmentation as core_seg  # noqa: E402
@@ -7795,6 +7796,67 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class O3CacheTests(unittest.TestCase):
+    def _packet_response(self):
+        packet = {"kind": "claim",
+                  "passages": [{"passage_id": "P1", "r_id": "R1", "source_key": "s1",
+                                "locator": "printed p. 1",
+                                "text": "The directive creates a common market."}]}
+        response = {"packet_sha256": core_claim.digest(packet), "judgment": "Supports",
+                    "reason": "The passage supports the claim.",
+                    "evidence": [{"passage_id": "P1", "start": 0, "end": 12,
+                                  "contribution": "States the finding."}]}
+        return packet, response
+
+    def test_packet_cache_reuses_only_the_same_packet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            packet, response = self._packet_response()
+            core_packet_cache.store(tmp, packet, response)
+            self.assertEqual(core_packet_cache.load(tmp, packet), response)
+            changed = {"passages": [{"passage_id": "P1", "r_id": "R1",
+                                     "source_key": "s1", "locator": "p. 2",
+                                     "text": "Different."}]}
+            self.assertIsNone(core_packet_cache.load(tmp, changed))
+
+    def test_window_cache_reuses_an_identical_source_phrase(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            extraction = root / "_sources" / "s" / "text.txt"
+            extraction.parent.mkdir(parents=True)
+            extraction.write_text(
+                "=== PDF p1 | printed p1 | native\nThe directive creates a common market.\n",
+                encoding="utf-8")
+            source = {"source_key": "s", "identity": {"title": "Work"},
+                      "extraction": str(extraction)}
+            citation = {"id": "X1", "sentence": "The directive creates a common market."}
+            first, _ = mt.source_windows(str(root), "R1", source,
+                                         ["common market"], 120, 2, {}, citation=citation)
+            self.assertTrue(first)
+            original = mt.windows
+            mt.windows = lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("window search repeated"))
+            try:
+                second, _ = mt.source_windows(str(root), "R1", source,
+                                              ["common market"], 120, 2, {},
+                                              citation=citation)
+            finally:
+                mt.windows = original
+            self.assertEqual(second, first)
+
+    def test_cached_response_populates_a_missing_claim_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "paper"
+            work.mkdir(parents=True)
+            packet, response = self._packet_response()
+            core_packet_cache.store(str(root), packet, response)
+            judgment, reason, sources, code = claims_cli.get_result(
+                str(work), "C1.1", packet, "", str(root))
+            self.assertEqual(judgment, "Supports")
+            self.assertTrue(sources)
+            self.assertTrue(claims_cli.claim_record(str(work), "C1.1").exists())
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):

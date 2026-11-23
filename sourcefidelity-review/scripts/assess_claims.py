@@ -22,7 +22,8 @@ sys.path.insert(0, str(BATCH))
 sys.path.insert(0, str(SKILLS / "sourcefidelity-shared"))
 import batch_paths  # noqa: E402
 import validate_inventory  # noqa: E402
-from sourcefidelity_core import claim_assessment as core  # noqa: E402
+from sourcefidelity_core import claim_assessment as core
+from sourcefidelity_core import packet_cache  # noqa: E402
 
 
 def load(path):
@@ -163,7 +164,7 @@ def packets(task, inventory, plan):
         yield cid, occurrence["id"], packet, limitation
 
 
-def get_result(work, cid, packet, limitation):
+def get_result(work, cid, packet, limitation, root=""):
     if packet is None:
         return "Not Judged", limitation, [], "packet_failure"
     record = claim_record(work, cid)
@@ -171,6 +172,13 @@ def get_result(work, cid, packet, limitation):
     if exact is not None:
         write_record(record, exact)
         return exact["judgment"], exact["reason"], core.response_evidence(packet, exact), ""
+    if root:
+        cached = packet_cache.load(root, packet)
+        if cached is not None:
+            write_record(record, cached)
+            sources = core.response_evidence(packet, cached)
+            return cached["judgment"], " ".join(cached["reason"].split()), sources, (
+                "model_abstained" if cached["judgment"] == "Not Judged" else "")
     samples = sample_records(work, cid)
     if samples:
         judgment, reason, sources = aggregate_samples(packet, samples)
@@ -194,7 +202,9 @@ def assemble(work, paper_id, task, inventory, prepared, metadata):
         raise ValueError("report metadata must be an object without occurrence judgments")
     results = {o["id"]: [] for o in inventory.get("occurrences", [])}
     for cid, oid, packet, limitation in prepared:
-        judgment, reason, sources, code = get_result(work, cid, packet, limitation)
+        judgment, reason, sources, code = get_result(
+            work, cid, packet, limitation,
+            os.path.dirname(os.path.dirname(str(work))))
         results[oid].append((judgment, f"{cid}: {judgment}. {reason}", sources, code,
                              packet, limitation))
     annotations = metadata.get("occurrence_annotations", {})
@@ -307,6 +317,8 @@ def main(argv=None):
         target = (sample_record(work, args.claim, sample)
                   if sample is not None else claim_record(work, args.claim))
         write_record(target, response)
+        if sample is None:
+            packet_cache.store(os.path.abspath(args.root), packet, response)
         print(json.dumps({"claim_id": args.claim, "recorded": True, "judgment": response["judgment"]}))
         return 0
     except (OSError, ValueError, KeyError, TypeError) as exc:
