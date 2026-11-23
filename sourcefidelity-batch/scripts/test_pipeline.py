@@ -7752,6 +7752,36 @@ class O2SourceIndexTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertIn("Luxembourg", hits[0]["text"])
 
+    def test_ranked_candidates_are_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index = core_source_index.build(
+                "=== PDF p1 | printed p1 | native\n"
+                "Community media policy shaped local broadcasting.\n\n"
+                "Licensing and access are discussed separately.\n", {})
+            first = core_source_index.rank_paragraphs_cached(
+                str(root), index, ["community", "media"])
+            self.assertTrue(first)
+            files = list((root / "_work" / "_indexes" / "rank").glob("*.json"))
+            self.assertEqual(len(files), 1)
+            second = core_source_index.rank_paragraphs_cached(
+                str(root), index, ["community", "media"])
+            self.assertEqual([paragraph["start"] for _score, paragraph in first],
+                             [paragraph["start"] for _score, paragraph in second])
+
+    def test_recovery_index_is_content_addressed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = ("=== PDF p1 | printed p1 | native\n"
+                    "Community media policy shaped local broadcasting. " * 3)
+            first = core_recovery.index_with_text_cached(text, str(root))
+            self.assertEqual(first["version"], core_recovery.VERSION)
+            files = list((root / "_work" / "_indexes" / "recovery").glob("*.json"))
+            self.assertEqual(len(files), 1)
+            second = core_recovery.index_with_text_cached(text, str(root))
+            self.assertEqual(first["text_sha256"], second["text_sha256"])
+            self.assertEqual(len(first["blocks"]), len(second["blocks"]))
+
     def test_changed_text_invalidates_the_index(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -13,6 +13,7 @@ If no passage with claim-specific terms survives, the caller records
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 import re
@@ -490,6 +491,27 @@ def index_with_text(text):
     """Build an index that keeps the extraction text for passage extraction."""
     index = build_index(text)
     index["text"] = text
+    return index
+
+
+def index_with_text_cached(text, root):
+    """Content-addressed recovery index shared by every occurrence of a source."""
+    text_hash = sha256(text)
+    path = os.path.join(root, "_work", "_indexes", "recovery", text_hash + ".json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            cached = json.load(handle)
+        if cached.get("version") == VERSION and cached.get("text_sha256") == text_hash:
+            cached["text"] = text
+            return cached
+    except (OSError, ValueError):
+        pass
+    index = index_with_text(text)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    payload = dict(index)
+    payload.pop("text", None)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=1)
     return index
 
 

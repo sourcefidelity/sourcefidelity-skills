@@ -315,7 +315,7 @@ def prepare(root, paper, occurrence, claim_id="", claims_path="", whole_source=F
         raise SystemExit(f"{paper} {occurrence}: extraction is missing")
     with open(extraction, encoding="utf-8") as handle:
         text = handle.read()
-    index = recovery.index_with_text(text)
+    index = recovery.index_with_text_cached(text, root)
     recorded = entry.get("extraction_text_sha256") or ""
     if recorded and index["text_sha256"] != recorded:
         raise SystemExit(f"{paper} {occurrence}: extraction text changed; rerun queue")

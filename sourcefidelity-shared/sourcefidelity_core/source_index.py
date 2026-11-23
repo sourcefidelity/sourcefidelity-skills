@@ -108,6 +108,38 @@ def load_or_build(root, text_path, key=""):
     return text, index
 
 
+def _rank_cache_path(root, index, terms, page_range, limit):
+    payload = {"version": VERSION, "text_sha256": index.get("text_sha256", ""),
+               "pages_sha256": index.get("pages_sha256", ""),
+               "terms": [str(term) for term in terms or []],
+               "page_range": list(page_range or []), "limit": limit}
+    key = sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False))
+    return os.path.join(root, "_work", "_indexes", "rank", key + ".json")
+
+
+def rank_paragraphs_cached(root, index, terms, page_range=None, *, limit=10):
+    """Persist ranked offsets so identical claims reuse the candidate set."""
+    path = _rank_cache_path(root, index, terms, page_range, limit)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            cached = json.load(handle)
+        if cached.get("version") == VERSION:
+            return [(row["score"], {"start": row["start"], "end": row["end"],
+                                    "printed_page": row.get("printed_page", "")})
+                    for row in cached.get("rows", [])]
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    ranked = rank_paragraphs(index, terms, page_range, limit=limit)
+    rows = [{"score": score, "start": paragraph.get("start"),
+             "end": paragraph.get("end"),
+             "printed_page": paragraph.get("printed_page", "")}
+            for score, paragraph in ranked]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"version": VERSION, "rows": rows}, handle, ensure_ascii=False, indent=1)
+    return ranked
+
+
 def rank_paragraphs(index, terms, page_range=None, *, limit=10):
     """BM25 over the persisted paragraph tokens; offsets survive for windows."""
     query = []

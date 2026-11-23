@@ -485,7 +485,7 @@ def _bm25_tokens(text):
 
 
 def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used,
-                     index=None):
+                     index=None, root=""):
     """BM25 over source paragraphs when coarse windows leave claim terms uncovered."""
     if not terms or limit <= 0:
         return []
@@ -497,9 +497,10 @@ def paragraph_rescue(text, marks, pages, terms, width, page_range, limit, used,
             query_terms.extend(value.split())
     query_terms = list(dict.fromkeys(query_terms))
     if index is not None:
+        ranked = (source_index.rank_paragraphs_cached(root, index, terms, page_range, limit=50)
+                  if root else source_index.rank_paragraphs(index, terms, page_range, limit=50))
         scores = [(score, paragraph["start"], paragraph["end"], paragraph["printed_page"])
-                  for score, paragraph in source_index.rank_paragraphs(
-                      index, terms, page_range, limit=50)]
+                  for score, paragraph in ranked]
     else:
         folders = []
         for start, end, printed in _paragraph_spans(text, marks):
@@ -665,7 +666,7 @@ def source_windows(root, rid, source, phrases, width, limit, cache,
                 used = [(hit["start"], hit["end"]) for hit in hits]
                 hits.extend(paragraph_rescue(
                     text, marks, pages, terms, width, page_range,
-                    max(1, limit - len(hits)), used, index=built))
+                    max(1, limit - len(hits)), used, index=built, root=root))
         if not hits and extraction:
             identity = source.get("identity") or {}
             terms = (title_phrases(identity.get("title", "")) +

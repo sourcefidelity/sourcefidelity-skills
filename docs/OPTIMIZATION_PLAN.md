@@ -53,7 +53,7 @@ This directly supports R44 and removes repeated tokenization/window work.
 
 ## 3. Cache and reuse
 
-Implemented: `packet_cache.py` reuses a validated response only when the packet hash and schema/output profile match; `window_cache.py` reuses identical source/citation window results; extraction/page-index reuse and checkpoint/resume already existed.
+Implemented: `packet_cache.py` reuses a validated response only when the packet hash and schema/output profile match; `window_cache.py` reuses identical source/citation window results; extraction/page-index reuse and checkpoint/resume already existed. O2 now also persists ranked candidate sets (`_work/_indexes/rank/`) and reuses the recovery paragraph index (`_work/_indexes/recovery/`).
 
 Use content-addressed caches for:
 
