@@ -8291,6 +8291,17 @@ class FindingCountsTests(unittest.TestCase):
                          {"A": 2, "B": 0, "HL": 1})
         self.assertEqual(fc.reconcile(self._findings()), [])
 
+    def test_combined_category_is_counted_in_each_arm(self):
+        findings = {"references": [
+            {"id": "R1", "category": "A+HL", "issue_type": "missing DOI",
+             "apa": ["titles set in title case instead of sentence case"]},
+        ], "summary": {"category_a": ["titles (R1)"],
+                       "hyperlinks_missing": [{"work": "R1", "reason": "no DOI"}]}}
+        counts = fc.issue_counts(findings)
+        self.assertIn("R1", counts["A"]["ids"])
+        self.assertIn("R1", counts["HL"]["ids"])
+        self.assertEqual(fc.reconcile(findings), [])
+
     def test_summary_ids_must_match_their_category(self):
         findings = self._findings()
         findings["summary"]["category_a"] = ["missing link (R1)"]

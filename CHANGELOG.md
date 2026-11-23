@@ -45,7 +45,7 @@
 - **Summary-ID reconciliation.** The render gate now rejects a Category A or B
   summary line that names an ID whose findings category is only HL or the other
   category; this catches reports whose prose overstates evidenced findings.
-  595 tests pass.
+  Combined A+HL/B+HL categories are counted in each arm. 596 tests pass.
 
 - **Abstract-only topical attention (R43).** Identity-gated abstracts are
   fetched from OpenAlex, Crossref, Semantic Scholar or a DOI landing page and

@@ -29,8 +29,9 @@ def occurrence_line(counts):
 
 def _categories(item, default=""):
     value = str(item.get("category") or item.get("summary_category") or default or "")
-    if value.replace(" ", "").upper() == "A+B":
-        return ["A", "B"]
+    compact = value.replace(" ", "").upper()
+    if compact in {"A+B", "A+HL", "B+HL", "A+B+HL"}:
+        return [part for part in compact.split("+") if part in CATEGORIES]
     return [value] if value in CATEGORIES else []
 
 
