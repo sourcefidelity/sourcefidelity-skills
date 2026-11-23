@@ -35,6 +35,7 @@ import make_task  # noqa: E402
 import prepare_source as prepare_source_module  # noqa: E402
 import source_scope  # noqa: E402
 from file_digest import sha256_file  # noqa: E402
+from sourcefidelity_core import window_cache  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -109,19 +110,30 @@ def match_supplied(files, registry):
     return out
 
 
-def window_hits(text_cache, citation, identity, container, page_range):
+def window_hits(text_cache, citation, identity, container, page_range,
+                *, root="", source_key=""):
     """Primary sentence-phrase windows, then title terms as a fallback."""
+    import hashlib
     text, marks, pages = text_cache
-    hits = make_task.windows(text, marks, pages, make_task.phrases_for(citation),
-                             240, page_range)
-    if hits:
-        return hits
-    phrases = (make_task.title_phrases(identity.get("title", "")) +
-               make_task.title_phrases(container or ""))
-    hits = make_task.windows(text, marks, pages, phrases, 240, page_range,
-                             body_only=True, allow_single=True)
-    for hit in hits:
-        hit["fallback"] = "title_terms"
+    phrases = make_task.phrases_for(citation)
+    cache_key = hashlib.sha256(
+        (source_key + "|" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+         + "|" + "|".join(phrases) + "|" + str(page_range)).encode("utf-8")
+    ).hexdigest()
+    if root:
+        cached = window_cache.load(root, cache_key)
+        if cached is not None:
+            return cached["hits"]
+    hits = make_task.windows(text, marks, pages, phrases, 240, page_range)
+    if not hits:
+        title_phrases = (make_task.title_phrases(identity.get("title", "")) +
+                         make_task.title_phrases(container or ""))
+        hits = make_task.windows(text, marks, pages, title_phrases, 240, page_range,
+                                 body_only=True, allow_single=True)
+        for hit in hits:
+            hit["fallback"] = "title_terms"
+    if root:
+        window_cache.store(root, cache_key, hits, {"status": "found" if hits else "no_window"})
     return hits
 
 
@@ -291,7 +303,8 @@ def main():
                     windows[cid] = window_hits(
                         text_cache, phrase_cit, identity,
                         rec.get("container_title", ""),
-                        page_range if restrict else None)
+                        page_range if restrict else None,
+                        root=root, source_key=key)
                 entries.append({
                     "id": cid,
                     "locator": entry.get("locator", ""),

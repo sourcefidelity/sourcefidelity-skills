@@ -128,6 +128,10 @@ def main(argv=None):
     ap.add_argument("--window", type=int, default=360)
     ap.add_argument("--inventory", help="render the adjudicated inventory from this run")
     ap.add_argument("--findings", help="render judgment records from this run")
+    ap.add_argument("--acquire", action="store_true",
+                    help="run provider acquisition and rebuild windows after prep")
+    ap.add_argument("--search-plan", action="store_true",
+                    help="write the cited unacquired search plan after prep")
     ap.add_argument("--bounded", action="store_true",
                     help="emit bounded claim requests for an existing prepared root")
     ap.add_argument("--claims", default="", help="claim plan for --bounded")
@@ -167,6 +171,15 @@ def main(argv=None):
         print("preparation produced no task.json", file=sys.stderr)
         return 2
     task_path = sorted(tasks)[0]
+    if args.acquire or args.search_plan:
+        if args.acquire:
+            subprocess.run([sys.executable, "-I", os.path.join(BATCH, "fetch_open_sources.py"),
+                            "--batch", args.out], check=False)
+            subprocess.run([sys.executable, "-I", os.path.join(BATCH, "make_task.py"),
+                            "--batch", args.out, "--paper", "paper"], check=False)
+        if args.search_plan:
+            subprocess.run([sys.executable, "-I", os.path.join(BATCH, "search_plan.py"),
+                            "--root", args.out, "--paper", "paper"], check=False)
     result = write_packets(task_path)
     result["prep"] = json.loads(proc.stdout) if proc.stdout.strip().startswith("{") else {}
     print(json.dumps(result, indent=1))

@@ -42,6 +42,11 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Single-paper acquisition hooks and reappraisal window reuse.** `one_paper
+  --acquire` runs provider acquisition and rebuilds windows; `--search-plan`
+  writes the cited unacquired search plan. Reappraisal windows now use the
+  content-addressed window cache. 601 tests.
+
 - **Search-plan bridge and single-paper driver.** `search-plan.json` now lists
   every cited unacquired work with DOI/title/web queries and provider status;
   `one_paper --bounded` emits one packet per checkpoint-pending claim. The
