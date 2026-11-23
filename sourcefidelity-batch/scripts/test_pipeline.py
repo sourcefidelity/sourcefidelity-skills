@@ -108,6 +108,7 @@ import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
 import search_acquire as search_acquire_cli  # noqa: E402
+import search_apply as search_apply_cli  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
 import screen_uncited_model as sumodel  # noqa: E402
@@ -120,6 +121,7 @@ import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
 import search_acquire as search_acquire_cli  # noqa: E402
+import search_apply as search_apply_cli  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
 import dossier  # noqa: E402
@@ -7808,6 +7810,24 @@ class O5TerseOutputTests(unittest.TestCase):
         sources = core_claim.response_evidence(packet, response)
         self.assertTrue(sources)
         self.assertIn("common market", response["reason"])
+
+
+class SearchApplyTests(unittest.TestCase):
+    def test_only_verified_copies_are_mapped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_work").mkdir()
+            source = root / "candidate.pdf"
+            source.write_bytes(b"%PDF-1.4")
+            (root / "source_registry.json").write_text(json.dumps({"works": {}}),
+                                                       encoding="utf-8")
+            (root / "_work" / "search-acquired.json").write_text(json.dumps({
+                "verified": [{"source_key": "s1", "path": str(source)}],
+                "rejected": [{"source_key": "s2", "path": str(source)}],
+            }), encoding="utf-8")
+            result = search_apply_cli.run(str(root), "paper", dry_run=True)
+        self.assertEqual(result["mapped"], 1)
+        self.assertEqual(result["maps"][0]["source_key"], "s1")
 
 
 class SearchAcquireTests(unittest.TestCase):

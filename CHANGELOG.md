@@ -42,6 +42,10 @@
   if its prose contains words like “lending.” Manual checks retrieved R1/R9/R30;
   R6/R20 publisher routes remain blocked. 582 tests pass.
 
+- **Verified search-copy application.** `search_apply.py` maps only verified
+  host-search copies, preserves existing supplied mappings, re-extracts and
+  rebuilds task windows; `one_paper --apply-search` wires it. 603 tests.
+
 - **Host-model bounded collection.** `one_paper --collect-bounded` records
   host-written responses, writes checkpoint/run status, and keeps model calls
   outside the skill. Added `BOUNDED_WORKER.md`. 602 tests.
