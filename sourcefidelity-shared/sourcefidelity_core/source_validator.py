@@ -11,10 +11,11 @@ from difflib import SequenceMatcher
 
 VERSION = "source-validation-v1"
 _BAD_PAGE = re.compile(r"\b(table of contents|search results|sign in|log in|access denied|"
-                       r"cookie settings|subscription required)\b", re.I)
+                       r"cookie settings|subscription required|abstract only|"
+                       r"download pdf|purchase this|preview only)\b", re.I)
 _DOI = re.compile(r"10\.\d{4,9}/[^\s\"<>]+", re.I)
 _ISBN = re.compile(r"\b(?:97[89][\d -]{10,17}|\d{9}[\dXx])\b")
-_UNSAFE = re.compile(rb"/(?:JavaScript|JS|Launch|EmbeddedFile)\b")
+_UNSAFE = re.compile(rb"/(?:JavaScript|JS|Launch|EmbeddedFile|OpenAction|AA|RichMedia|XFA)\b")
 
 
 def _norm(value):
@@ -51,12 +52,27 @@ def validate_pdf(content, expected):
         with pymupdf.open(stream=content, filetype="pdf") as pdf:
             pages = [page.get_text() for page in pdf]
             metadata = pdf.metadata or {}
+            layout = pdf[0].get_text("dict") if pages else {}
     except Exception:
         return _result(False, "rejected", "uncertain", "unreadable", "PDF unreadable")
     if not pages:
         return _result(False, "rejected", "empty", "unreadable", "no pages")
     front = "\n".join(pages[:3])[:24000]
     back = "\n".join(pages[-2:]) if len(pages) > 1 else pages[-1]
+    sizes = [span.get("size", 0) for block in layout.get("blocks", [])
+             for line in block.get("lines", []) for span in line.get("spans", [])
+             if span.get("text", "").strip()]
+    body_size = sorted(sizes)[len(sizes) // 2] if sizes else 0
+    prominent = False
+    for block in layout.get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if (body_size and span.get("size", 0) >= body_size * 1.15
+                        and _norm(span.get("text", ""))):
+                    prominent = True
+    observed_kind = ("book" if re.search(r"\bISBN\b", front, re.I) and len(pages) >= 20
+                     else "article" if re.search(r"\b(journal|volume|issue)\b", front, re.I)
+                     else "unknown")
     words = sum(len(page.split()) for page in pages)
     last_words = len(pages[-1].split())
     quality = "pure_scan" if words < 50 else "scan_ocr" if words < 500 else "digital"
@@ -106,7 +122,8 @@ def validate_pdf(content, expected):
                    observed_identity={"title": meta_title, "doi": sorted(found_dois),
                                       "isbn": sorted(found_isbns)},
                    doi_match=doi_match, doi_conflict=doi_conflict,
-                   isbn_conflict=isbn_conflict, back_matter=back_matter)
+                   isbn_conflict=isbn_conflict, back_matter=back_matter,
+                   title_prominent=prominent, observed_kind=observed_kind)
 
 
 def validate_html(body, expected):

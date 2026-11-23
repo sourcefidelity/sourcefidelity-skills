@@ -7929,6 +7929,30 @@ class SourceValidatorTests(unittest.TestCase):
         self.assertFalse(result["accept"])
         self.assertTrue(result["doi_conflict"])
 
+    def test_prominent_front_title_is_observed(self):
+        import pymupdf
+        doc = pymupdf.open()
+        first = doc.new_page()
+        first.insert_textbox((72, 72, 520, 760),
+                             "A Distinctive Work\nSmith 2024", fontsize=20)
+        first.insert_textbox((72, 120, 520, 760), "Body text. " * 300, fontsize=10)
+        for _ in range(2):
+            page = doc.new_page()
+            page.insert_textbox((72, 72, 520, 760), "Body text. " * 300, fontsize=10)
+        body = doc.tobytes()
+        doc.close()
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertTrue(result.get("title_prominent"))
+
+    def test_unsafe_pdf_feature_is_rejected(self):
+        body = self._pdf("A Distinctive Work by Smith 2024. " + "Body. " * 300)
+        unsafe = body.replace(b"%%EOF", b"/JavaScript %%EOF")
+        result = source_validator.validate_pdf(unsafe, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertFalse(result["accept"])
+        self.assertIn("unsafe", result["reason"])
+
     def test_isbn_conflict_is_rejected(self):
         body = self._pdf("A Distinctive Work by Smith 2024. ISBN 978-1-4028-9462-6 " +
                          "Body. " * 300)
