@@ -24,6 +24,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW)
 import batch_paths  # noqa: E402
 import assess_claims  # noqa: E402
+from sourcefidelity_core import bounded_request  # noqa: E402
 from sourcefidelity_core import claim_assessment as core  # noqa: E402
 
 
@@ -87,8 +88,7 @@ def collect(root, paper, inventory_path, claims_path):
             continue
         try:
             request = load(os.path.join(work, "blind-requests", name))
-            packet = {key: value for key, value in request.items()
-                      if key != "packet_sha256"}
+            packet = bounded_request.payload(request)
             core.response_evidence(packet, response)
             second = response["judgment"]
         except (OSError, ValueError, KeyError, TypeError):

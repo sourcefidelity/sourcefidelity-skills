@@ -19,6 +19,7 @@ import os
 import re
 
 from . import admissibility
+from . import bounded_request
 from . import claim_assessment as core
 from . import script_detect, segmentation
 from . import source_index as shared_index
@@ -501,6 +502,7 @@ def build_packet(occurrence, claim_id, claim, claim_span, kind, source, index,
     """Build the normal one-claim packet, plus a compact recovery provenance block."""
     packet = {
         "schema": VERSION,
+        "request_schema": bounded_request.VERSION,
         "claim_id": claim_id,
         "kind": kind,
         "instruction": INSTRUCTIONS,

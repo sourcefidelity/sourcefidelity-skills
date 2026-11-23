@@ -34,3 +34,7 @@ record into the source registry without translating its verdicts.
 may establish an affirmative judgment, a negative/absence conclusion, pagination,
 a recovery window or a reappraisal change. Consumers pass the use and the copy
 observation; they do not match raw scope or edition statuses.
+
+**Bounded request**: one claim's model-facing payload plus its digest binding.
+Every emitter writes the same envelope; ordinary assessment and full-text recovery
+differ only in packet fields and verdict policy.

@@ -93,6 +93,7 @@ from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
 from sourcefidelity_core import admission as core_admission  # noqa: E402
 from sourcefidelity_core import admissibility  # noqa: E402
+from sourcefidelity_core import bounded_request  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
 from sourcefidelity_core import web_page  # noqa: E402
@@ -6242,7 +6243,7 @@ class FullTextRecoveryTests(unittest.TestCase):
         else:
             start, end = evidence
         response = {
-            "packet_sha256": core_claim.digest(packet), "judgment": judgment,
+            "packet_sha256": packet["packet_sha256"], "judgment": judgment,
             "reason": "The cited page states the certification and content restriction policy.",
             "evidence": [{"passage_id": passage["passage_id"], "start": start, "end": end,
                           "contribution": "States the policy."}]}
@@ -8077,6 +8078,22 @@ class AdmissibilityPolicyTests(unittest.TestCase):
         for use in ("affirmative", "judgment_window", "recovery", "negative",
                     "absence", "pagination"):
             self.assertFalse(admissibility.decide(observation, use)["allowed"], use)
+
+
+class BoundedRequestTests(unittest.TestCase):
+    def test_envelope_round_trip_and_tamper_rejection(self):
+        packet = {"claim_id": "C1.1", "claim": "A claim.", "passages": []}
+        envelope = bounded_request.envelope(packet)
+        self.assertIn("packet_sha256", envelope)
+        self.assertEqual(bounded_request.payload(envelope), packet)
+        envelope["claim_id"] = "C9.1"
+        with self.assertRaises(ValueError):
+            bounded_request.payload(envelope)
+
+    def test_claim_and_recovery_share_the_envelope(self):
+        packet = {"claim_id": "C1.1", "claim": "A claim.", "passages": []}
+        self.assertEqual(core_claim.request_bytes(packet),
+                         bounded_request.encode(packet))
 
 
 class SourceValidatorTests(unittest.TestCase):

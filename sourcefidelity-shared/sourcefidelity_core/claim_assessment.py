@@ -7,6 +7,7 @@ import json
 import re
 
 from . import admissibility
+from . import bounded_request
 
 VERSION = "claim-assessment-v1"
 MAX_PASSAGES = 3
@@ -128,7 +129,7 @@ def passages_for(task, inventory, occurrence):
 
 
 def request_bytes(packet):
-    return encoded({"packet_sha256": digest(packet), **packet})
+    return bounded_request.encode(packet)
 
 
 def packet_for(task, inventory, occurrence, claim_id, spec):

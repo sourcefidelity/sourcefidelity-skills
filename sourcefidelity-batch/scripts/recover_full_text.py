@@ -34,6 +34,7 @@ SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import batch_paths  # noqa: E402
+from sourcefidelity_core import bounded_request  # noqa: E402
 from sourcefidelity_core import claim_assessment as core  # noqa: E402
 from sourcefidelity_core import recovery  # noqa: E402
 from sourcefidelity_core import source_index  # noqa: E402
@@ -345,7 +346,7 @@ def emit(root, paper, occurrence, claim_id="", claims_path="", out="", whole_sou
     claim_id = packet["claim_id"]
     packet_path = out or os.path.join(paths_for(root, paper)["packets"],
                                       f"{claim_id}.packet.json")
-    write_json(packet_path, packet)
+    write_json(packet_path, bounded_request.envelope(packet))
     no_relevant = bool(selection.get("no_relevant_full_text")) or not packet["passages"]
     if no_relevant:
         response = recovery.no_relevant_response(packet, selection)
@@ -510,10 +511,15 @@ def apply(root, paper):
             continue
         record_path = os.path.join(paths["records"], f"{claim_id}.json")
         packet_path = os.path.join(paths["packets"], f"{claim_id}.packet.json")
-        packet = load(packet_path, {})
+        envelope = load(packet_path, {})
         response = load(record_path, {})
-        if not packet or not response:
+        if not envelope or not response:
             skipped.append({"claim_id": claim_id, "reason": "record_or_packet_missing"})
+            continue
+        try:
+            packet = bounded_request.payload(envelope)
+        except ValueError as error:
+            skipped.append({"claim_id": claim_id, "reason": f"invalid_packet: {error}"})
             continue
         if core.digest(packet) != sidecar.get("packet_sha256"):
             skipped.append({"claim_id": claim_id, "reason": "stale_packet"})
