@@ -27,8 +27,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILLS = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-review", "scripts"))
+sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import fetch_abstracts as abstract_fetch  # noqa: E402
 import public_fetch  # noqa: E402
+from sourcefidelity_core import source_validator  # noqa: E402
 
 
 def load(path, default=None):
@@ -116,7 +118,10 @@ def run(root, results_path):
         identity = record.get("identity") or {}
         if not identity.get("title") or record.get("extraction") or record.get("supplied_file"):
             continue
-        for candidate in candidates if isinstance(candidates, list) else []:
+        ordered = source_validator.rank_candidates(
+            [item for item in candidates if isinstance(item, dict)] if isinstance(candidates, list) else [],
+            identity)
+        for candidate in ordered:
             url = candidate.get("url") if isinstance(candidate, dict) else ""
             if not url:
                 continue
@@ -130,28 +135,41 @@ def run(root, results_path):
                 rejected.append({"source_key": key, "url": url, "reason": f"http_{status}"})
                 continue
             if body.startswith(b"%PDF"):
+                validation = source_validator.validate_pdf(body, identity)
+                if not validation["accept"]:
+                    rejected.append({"source_key": key, "url": url,
+                                     "reason": validation["reason"],
+                                     "quality": validation["text_quality"]})
+                    continue
                 parsed = _pdf_candidate(body, candidate)
                 suffix = "pdf"
+                complete = True
+                quality = validation["text_quality"]
+                completeness = validation["completeness"]
             else:
                 parsed = _html_candidate(body, candidate)
+                validation = source_validator.validate_html(body, identity)
+                if validation["identity_confidence"] == "rejected":
+                    rejected.append({"source_key": key, "url": url,
+                                     "reason": "identity_not_verified"})
+                    continue
                 suffix = "html"
-            if not parsed or not _contains(identity, parsed.get("text", ""), parsed):
-                rejected.append({"source_key": key, "url": url,
-                                 "reason": "identity_not_verified"})
-                continue
+                complete = False
+                quality = "unassessed_html"
+                completeness = "html_identity_only"
             target = os.path.join(out_dir, key + "." + suffix)
             with open(target, "wb") as handle:
                 handle.write(body)
             verified.append({"source_key": key, "url": final, "path": target,
                              "content_type": content_type, "bytes": len(body),
                              "provider": "host_search", "identity_status": "verified",
-                             "complete": bool(parsed.get("complete", False)) if suffix == "pdf" else False,
-                             "completeness": parsed.get("completeness",
-                                                        "html_identity_only"),
-                             "quality": parsed.get("quality", "unassessed_html"),
-                             "page_count": parsed.get("page_count", 0),
+                             "complete": complete, "completeness": completeness,
+                             "quality": quality,
+                             "page_count": parsed.get("page_count", 0)
+                             if suffix == "pdf" else 0,
                              "text_words": parsed.get("text_words", 0)})
-            break
+            if complete:
+                break
     manifest = {"schema": "search-acquired-v1", "verified": verified,
                 "rejected": rejected,
                 "verified_count": len(verified), "rejected_count": len(rejected)}

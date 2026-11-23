@@ -92,6 +92,7 @@ from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
+from sourcefidelity_core import source_validator  # noqa: E402
 import abstract_scope as abstract_cli  # noqa: E402
 import fetch_abstracts as abstract_fetch  # noqa: E402
 from sourcefidelity_core import uncited_screen as core_uncited  # noqa: E402
@@ -7893,6 +7894,47 @@ class SingleBoundedTests(unittest.TestCase):
             plan = json.loads(Path(path).read_text(encoding="utf-8"))
         self.assertEqual([row["occurrence_id"] for row in plan], ["C1", "C2"])
         self.assertEqual(plan[0]["end"], len("First claim."))
+
+
+class SourceValidatorTests(unittest.TestCase):
+    def _pdf(self, text):
+        import pymupdf
+        doc = pymupdf.open()
+        chunks = [text[i:i + 1200] for i in range(0, min(len(text), 6000), 1200)]
+        for chunk in chunks:
+            page = doc.new_page()
+            page.insert_textbox((72, 72, 520, 760), chunk, fontsize=10)
+        last = doc.new_page()
+        last.insert_textbox((72, 72, 520, 760),
+                            "References and back matter. " + " ".join(["closing"] * 30),
+                            fontsize=10)
+        data = doc.tobytes()
+        doc.close()
+        return data
+
+    def test_complete_identity_matching_pdf_is_accepted(self):
+        body = self._pdf("A Distinctive Work by Smith 2024. " + "Body text. " * 300)
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
+        self.assertTrue(result["accept"])
+        self.assertEqual(result["identity_confidence"], "high")
+        self.assertEqual(result["completeness"], "complete")
+        self.assertNotEqual(result["text_quality"], "pure_scan")
+
+    def test_doi_conflict_is_rejected(self):
+        body = self._pdf("A Distinctive Work by Smith 2024. 10.9999/other " + "Body. " * 300)
+        result = source_validator.validate_pdf(body, {
+            "title": "A Distinctive Work", "author": "Smith, A", "year": "2024",
+            "doi": "10.1234/right"})
+        self.assertFalse(result["accept"])
+        self.assertTrue(result["doi_conflict"])
+
+    def test_ranking_prefers_pdf_and_official_host(self):
+        ranked = source_validator.rank_candidates([
+            {"url": "https://vlex.com/landing", "title": "A Distinctive Work"},
+            {"url": "https://ore.exeter.ac.uk/work.pdf", "title": "A Distinctive Work"},
+        ], {"title": "A Distinctive Work"})
+        self.assertIn(".pdf", ranked[0]["url"])
 
 
 class JudgmentGuardTests(unittest.TestCase):
