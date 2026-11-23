@@ -92,7 +92,9 @@ def render_counts(findings):
     counts = {}
     for category in CATEGORIES:
         if derived[category]["ids"]:
-            counts[category] = len(derived[category]["issues"])
+            # A work can carry combined A+HL issues; HL counts distinct works.
+            counts[category] = (len(set(derived[category]["ids"])) if category == "HL"
+                                else len(derived[category]["issues"]))
         else:
             if category == "HL":
                 counts[category] = len(summary.get("hyperlinks_missing") or [])
