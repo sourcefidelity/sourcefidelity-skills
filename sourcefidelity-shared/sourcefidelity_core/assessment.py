@@ -51,7 +51,8 @@ def source_snapshot(registry):
     out = {}
     for key, record in sorted(works.items()):
         out[key] = {
-            "has_copy": bool(record.get("supplied_file")),
+            "has_copy": bool(record.get("selected_representation")
+                                 or record.get("supplied_file")),
             "has_extraction": bool(record.get("extraction")),
             "copy_sha256": (record.get("copy_observation") or {}).get("sha256", ""),
             "text_sha256": record.get("text_sha256", ""),

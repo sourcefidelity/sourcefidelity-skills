@@ -61,7 +61,8 @@ def run(root, paper="", out=""):
         for rid, source in (task.get("sources") or {}).items():
             key = source.get("source_key") or ""
             record = registry.get(key) or {}
-            if not key or record.get("extraction") or record.get("supplied_file"):
+            if (not key or record.get("extraction") or record.get("selected_representation")
+                    or record.get("supplied_file")):
                 continue
             identity = record.get("identity") or source.get("identity") or {}
             state = open_sources.get(key) or {}

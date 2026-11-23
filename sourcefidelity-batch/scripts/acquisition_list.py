@@ -394,7 +394,8 @@ def main():
             for work in works:
                 key = aliases.get(work.get("source_key"), work.get("source_key"))
                 record = records.get(key, {})
-                if not record.get("supplied_file"):
+                if not (record.get("selected_representation")
+                        or record.get("supplied_file")):
                     continue
                 work["retrieval"] = "retrieved"
                 work["registry_supplied"] = True
@@ -403,7 +404,8 @@ def main():
                     work["access_notes"] = (
                         "A later edition is supplied; content may be used with a "
                         "version limitation, but it is not the cited edition.")
-                elif record.get("identity_status") == "supplied_identity_only":
+                elif record.get("identity_status") in ("supplied_identity_only",
+                                                       "admitted_identity_only"):
                     work["identity_outcome"] = "identity_only"
                 else:
                     work["identity_outcome"] = "confirmed"
@@ -454,7 +456,8 @@ def main():
             for work in grouped:
                 key = aliases.get(work.get("source_key"), work.get("source_key"))
                 record = records.get(key) or records.get(work.get("source_key"), {})
-                if not record.get("supplied_file"):
+                if not (record.get("selected_representation")
+                        or record.get("supplied_file")):
                     continue
                 work["retrieval"] = "retrieved"
                 work["registry_supplied"] = True
@@ -463,7 +466,8 @@ def main():
                     work["access_notes"] = (
                         "A later edition is supplied; content may be used with a "
                         "version limitation, but it is not the cited edition.")
-                elif record.get("identity_status") == "supplied_identity_only":
+                elif record.get("identity_status") in ("supplied_identity_only",
+                                                       "admitted_identity_only"):
                     work["identity_outcome"] = "identity_only"
                 else:
                     work["identity_outcome"] = "confirmed"

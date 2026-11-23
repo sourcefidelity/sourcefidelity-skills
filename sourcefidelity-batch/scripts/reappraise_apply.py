@@ -334,7 +334,8 @@ def resolve_identity_findings(data, task, changes, day):
         scoped = [c for c in changes
                   if (c.get("source_key") in aliases if c.get("source_key")
                       else single in aliases)]
-        confirmed = (info.get("identity_status") == "supplied_confirmed"
+        confirmed = (info.get("identity_status") in ("supplied_confirmed",
+                                                     "admitted_confirmed")
                      and bool(info.get("identity")))
         if confirmed and not any(c.get("identity_unresolved") for c in scoped):
             resolved.append((key, aliases))

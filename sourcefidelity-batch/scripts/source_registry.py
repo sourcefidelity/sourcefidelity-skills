@@ -766,7 +766,8 @@ def copy_observation(record, digest=""):
         "", [], {}, identity_status=record.get("identity_status", ""))
     unknowns.extend(edition.get("unknowns") or [])
     return {
-        "source_file": record.get("supplied_file", ""),
+        "source_file": (record.get("selected_representation")
+                        or record.get("supplied_file", "")),
         "sha256": digest,
         "scope_kind": record.get("work_kind", ""),
         "mapping": record.get("verified_by", ""),
@@ -811,9 +812,10 @@ def apply_scope(registry, root):
         map_coverage = (record.get("page_map") or {}).get("coverage")
         record["scope"] = assess_scope(page_range, cache[directory], map_coverage)
     for record in registry.values():
-        if record.get("supplied_file"):
+        selected = record.get("selected_representation") or record.get("supplied_file")
+        if selected:
             record["copy_observation"] = copy_observation(
-                record, _digest(record["supplied_file"], digests))
+                record, _digest(selected, digests))
 
 
 def structure_for(root, record):
@@ -1053,6 +1055,7 @@ def main():
             "citation_count": data["citations"],
             "aliases": sorted(k for k, v in aliases.items() if v == key),
             "supplied_file": "",
+            "selected_representation": "",
             "representations": [],
             "extraction": "",
             "page_map": "",
@@ -1169,8 +1172,9 @@ def main():
                 extraction_dir = os.path.dirname(own_meta)
             except ValueError:
                 meta = None
-        if meta is None and record.get("supplied_file"):
-            shared = extractions.get(os.path.realpath(record["supplied_file"]))
+        selected = record.get("selected_representation") or record.get("supplied_file")
+        if meta is None and selected:
+            shared = extractions.get(os.path.realpath(selected))
             if shared:
                 extraction_dir = shared
                 try:
@@ -1195,20 +1199,21 @@ def main():
             record["extraction_options"] = meta.get("extraction_options", {})
             record["text_sha256"] = meta.get("text_sha256", "")
             record["pages_sha256"] = meta.get("pages_sha256", "")
-        prepare_this = (record["supplied_file"] and args.prepare
+        selected = record.get("selected_representation") or record.get("supplied_file")
+        prepare_this = (selected and args.prepare
                         and (not args.prepare_key or key in args.prepare_key))
         if prepare_this:
             out_dir = os.path.join(root, "_sources", key)
-            supplied_lower = str(record["supplied_file"]).lower()
+            supplied_lower = str(selected).lower()
             if supplied_lower.endswith((".html", ".htm")):
                 cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_html.py"),
-                       "--html", record["supplied_file"], "--out", out_dir, "--key", key]
+                       "--html", selected, "--out", out_dir, "--key", key]
             elif supplied_lower.endswith((".txt", ".md")):
                 cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_text.py"),
-                       "--text", record["supplied_file"], "--out", out_dir, "--key", key]
+                       "--text", selected, "--out", out_dir, "--key", key]
             else:
                 cmd = [sys.executable, "-I", os.path.join(REVIEW_SCRIPTS, "prepare_source.py"),
-                       "--pdf", record["supplied_file"], "--out", out_dir, "--key", key]
+                       "--pdf", selected, "--out", out_dir, "--key", key]
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode == 0:
                 record["extraction"] = os.path.join(out_dir, "text.txt")

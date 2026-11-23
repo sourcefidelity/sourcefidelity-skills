@@ -790,7 +790,10 @@ def main():
                                           rec.get("extraction_options", {})),
             "text_sha256": obj.get("text_sha256", rec.get("text_sha256", "")),
             "pages_sha256": obj.get("pages_sha256", rec.get("pages_sha256", "")),
-            "supplied_file": obj.get("supplied_file") or rec.get("supplied_file", ""),
+            "supplied_file": (obj.get("selected_representation")
+                              or obj.get("supplied_file")
+                              or rec.get("selected_representation")
+                              or rec.get("supplied_file", "")),
         }
 
     attach_open_sources(root, sources)

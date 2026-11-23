@@ -71,15 +71,21 @@ def counts_for(records, papers, blockers=None):
             row["source_keys"].append(record.get("source_key", ""))
             if record.get("identity_status") in ("supplied_confirmed",
                                                   "resolved_external",
-                                                  "supplied_identity_only", "confirmed"):
+                                                  "supplied_identity_only",
+                                                  "admitted_confirmed",
+                                                  "admitted_identity_only",
+                                                  "confirmed"):
                 row["identity"] += 1
             if record.get("extraction"):
                 row["full_text"] += 1
-            if record.get("supplied_file"):
+            if record.get("selected_representation") or record.get("supplied_file"):
                 row["supplied"] += 1
             if (_blocked(record) or record.get("source_key") in blockers):
                 row["blocked"] += 1
-            if not record.get("extraction") and not record.get("supplied_file"):
+            if (not record.get("extraction")
+                    and not record.get("selected_representation")
+                    and not record.get("selected_representation")
+                    and not record.get("supplied_file")):
                 row["missing"] += 1
     return out
 

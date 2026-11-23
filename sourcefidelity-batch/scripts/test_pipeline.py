@@ -91,6 +91,7 @@ from sourcefidelity_core import source_index as core_source_index  # noqa: E402
 from sourcefidelity_core import fast_paths as core_fast_paths  # noqa: E402
 from sourcefidelity_core import packet_cache as core_packet_cache  # noqa: E402
 from sourcefidelity_core import abstract_scope as abstract_core  # noqa: E402
+from sourcefidelity_core import admission as core_admission  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
 from sourcefidelity_core import web_page  # noqa: E402
@@ -110,6 +111,7 @@ import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
 import search_acquire as search_acquire_cli  # noqa: E402
+import registry_ingest  # noqa: E402
 import search_apply as search_apply_cli  # noqa: E402
 import prepare_matched as pm  # noqa: E402
 import screen_uncited as su  # noqa: E402
@@ -123,6 +125,7 @@ import parallel_pipeline as pp  # noqa: E402
 import optimization_metrics as om  # noqa: E402
 import search_plan as search_plan_cli  # noqa: E402
 import search_acquire as search_acquire_cli  # noqa: E402
+import registry_ingest  # noqa: E402
 import search_apply as search_apply_cli  # noqa: E402
 import hyperlink_audit as ha  # noqa: E402
 import http_cache  # noqa: E402
@@ -7872,7 +7875,7 @@ class O5TerseOutputTests(unittest.TestCase):
 
 
 class SearchApplyTests(unittest.TestCase):
-    def test_only_verified_copies_are_mapped(self):
+    def test_preparation_runs_only_for_admitted_complete_copies(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "_work").mkdir()
@@ -7880,14 +7883,82 @@ class SearchApplyTests(unittest.TestCase):
             source.write_bytes(b"%PDF-1.4")
             (root / "source_registry.json").write_text(json.dumps({"works": {}}),
                                                        encoding="utf-8")
-            (root / "_work" / "search-acquired.json").write_text(json.dumps({
-                "verified": [{"source_key": "s1", "path": str(source),
-                              "complete": True}],
-                "rejected": [{"source_key": "s2", "path": str(source)}],
+            (root / "_work" / "admissions.json").write_text(json.dumps({
+                "records": [{"source_key": "s1", "outcome": "complete",
+                             "staged_path": str(source)},
+                            {"source_key": "s2", "outcome": "identity_only",
+                             "staged_path": str(source)}],
             }), encoding="utf-8")
             result = search_apply_cli.run(str(root), "paper", dry_run=True)
-        self.assertEqual(result["mapped"], 1)
-        self.assertEqual(result["maps"][0]["source_key"], "s1")
+        self.assertEqual(result["prepared"], 1)
+        self.assertEqual(result["keys"], ["s1"])
+
+
+class AdmissionTests(unittest.TestCase):
+    def _pdf(self, text, pages=3):
+        import pymupdf
+        doc = pymupdf.open()
+        for index in range(pages):
+            page = doc.new_page()
+            page.insert_textbox((72, 72, 520, 760),
+                                (text if index == 0 else "Body. " * 300), fontsize=10)
+        data = doc.tobytes()
+        doc.close()
+        return data
+
+    def _root(self, tmp):
+        root = Path(tmp)
+        (root / "source_registry.json").write_text(json.dumps({"works": {
+            "s1": {"identity_status": "unresolved",
+                   "identity": {"title": "A Distinctive Work", "author": "Smith, A",
+                                "year": "2024"}},
+        }}), encoding="utf-8")
+        return root
+
+    def test_complete_pdf_is_admitted_and_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            body = self._pdf("A Distinctive Work by Smith 2024. " + "Body. " * 300)
+            record = core_admission.admit(str(root), "s1", {
+                "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"},
+                body, provenance={"url": "https://example.org/a.pdf"})
+            self.assertEqual(record["outcome"], "complete")
+            self.assertTrue(record["evidence_eligible"])
+            self.assertTrue(Path(record["staged_path"]).exists())
+            ingest = registry_ingest.ingest(str(root), record)
+            registry = json.loads((root / "source_registry.json").read_text())
+            work = registry["works"]["s1"]
+            self.assertEqual(ingest["identity_status"], "admitted_confirmed")
+            self.assertEqual(work["selected_representation"], record["staged_path"])
+            self.assertTrue(work["representations"][0]["evidence_eligible"])
+
+    def test_wrong_identity_is_rejected_without_staging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            body = self._pdf("An Unrelated Subject. " + "Body. " * 300)
+            record = core_admission.admit(str(root), "s1", {
+                "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"},
+                body)
+            self.assertEqual(record["outcome"], "rejected")
+            self.assertFalse(record["staged_path"])
+            self.assertFalse((root / "_acquired").exists())
+
+    def test_identity_only_html_is_staged_but_not_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            body = ('<html><head><meta name="citation_title" content="A Distinctive Work">'
+                    '<meta name="citation_author" content="Smith">'
+                    '<meta name="citation_publication_date" content="2024">'
+                    '</head><body>A Distinctive Work by Smith</body></html>').encode()
+            record = core_admission.admit(str(root), "s1", {
+                "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"},
+                body, provenance={"url": "https://example.org/a"})
+            self.assertEqual(record["outcome"], "identity_only")
+            self.assertFalse(record["evidence_eligible"])
+            self.assertTrue(Path(record["staged_path"]).exists())
+            ingest = registry_ingest.ingest(str(root), record)
+            self.assertEqual(ingest["identity_status"], "admitted_identity_only")
+            self.assertEqual(ingest["selected_representation"], "")
 
 
 class SearchAcquireTests(unittest.TestCase):

@@ -62,9 +62,13 @@ def classify_file(path):
     return "invalid", False, "unsupported_type"
 
 
-def stage(root, key, path, *, route="acquired", url="", representation=None):
+def stage(root, key, path, *, route="acquired", url="", representation=None,
+          provenance=None):
     """Copy one acquired file into the canonical directory and record it."""
     path = os.path.abspath(path)
+    origin = {"url": url or "", "route": route, "original_path": path}
+    if provenance:
+        origin.update(provenance)
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     lower = path.lower()
@@ -82,6 +86,7 @@ def stage(root, key, path, *, route="acquired", url="", representation=None):
             "original_path": path,
             "usable": False,
             "limitation": limitation,
+            "provenance": [origin],
         }
         manifest = load_manifest(root, key)
         manifest["representations"].append(entry)
@@ -108,9 +113,17 @@ def stage(root, key, path, *, route="acquired", url="", representation=None):
         "original_path": path,
         "usable": True,
         "limitation": "",
+        "provenance": [origin],
     }
     for index, existing in enumerate(manifest["representations"]):
         if existing.get("source_hash") == digest:
+            history = list(existing.get("provenance") or [])
+            if not history:
+                history = [{"url": existing.get("url", ""),
+                            "route": existing.get("route", ""),
+                            "original_path": existing.get("original_path", "")}]
+            history.append(origin)
+            entry["provenance"] = history
             manifest["representations"][index] = entry
             break
     else:

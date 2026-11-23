@@ -451,6 +451,8 @@ IDENTITY_OUTCOME_ALIASES = {
     "item_identified": "confirmed",
     "not_assessed": "search_incomplete",
     "supplied_confirmed": "confirmed",
+    "admitted_confirmed": "confirmed",
+    "admitted_identity_only": "confirmed_with_minor_differences",
     "unverified": "unlocated_after_search",
     "unverified_bot_block": "unlocated_after_search",
     "unverified_dead_link": "unlocated_after_search",
@@ -496,7 +498,10 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
             "r_ids": [], "c_ids": [], "citation_count": 0,
             "retrieval": canonical_retrieval(ref.get("retrieval") or (
                           "retrieved" if obj.get("extraction") or rec.get("extraction")
-                          else "identity_only" if obj.get("supplied_file") or rec.get("supplied_file")
+                          else "identity_only" if (obj.get("selected_representation")
+                                                   or obj.get("supplied_file")
+                                                   or rec.get("selected_representation")
+                                                   or rec.get("supplied_file"))
                           else "not_retrieved")),
             "identity_outcome": outcome or (
                                  "confirmed" if obj.get("extraction") and not

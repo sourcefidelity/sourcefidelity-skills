@@ -9,6 +9,8 @@ REPRESENTATION_PRIORITY = {
     "invalid": 9,
 }
 
+QUALITY_PRIORITY = {"digital": 0, "scan_ocr": 1, "pure_scan": 2, "": 0}
+
 
 def representation_priority(representation):
     """Supplied copies outrank acquired copies, which outrank bounded web text."""
@@ -22,7 +24,9 @@ def choose_representation(record):
     if not usable:
         return {}
     return sorted(usable, key=lambda entry: (
+        0 if entry.get("evidence_eligible", True) else 1,
         representation_priority(entry.get("representation") or entry.get("route")),
+        QUALITY_PRIORITY.get(str(entry.get("text_quality") or ""), 0),
         entry.get("path") or "",
     ))[0]
 

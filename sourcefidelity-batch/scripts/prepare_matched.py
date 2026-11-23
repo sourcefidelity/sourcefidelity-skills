@@ -73,7 +73,8 @@ def main(argv=None):
     existing = sr.extraction_index(root)
     groups = {}
     for key, record in registry.items():
-        path = record.get("supplied_file") or ""
+        path = (record.get("selected_representation")
+                or record.get("supplied_file") or "")
         if not path or not os.path.exists(path):
             continue
         real = os.path.realpath(path)

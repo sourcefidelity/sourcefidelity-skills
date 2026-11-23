@@ -173,7 +173,7 @@ def is_academic(record):
 def skip_reason(record, include_uncited=False, allowlist=None, key=""):
     if not include_uncited and not sr.is_acquirable(record, allowlist, key):
         return "uncited"
-    if record.get("supplied_file"):
+    if record.get("selected_representation") or record.get("supplied_file"):
         return "supplied_copy"
     if record.get("identity_status") not in (None, "unresolved"):
         return "already_resolved"

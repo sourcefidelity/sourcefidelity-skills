@@ -274,16 +274,19 @@ def main(argv=None):
         key = acquisition_list.key_from_entry(ref.get("verbatim", ""))
         record = works.get(aliases.get(key, key), {})
         identity = record.get("identity") or {}
-        path = record.get("supplied_file") or ""
+        path = (record.get("selected_representation")
+                or record.get("supplied_file") or "")
         if path:
             reason = record.get("verified_by") or "registry match"
         else:
             reason = record.get("notes") or "no supplied file matched"
         map_details.append({"r_id": ref.get("id", ""), "author": identity.get("author", ""),
                             "year": identity.get("year"), "file": path, "reason": reason})
-    mapped = sum(bool(record.get("supplied_file")) for record in works.values())
+    mapped = sum(bool(record.get("selected_representation")
+                      or record.get("supplied_file")) for record in works.values())
     prepared = [key for key, record in works.items() if record.get("extraction")
-                and record.get("supplied_file") and not args.no_prepare]
+                and (record.get("selected_representation")
+                     or record.get("supplied_file")) and not args.no_prepare]
 
     run([sys.executable, os.path.join(BATCH, "make_task.py"),
          "--batch", root, "--paper", pid,

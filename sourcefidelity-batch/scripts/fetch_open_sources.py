@@ -175,7 +175,8 @@ def collect(root, limit=0, dry_run=False):
             continue
         if limit and found + limited >= limit:
             break
-        if record.get("supplied_file") or record.get("extraction"):
+        if (record.get("selected_representation") or record.get("supplied_file")
+                or record.get("extraction")):
             continue
         ident = identity_of(record)
         if not ident["title"]:

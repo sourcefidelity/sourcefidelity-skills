@@ -183,7 +183,8 @@ def run(root, paper, force=False):
         key = source.get("source_key") or ""
         record = registry.get(key) or {}
         status = record.get("identity_status") or source.get("identity_status") or ""
-        if status not in {"confirmed", "supplied_confirmed", "possible_match",
+        if status not in {"confirmed", "supplied_confirmed", "admitted_confirmed",
+                           "admitted_identity_only", "possible_match",
                           "resolved_external"}:
             continue
         if record.get("extraction"):
