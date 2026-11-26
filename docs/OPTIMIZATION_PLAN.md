@@ -127,6 +127,8 @@ Write a text-free `optimization_metrics.json` per run with:
 
 Do not include paper or source text. Dollar cost is environment-specific and not a skill-level acceptance metric.
 
+**Measurement blocker (26 Nov).** The current 117-paper batch uses the paper-worker pipeline. `optimization_metrics.py` on it reports `claims: 0` and `wall_seconds: null`, so it cannot test the O1–O7 claim-level acceptance. The stored TV direct review scores 19/20 against `twf-gold.json`, but misses required C1/C2, uses 24.37M prompt tokens and 19m32s; that is the quality baseline, not an optimized run. R46 remains in progress until a claim-pipeline TV/C19/C13 regression is recorded.
+
 ## 9. Acceptance and regression
 
 - Same verdicts on the TV regression fixture and the existing C19/C13 fixtures.

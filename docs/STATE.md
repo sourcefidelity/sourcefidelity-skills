@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 668 passed |
+| Pipeline regressions | `test_pipeline.py` | 679 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
@@ -34,7 +34,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
 | R43 abstract-only attention | `fetch_abstracts.py`; `abstract_scope.py`; real R37; positive calibration | 616 tests. 7 identity abstracts; 4 real calls/6 claims produced 0 marks; positive calibration produced 1 high-confidence different-subject mark. No Supports/Contradicts and no claim-record change. |
-| R46 O7 metrics | `optimization_metrics.py`; text-free fixture; R37 metrics | 588 tests. Counts stage/acquire time, claims, judgments, reasons, retries, sources, windows/index/response-cache reuse and optional token usage; no paper/source text. |
+| R46 O7 metrics | `optimization_metrics.py`; text-free fixture; R37 metrics | 588 tests. Counts stage/acquire time, claims, judgments, reasons, retries, sources, windows/index/response-cache reuse and optional token usage; no paper/source text. Current 117-paper batch reports claims=0 and null wall time, so the claim-level acceptance cannot be measured from it. |
 | R46 O6 parallel pipeline | `parallel_pipeline.py`; bounded executor/retry tests | 587 tests. Papers run through task→route→screen with bounded overlap; claims are emitted only for checkpoint-pending packets and completed claims are skipped. |
 | R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |
 | R36/R39 long-form | 18k synthetic; real 9.8k paper; TV regression | 140-claim synthetic: 29 Supports, 111 Qualified, 0 Not Judged; 20.38M tokens/$0.92/41 min. Real paper: 36/36 accounted, 3 model Not Judged, 33 source-unavailable; source quality/coverage open. |
