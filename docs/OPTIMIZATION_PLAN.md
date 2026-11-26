@@ -127,11 +127,14 @@ Write a text-free `optimization_metrics.json` per run with:
 
 Do not include paper or source text. Dollar cost is environment-specific and not a skill-level acceptance metric.
 
-**Measurement blocker (26 Nov).** A `parallel_pipeline.py --emit-claims` run on the stored
-`twf-bounded-20261124b` copy completed task/route/screen in 2.97 s but emitted **0 requests**:
-`assess_claims.py list` rejects that legacy inventory (`U1/U2/U3: expected_source is missing or
-analysis-valued`). The TV fixture must be rebuilt with the current contract before the claim-level
-run. Separately, the 117-paper batch uses the paper-worker pipeline. `optimization_metrics.py` on it reports `claims: 0` and `wall_seconds: null`, so it cannot test the O1–O7 claim-level acceptance. The stored TV direct review scores 19/20 against `twf-gold.json`, but misses required C1/C2, uses 24.37M prompt tokens and 19m32s; that is the quality baseline, not an optimized run. R46 remains in progress until a claim-pipeline TV/C19/C13 regression is recorded.
+**Measurement blocker (27 Nov).** A `parallel_pipeline.py --emit-claims` run on the stored
+`twf-bounded-20261124b` copy initially emitted **0 requests** because `assess_claims.py` rejected the
+legacy inventory (`U1/U2/U3: expected_source is missing or analysis-valued`). After patching the
+temp fixture only, the run completed in 3.7 s and emitted **16 claim requests** — the same 16 claims
+as the stored bounded responses (the other four occurrences have no window). No call reduction is
+demonstrated, no model workers ran, and no token/time comparison exists. The fixture needs a real
+rebuild and a 16-claim model run before R46 can be judged. Separately, the 117-paper batch uses the
+paper-worker pipeline. `optimization_metrics.py` on it reports `claims: 0` and `wall_seconds: null`, so it cannot test the O1–O7 claim-level acceptance. The stored TV direct review scores 19/20 against `twf-gold.json`, but misses required C1/C2, uses 24.37M prompt tokens and 19m32s; that is the quality baseline, not an optimized run. R46 remains in progress until a claim-pipeline TV/C19/C13 regression is recorded.
 
 ## 9. Acceptance and regression
 
