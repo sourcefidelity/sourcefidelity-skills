@@ -348,7 +348,7 @@ touches the worker contract, the validator, `render_review.py` scope counts, `fo
 the batch re-screen, not the judgment definitions.
 
 
-### B11 — Uncited-passage residuals — In progress (sample verification failed)
+### B11 — Uncited-passage residuals — Done (two full passes; final sample 0/300)
 
 Measurement record: [uncited-continuation-residuals.md](uncited-continuation-residuals.md). This is a
 B7 follow-up, not a re-open of the analysis test; it covers the 82 statements the B7/B8 re-screen
@@ -376,19 +376,20 @@ rendered summary; two tests cover it. Re-introducing the P240965 mismatch
 (`summary.uncited_passages=28` vs findings 21) fails with
 `summary uncited_passages 28 != findings 21`; restoring it passes.
 
-Final batch after the full U re-screen: **992 U** (from 1,301): 27 restored / 67 dismissed, 239
-analysis removed, 95 analysis rewritten to factual spans, 58 continuation merges, 111
-continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
+Final batch: **934 U** (from 1,301): 27 restored / 67 dismissed, 297 analysis removed, 149 analysis
+rewritten to factual spans, 58 continuation merges, 111 continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
 tests.
 
-**Final sample verification — FAILED, then improved but still failing.** A first blind 300-item sample
-(seed 20261126) of 1,231 U found **68/300 (22.7%) analysis**, so a full re-screen of all 1,231 U was
-run: 239 analysis-only items removed, 95 mixed items rewritten to their factual span, leaving 992 U.
-A second blind 300-item sample (seed 20261128) found **18/300 (6.0%) analysis** (7/8/3 per group).
-Target is at most 1%, so the acceptance criterion is still not met; the remaining cases are borderline
-thesis/framing statements (e.g. P240982 U1, P240912 U9, P240927 U9). Rules, continuation
-dispositions, restoration set and parity guard remain in place. U is now 992 (from 1,301); B11 stays
-in progress until a blind sample reaches the target or the residual cases are adjudicated.
+**Final sample verification.** Three staged blind 300-item samples (seeds 20261126/28/30) tracked the
+work:
+
+1. Before the full re-screen: **68/300 (22.7%) analysis**.
+2. After the first full pass (239 analysis removed, 95 rewritten; U 992): **18/300 (6.0%)**.
+3. After a second full pass (58 analysis removed, 54 rewritten; U 934): **0/300 analysis** across all
+   three groups. The 0/300 result has a 95% upper bound of about 1.0%, meeting the acceptance target.
+
+The second pass also resolved the P240982/P240912/P240927 borderline statements. Rules,
+continuation dispositions, restoration set and parity guard remain in place.
 
 ## Progress (25 Nov)
 
