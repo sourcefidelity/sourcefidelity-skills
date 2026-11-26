@@ -355,10 +355,13 @@ B7 follow-up, not a re-open of the analysis test; it covers the 82 statements th
 removed, the retained items that still match analysis markers, the continuation label, and artifact
 parity. Scope is bounded to those lists; no paper re-review and no change to the frozen archive.
 
-**1. Restore or dismiss removed claims.** All 62 pre-b8 statements the current findings no longer hold
-were adjudicated: **20 restored** (including the two direct quotations, the figures/attributed facts,
-and the mixed fact-plus-inference spans recorded as their factual part) and **42 dismissed** as
-analysis, framing or signposting, each with a recorded reason in `findings.residual_dismissed`.
+**1. Restore or dismiss removed claims.** The full 94-item removal set (82 distinct statements) was
+recovered by comparing the pre-B9 (1,395 U) and pre-B8 (1,363 U) layers with the current findings:
+**27 restored** (including the two direct quotations, the figures/attributed facts, and the mixed
+fact-plus-inference spans recorded as their factual part) and **67 dismissed** as analysis, framing or
+signposting, each with a recorded reason in `findings.residual_dismissed`. The named 17 are all
+present (five from the earlier layer restored directly), and P241012 U24 is explicitly dismissed
+because the quoted wording is not in the current body text.
 **2. Residual analysis.** Of the retained analysis-marker hits, **39 were removed** as analysis and
 **45 were re-recorded as their factual span**; the remaining 86 marker hits are inside those retained
 factual spans, not pure analysis. A post-adjudication re-read sample is the remaining quality check.
@@ -373,7 +376,7 @@ rendered summary; two tests cover it. Re-introducing the P240965 mismatch
 (`summary.uncited_passages=28` vs findings 21) fails with
 `summary uncited_passages 28 != findings 21`; restoring it passes.
 
-Final batch: **1,224 U** (from 1,301), 20 restored / 42 dismissed, 39 analysis removed, 58 continuation
+Final batch: **1,231 U** (from 1,301), 27 restored / 67 dismissed, 39 analysis removed, 58 continuation
 merges, 111 continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
 tests.
 

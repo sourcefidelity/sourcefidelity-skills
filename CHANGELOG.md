@@ -2,12 +2,12 @@
 
 ## Unreleased
 
-- **B11 uncited-passage residuals.** Bounded adjudication of the B7/B8 re-screen: 20 source-dependent
-  statements restored and 42 dismissed with reasons; 39 analysis items removed and 45 re-recorded as
+- **B11 uncited-passage residuals.** Bounded adjudication of the B7/B8 re-screen: 27 source-dependent
+  statements restored and 67 dismissed with reasons (full 94-item removal set); 39 analysis items removed and 45 re-recorded as
   factual spans; continuation U now require `candidate_outcome`/`continuation_disposition` (58 merged
   and removed, 111 new content with `expected_source`), with four fixtures. `validate_batch` now fails
   findings/summary U/W drift; proven by re-introducing the P240965 28-vs-21 mismatch. Batch U
-  1,301→1,224; all re-rendered; validate 0/0; 674 tests. Measurement record:
+  1,301→1,231; all re-rendered; validate 0/0; 674 tests. Measurement record:
   `docs/plans/uncited-continuation-residuals.md`; status in B11.
 
 - **Model-assisted W adjudication.** Added `works_adjudicate.py emit/record`: per-paper packets of
