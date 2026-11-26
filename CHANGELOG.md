@@ -6,8 +6,9 @@
   statements restored and 67 dismissed with reasons (full 94-item removal set); 39 analysis items removed and 45 re-recorded as
   factual spans; continuation U now require `candidate_outcome`/`continuation_disposition` (58 merged
   and removed, 111 new content with `expected_source`), with four fixtures. `validate_batch` now fails
-  findings/summary U/W drift; proven by re-introducing the P240965 28-vs-21 mismatch. Batch U 1,301→1,231; all re-rendered; validate 0/0; 674 tests. A blind 300-item sample
-  found 68 (22.7%) analysis, so the acceptance target is NOT met and B11 remains in progress. Measurement record:
+  findings/summary U/W drift; proven by re-introducing the P240965 28-vs-21 mismatch. Batch U 1,301→992 after a full re-screen (239 analysis removed, 95 rewritten to factual
+  spans). A post-fix blind 300-item sample found 18 (6.0%) analysis; the 1% target is still not met,
+  so B11 remains in progress. Measurement record:
   `docs/plans/uncited-continuation-residuals.md`; status in B11.
 
 - **Model-assisted W adjudication.** Added `works_adjudicate.py emit/record`: per-paper packets of

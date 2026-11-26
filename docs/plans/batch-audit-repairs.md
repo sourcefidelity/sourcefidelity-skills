@@ -376,19 +376,19 @@ rendered summary; two tests cover it. Re-introducing the P240965 mismatch
 (`summary.uncited_passages=28` vs findings 21) fails with
 `summary uncited_passages 28 != findings 21`; restoring it passes.
 
-Final batch: **1,231 U** (from 1,301), 27 restored / 67 dismissed, 39 analysis removed, 58 continuation
-merges, 111 continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
+Final batch after the full U re-screen: **992 U** (from 1,301): 27 restored / 67 dismissed, 239
+analysis removed, 95 analysis rewritten to factual spans, 58 continuation merges, 111
+continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
 tests.
 
-**Final sample verification (26 Nov) — FAILED.** A blind 300-item random sample (seed 20261126) of the
-current 1,231 U was re-read without prior dispositions by three independent reviewers: **68/300
-(22.7%) were the student's analysis**, not source-dependent claims (groups 20/20/28; 95% CI roughly
-18–28%). Target is at most 1%. Examples: P240995 U1 (intro thesis/roadmap), P240930 U3 ("This case
-study analyses… and argues…"), P240958 U2 (intro/roadmap), P240941 U25 (transition), P240965 U1
-(evaluative framing). The B11 analysis pass was marker-limited: it removed 39 marker hits, but most
-analysis U carry no analysis-marker vocabulary, so the retained set is still roughly one-fifth
-analysis. The 68 sampled items (and their non-sampled equivalents) need the same remove-or-factual-span
-treatment before B11 can close. Rules, continuation dispositions and parity guard remain in place.
+**Final sample verification — FAILED, then improved but still failing.** A first blind 300-item sample
+(seed 20261126) of 1,231 U found **68/300 (22.7%) analysis**, so a full re-screen of all 1,231 U was
+run: 239 analysis-only items removed, 95 mixed items rewritten to their factual span, leaving 992 U.
+A second blind 300-item sample (seed 20261128) found **18/300 (6.0%) analysis** (7/8/3 per group).
+Target is at most 1%, so the acceptance criterion is still not met; the remaining cases are borderline
+thesis/framing statements (e.g. P240982 U1, P240912 U9, P240927 U9). Rules, continuation
+dispositions, restoration set and parity guard remain in place. U is now 992 (from 1,301); B11 stays
+in progress until a blind sample reaches the target or the residual cases are adjudicated.
 
 ## Progress (25 Nov)
 
