@@ -135,6 +135,13 @@ def validate(cand, inv, strict=False):
                 fail(errors, message)
             else:
                 warnings.append(message)
+        if str(item.get("candidate_outcome") or "").lower() == "possible_continuation":
+            disposition = str(item.get("continuation_disposition") or "").strip()
+            if not re.match(r"^(?:merged into C\d+|new content)$", disposition):
+                fail(errors, f"{uid}: continuation disposition must be "
+                             "'merged into C<n>' or 'new content'")
+            elif disposition == "new content" and expected in invalid_expected:
+                fail(errors, f"{uid}: new continuation content needs expected_source")
 
     for work in works:
         wid = work.get("id", "?")

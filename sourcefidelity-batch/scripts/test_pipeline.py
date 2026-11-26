@@ -9665,6 +9665,26 @@ class FormattingAuditTests(unittest.TestCase):
         self.assertTrue(refs)
 
 
+class ArtifactParityTests(unittest.TestCase):
+    def test_findings_counts_must_match_rendered_summary(self):
+        findings = {"uncited": [{"id": "U1"}],
+                    "works": [{"id": "W1", "mention_type": "analyzed"}]}
+        summary = {"uncited_passages": 2, "works_discussed": 1}
+        errors = vb.artifact_parity_errors(findings, summary)
+        self.assertTrue(any("uncited_passages" in error for error in errors))
+        summary["uncited_passages"] = 1
+        self.assertEqual(vb.artifact_parity_errors(findings, summary), [])
+
+    def test_passing_mentions_do_not_count_as_works(self):
+        findings = {"uncited": [],
+                    "works": [{"id": "W1", "mention_type": "analyzed"},
+                              {"id": "W2", "mention_type": "passing"}]}
+        summary = {"uncited_passages": 0, "works_discussed": 2}
+        self.assertTrue(vb.artifact_parity_errors(findings, summary))
+        summary["works_discussed"] = 1
+        self.assertEqual(vb.artifact_parity_errors(findings, summary), [])
+
+
 class UncitedAnalysisTests(unittest.TestCase):
     def _paragraph(self, text, cid="C1", end=None):
         return {"id": "P1", "text": text}
@@ -9706,6 +9726,54 @@ class UncitedAnalysisTests(unittest.TestCase):
                 "It sold 3 million tickets.")
         out = self._clauses(text, text.index(")") + 1)
         self.assertLessEqual(len(out), 2)
+
+    def test_new_fact_opening_with_continuation_cue_is_uncited(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "This release grossed $466 million worldwide in 2021.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertEqual(out[-1]["outcome"], "possible_continuation")
+        self.assertIn("fact", out[-1]["signals"])
+
+    def test_continuation_disposition_is_required_for_continuation_u(self):
+        inventory = {"occurrences": [], "references": [], "works": [],
+                     "uncited": [{"id": "U1", "paragraph_id": "P1",
+                                  "text": "This release grossed $466 million worldwide.",
+                                  "candidate_outcome": "possible_continuation",
+                                  "expected_source": "Box Office Mojo"}]}
+        result = vi.validate({"paragraphs": [{"id": "P1", "text": "x"}]},
+                             inventory, strict=True)
+        self.assertTrue(any("continuation disposition" in e for e in result["errors"]))
+        inventory["uncited"][0]["continuation_disposition"] = "merged into C1"
+        result = vi.validate({"paragraphs": [{"id": "P1", "text": "x"}]},
+                             inventory, strict=True)
+        self.assertFalse(any("continuation disposition" in e for e in result["errors"]))
+
+    def test_new_continuation_content_requires_expected_source(self):
+        inventory = {"occurrences": [], "references": [], "works": [],
+                     "uncited": [{"id": "U1", "paragraph_id": "P1",
+                                  "text": "This release grossed $466 million worldwide.",
+                                  "candidate_outcome": "possible_continuation",
+                                  "continuation_disposition": "new content",
+                                  "expected_source": "analysis"}]}
+        result = vi.validate({"paragraphs": [{"id": "P1", "text": "x"}]},
+                             inventory, strict=True)
+        self.assertTrue(any("new continuation content" in e for e in result["errors"]))
+
+    def test_clause_fragment_in_cited_sentence_records_merged_decision(self):
+        inventory = {"occurrences": [{"id": "C1", "paragraph_id": "P1", "marker": "x",
+                                      "statement": "x", "cited_r_ids": []},
+                                     {"id": "C2", "paragraph_id": "P1", "marker": "y",
+                                      "statement": "y", "cited_r_ids": []}],
+                     "references": [], "works": [],
+                     "coverage": {"paragraphs_scanned": ["P1"]},
+                     "uncited": [{"id": "U1", "paragraph_id": "P1",
+                                  "text": "It was criticized for whitewashing.",
+                                  "candidate_outcome": "possible_continuation",
+                                  "continuation_disposition": "merged into C2",
+                                  "expected_source": "the cited review"}]}
+        result = vi.validate({"paragraphs": [{"id": "P1", "text": "x y"}]},
+                             inventory, strict=True)
+        self.assertFalse(result["errors"])
 
     def test_validator_rejects_analysis_valued_expected_source(self):
         candidate = {"paragraphs": [{"id": "P1", "text": "The film earned $100 million."}]}

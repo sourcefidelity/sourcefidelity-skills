@@ -95,7 +95,7 @@ so fabricated references and `fabrication_risk` are missed. Apply the protocol's
 each gets a documented catalogue outcome; `fabrication_risk` is recomputed and the flagged papers
 appear in the report.
 
-### B7 — Tighten the uncited screen — Done (rule/fixtures; B8 re-screen applied; residual fragmentation documented)
+### B7 — Tighten the uncited screen — Done (rule/fixtures; B8 re-screen applied; residual follow-up in B11)
 
 The batch lists 1,395 uncited passages against 657 (P240926 38 vs 9; P241012 35 vs 7), including whole
 paragraphs and general argument. Restrict the screen to specific factual or interpretive claims a
@@ -347,6 +347,35 @@ re-measured against this state.
 touches the worker contract, the validator, `render_review.py` scope counts, `formatting_audit.py` and
 the batch re-screen, not the judgment definitions.
 
+
+### B11 — Uncited-passage residuals — Done (bounded adjudication; parity guard)
+
+Measurement record: [uncited-continuation-residuals.md](uncited-continuation-residuals.md). This is a
+B7 follow-up, not a re-open of the analysis test; it covers the 82 statements the B7/B8 re-screen
+removed, the retained items that still match analysis markers, the continuation label, and artifact
+parity. Scope is bounded to those lists; no paper re-review and no change to the frozen archive.
+
+**1. Restore or dismiss removed claims.** All 62 pre-b8 statements the current findings no longer hold
+were adjudicated: **20 restored** (including the two direct quotations, the figures/attributed facts,
+and the mixed fact-plus-inference spans recorded as their factual part) and **42 dismissed** as
+analysis, framing or signposting, each with a recorded reason in `findings.residual_dismissed`.
+**2. Residual analysis.** Of the retained analysis-marker hits, **39 were removed** as analysis and
+**45 were re-recorded as their factual span**; the remaining 86 marker hits are inside those retained
+factual spans, not pure analysis. A post-adjudication re-read sample is the remaining quality check.
+**3. Continuation.** For U drawn from `possible_continuation` candidates, the worker contract now
+requires `candidate_outcome` and `continuation_disposition` (`merged into C<n>` or `new content` with
+`expected_source`); `validate_inventory --strict` rejects a missing/invalid disposition. Result:
+**58 merged and removed from U, 111 new content kept with a source**, plus 5 restored legacy items
+manually dispositioned. Four fixtures cover cited-claim continuation, a new fact with a continuation
+cue, a definition/clause fragment and a missing disposition.
+**4. Artifact parity.** `validate_batch.artifact_parity_errors` compares findings U/W counts with the
+rendered summary; two tests cover it. Re-introducing the P240965 mismatch
+(`summary.uncited_passages=28` vs findings 21) fails with
+`summary uncited_passages 28 != findings 21`; restoring it passes.
+
+Final batch: **1,224 U** (from 1,301), 20 restored / 42 dismissed, 39 analysis removed, 58 continuation
+merges, 111 continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
+tests.
 
 ## Progress (25 Nov)
 

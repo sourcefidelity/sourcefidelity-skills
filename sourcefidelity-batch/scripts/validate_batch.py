@@ -49,6 +49,22 @@ SEARCH = {"searched", "partial", "not_searched"}
 RETRIEVAL = {"retrieved", "not_retrieved", "identity_only", "nonexistent", "unverifiable"}
 
 
+def artifact_parity_errors(findings, summary):
+    """Compare findings counts with the rendered summary, not just finding IDs."""
+    errors = []
+    if not isinstance(findings, dict) or not isinstance(summary, dict):
+        return errors
+    if summary.get("uncited_passages") != len(findings.get("uncited", []) or []):
+        errors.append(f"summary uncited_passages {summary.get('uncited_passages')} != "
+                      f"findings {len(findings.get('uncited', []) or [])}")
+    analyzed = len([w for w in findings.get("works", []) or []
+                    if str(w.get("mention_type") or "analyzed").lower() != "passing"])
+    if summary.get("works_discussed") != analyzed:
+        errors.append(f"summary works_discussed {summary.get('works_discussed')} != "
+                      f"findings {analyzed}")
+    return errors
+
+
 def check_summary(path):
     errs, warns = [], []
     try:
@@ -141,12 +157,15 @@ def check_findings(root, pid):
             summary = {}
         counts = finding_counts.render_counts(f)
         if summary:
+            errors = artifact_parity_errors(f, summary)
             if summary.get("category_a_findings") != counts["A"]:
-                return [f"summary A {summary.get('category_a_findings')} != findings A "
-                        f"{counts['A']}"], []
+                errors.append(f"summary A {summary.get('category_a_findings')} != findings A "
+                              f"{counts['A']}")
             found_b = (summary.get("category_b") or {}).get("citation_findings")
             if found_b != counts["B"]:
-                return [f"summary B {found_b} != findings B {counts['B']}"], []
+                errors.append(f"summary B {found_b} != findings B {counts['B']}")
+            if errors:
+                return errors, []
     return [], []
 
 

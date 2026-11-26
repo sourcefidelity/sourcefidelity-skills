@@ -81,6 +81,7 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
 - **Works (W IDs):** a work is **analyzed** only where the paper examines its content, style, reception, cast, narrative or marketing strategy. A work that is merely named in a chronology, listed as a comparison, or carries only a box-office or release fact is a **passing mention**: do not create a W entry for it; record it on a “passing mentions — no requirement” line outside the W and A counts. Every W entry needs `mention_type: "analyzed"` or `"passing"`; a `passing` work cannot carry Category A.
 - **Formatting (F IDs):** `task.json` carries a `formatting` block with deterministic candidates. Adjudicate every `F#` as `confirmed`, `rejected` or `not_applicable` with a one-line reason in the inventory. `body-title-roman` means an analysed work's title in body prose was not italic; `reference-missing-italic-element`, `reference-hanging-indent-absent` and `reference-heading-wording` are bibliography checks. "The file contains no italic runs at all" is conclusive for a roman title; do not guess italics without the resolved evidence. A confirmed formatting issue is Category A; a rejected or inapplicable candidate still needs its disposition.
 - **Uncited passages (U IDs):** a U is a specific claim a reader would expect to see sourced: a figure, date, name, quotation, attributed view, or a claim about what a source says. The student's own analysis is not a U — a conclusion, evaluation, or causal inference drawn from material already cited or from common knowledge needs no citation. If a sentence mixes a new fact with the student's inference, record only the factual part. State the source that would be expected in `expected_source` (for example “Box Office Mojo China line”, “China Film Administration annual report”); if none comes to mind, the passage is analysis, not an uncited claim. Never use “none”, “analysis”, “student” or “not applicable”. Keep the existing bans (general argument, framing, signposting, opinion, repeated paraphrase) and the ban on sentence-per-paragraph lists.
+For a U drawn from a `possible_continuation` candidate, record `candidate_outcome: "possible_continuation"` and `continuation_disposition`: either `merged into C<n>` when the sentence restates or qualifies a cited claim and that citation covers it, or `new content` with the `expected_source` it would need. A sentence carrying a citation at its end covers its own clauses unless a clause asserts something the citation does not support.
 
 ## Output shape
 
@@ -112,7 +113,11 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
                     "identifiers": {"url": "https://example.org/item"},
                     "category": "none", "cited": true, "note": ""}],
     "works": [], "uncited": [{"id": "U1", "paragraph_id": "P3", "text": "...",
-                "signals": ["fact"], "expected_source": "Box Office Mojo China line"}],
+                "signals": ["fact"], "expected_source": "Box Office Mojo China line"},
+              {"id": "U2", "paragraph_id": "P3", "text": "...",
+               "candidate_outcome": "possible_continuation",
+               "continuation_disposition": "merged into C2",
+               "expected_source": "Box Office Mojo China line"}],
     "audit": {"checks": "", "services": "", "unresolved": ""},
     "misrepresented": [], "nonexistent": [], "unverifiable": [], "limitations": ""
   }
