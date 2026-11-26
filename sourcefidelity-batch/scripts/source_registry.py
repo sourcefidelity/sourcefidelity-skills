@@ -930,6 +930,25 @@ def apply_structure(registry, root):
         rec["structure"] = summary
 
 
+def preserve_registry_metadata(previous, registry):
+    """Carry worker-owned blocks through a registry rebuild.
+
+    A rebuild derives identity/representation fields from summaries and files.
+    Blocks written by other passes (`nonexistence`, native-route state, provider
+    search state, verification) are not derivable and must survive.
+    """
+    for key, old in (previous or {}).items():
+        record = (registry or {}).get(key)
+        if not record:
+            continue
+        for field in ("nonexistence", "native_script_route", "search", "verified_by"):
+            if field in old:
+                record[field] = old[field]
+        state = (old.get("nonexistence") or {}).get("state")
+        if state in ("confirmed_absent", "not_found_after_search"):
+            record["identity_status"] = "nonexistent"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--batch", required=True)
@@ -1026,6 +1045,13 @@ def main():
                 full_text_cache[directory] = ""
         return full_text_cache[directory]
 
+    previous_registry = {}
+    previous_path = os.path.join(root, "source_registry.json")
+    if os.path.exists(previous_path):
+        try:
+            previous_registry = json.load(open(previous_path, encoding="utf-8")).get("works", {})
+        except (OSError, ValueError):
+            previous_registry = {}
     registry = {}
     for key, data in sorted(works.items()):
         parsed = parse_source(data["entries"][0] if data["entries"] else {})
@@ -1234,6 +1260,7 @@ def main():
                                    (proc.stderr or "")[:160]).strip("; ")
         registry[key] = record
 
+    preserve_registry_metadata(previous_registry, registry)
     resolve_chapters(registry)
     apply_structure(registry, root)
     apply_scope(registry, root)

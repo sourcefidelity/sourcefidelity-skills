@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 681 passed |
+| Pipeline regressions | `test_pipeline.py` | 682 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
@@ -34,7 +34,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
 | R43 abstract-only attention | `fetch_abstracts.py`; `abstract_scope.py`; real R37; positive calibration | 616 tests. 7 identity abstracts; 4 real calls/6 claims produced 0 marks; positive calibration produced 1 high-confidence different-subject mark. No Supports/Contradicts and no claim-record change. |
-| R48 host-search bridge | `search_plan` → host `web_search` → `search_acquire` | Bridge exercised; identity-high Niantic press release staged identity-only; Tanaka PDF rejected for wrong author; CJK abstract-only false rejection fixed (681 tests). No complete evidence-eligible admission yet. |
+| R48 host-search bridge | `search_plan` → host `web_search` → `search_acquire` | Done. Flitcroft DiGRA PDF admitted complete/evidence-eligible; `search_apply` rebuilt P240966 task, old-window check failed, task restored (re-review needed). Registry rebuild preserves metadata; 682 tests. |
 | R46 optimization acceptance | `OPTIMIZATION_PLAN.md`; TV bounded probe | Done (Option 1). 16 claim requests, same 16 as the stored bounded run; task/route/screen 3.7 s; no full source in the local context; model-call count unchanged by design. Single-review runtime/model-cost reduction deferred to R66 post-publication. |
 | R46 O6 parallel pipeline | `parallel_pipeline.py`; bounded executor/retry tests | 587 tests. Papers run through task→route→screen with bounded overlap; claims are emitted only for checkpoint-pending packets and completed claims are skipped. |
 | R46 O3 caches/resume | `packet_cache.py`; `window_cache.py`; checkpoint | 585 tests. Responses are keyed by packet hash plus schema/output profile and validated before reuse; identical citation/source window results persist under `_work/_windows`; extraction/index reuse and checkpoint/resume complete the path. |

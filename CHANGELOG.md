@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **R48 host-search acquisition bridge.** `search_plan` → host `web_search` → `search_acquire` →
+  admission now admits a complete evidence-eligible PDF: the Flitcroft DiGRA paper was staged with
+  identity high and quality digital. `search_apply` rebuilt the P240966 task, but unchanged findings
+  failed the old-window check, so the task was restored; a newly acquired copy requires
+  re-review/reappraisal. The registry rebuild now preserves `nonexistence`, native-route and search
+  blocks. Fixed the multi-page CJK `abstract_only` false rejection. Pipeline suite: 682 tests.
+
 - **R48 host-search acquisition exercise.** `search_plan` → host `web_search` → `search_acquire`
   fetched and identity-checked real candidates. Niantic press release reached identity-high but was
   identity-only (short HTML); Tanaka PDF was correctly rejected for a wrong cited author. Fixed a

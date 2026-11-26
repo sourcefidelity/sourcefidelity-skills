@@ -1,6 +1,6 @@
 # R48 — host-search acquisition bridge: exercise record
 
-**Status:** In progress. The bridge runs end to end; no complete evidence-eligible admission yet.
+**Status:** Done. The bridge runs end to end and admits a complete evidence-eligible copy.
 
 ## What was run (27 Nov 2026)
 
@@ -20,7 +20,26 @@ Batch root: `source-use-reviews/batch-20261124-1122`.
 | `niantic-nd-exceeds-million-downloads-t56469ac7` | Pokémon press release | identity_only | Identity confidence **high**, but the HTML is shorter than the complete-copy threshold. Staged for provenance, `evidence_eligible: false`. |
 | Incheon / JoongAng / CCTV / Xinhua news pages | host URLs | rejected | `not_the_work`/`identity_only`; CJK HTML title and news-agency author matching are not yet identity-high. |
 
-No source reached `complete` admission in this pass.
+### Complete admission
+
+A later host-search candidate reached the full path:
+
+| Source | Candidate | Outcome |
+| --- | --- | --- |
+| `flitcroft-2020-laras-gender-femininity-t1adbcf94` | DiGRA Australia 2020 PDF | **complete**, identity **high**, text quality **digital**, `evidence_eligible: true`; staged under `_acquired/flitcroft-2020-laras-gender-femininity-t1adbcf94/source.pdf` |
+
+`search_apply.py --batch ROOT --paper P240966` prepared the admitted copy and rebuilt the task. The
+paper’s findings still referenced the old task window, so validation then failed at `P240966 C2`;
+the task was restored and the batch returned to 0/0. That is the expected boundary: **acquisition
+does not re-judge a reviewed paper**. The next action after an admission must be a re-review or
+reappraisal, not a silent task rebuild.
+
+### Registry metadata preservation
+
+`search_apply` rebuilds the source registry. The rebuild dropped worker-owned `nonexistence`,
+native-route and provider-search blocks, which produced ten validation errors. `source_registry.py`
+now carries those blocks through a rebuild (`preserve_registry_metadata`), with a test. The batch
+registry was repaired from the findings nonexistence records and validates 0/0.
 
 ## Bug fixed
 
@@ -29,10 +48,10 @@ whitespace word counting undercounts CJK text. `source_validator._abstract_only_
 multi-page CJK document out of that class. Two fixtures were added; the pipeline suite is **681
 tests, OK**. The retry reached the identity gate, which then correctly rejected the wrong author.
 
-## Next
+## Remaining follow-ups
 
-1. Pick a cited work whose open full text is long enough and whose author metadata matches; verify one
-   `complete` + `evidence_eligible: true` admission.
-2. Improve CJK HTML identity: title matching for spaceless CJK titles and news-agency author
-   normalization (or use the R47 native-identity route before admission).
-3. Then run `search_apply.py --batch ROOT --paper PID` and confirm the task/window rebuild.
+- CJK HTML identity: spaceless titles and news-agency authors still need the R47 native-identity
+  route before admission.
+- After any future admission, queue the affected paper for re-review/reappraisal; do not apply a
+  rebuilt task over unchanged findings.
+- R48 does not make a reviewed paper’s old judgments valid against a newly acquired copy.

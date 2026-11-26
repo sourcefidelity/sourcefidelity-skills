@@ -8328,6 +8328,18 @@ class BoundedRequestTests(unittest.TestCase):
                          bounded_request.encode(packet))
 
 
+class RegistryRebuildTests(unittest.TestCase):
+    def test_rebuild_preserves_nonexistence_and_search_blocks(self):
+        previous = {"k": {"nonexistence": {"state": "confirmed_absent", "routes": []},
+                          "native_script_route": {"status": "completed"},
+                          "search": {"status": "partial"}, "verified_by": "worker"}}
+        registry = {"k": {"identity_status": "unresolved"}}
+        sr.preserve_registry_metadata(previous, registry)
+        self.assertEqual(registry["k"]["nonexistence"]["state"], "confirmed_absent")
+        self.assertEqual(registry["k"]["identity_status"], "nonexistent")
+        self.assertEqual(registry["k"]["search"]["status"], "partial")
+
+
 class SourceValidatorTests(unittest.TestCase):
     def _pdf(self, text):
         import pymupdf
