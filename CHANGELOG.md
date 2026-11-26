@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **R47d real-batch CJK acceptance.** Four papers, ten claims, three CJK languages (Chinese, Korean,
+  Japanese), with government, newspaper, city-government, academic-journal and industry sources read
+  at their native URLs. Judgments: 6 Supports, 3 Qualified or Mixed, 1 Not Supported, 0 Not Judged;
+  every row records the original-script quotation, an English gloss and the native-language retrieval
+  query. No machine translation is used as evidence. Record: `docs/plans/r47d-cjk-acceptance.md`.
+  R47 and R47d are Done.
+
 - **R46 closed under Option 1.** Local-overhead acceptance: the TV probe emits 16 claim requests, the
   same 16 claims as the stored bounded run, in 3.7 s of task/route/screen time, with no full source
   in context and no model-call reduction (one claim per call by design). Single-review runtime and
