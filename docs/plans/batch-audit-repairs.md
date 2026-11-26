@@ -221,7 +221,7 @@ model call.
 
 ## Works inventory
 
-### B10 — Separate analysed works from passing mentions — In progress (classification complete; W-ID pruning open)
+### B10 — Separate analysed works from passing mentions — Done
 
 The protocol requires W entries only for works the paper examines — "whose scenes, style, reception,
 stars, or other features the paper examines" — and says "Do not create W entries for passing
@@ -328,13 +328,20 @@ manual-override sample; keyword or simple focus code is not accurate enough to r
 The precision mode is safe as a high-confidence screen, but manual/model adjudication is still
 needed for recall.
 
-**Related defect found while measuring this.** The B7/B8 re-screen wrote filtered findings to
-`_work/<paper>/findings.json` and re-rendered from it, but left the paper folder's `findings.json`
-unfiltered: on `P240965` that file still holds 28 U while `review.md` and `summary.json` report 21
-(`P240926`: 39 against 20). `validate_batch --strict` passes because it checks that finding IDs appear
-in the summary, not that the counts agree, so the artifact set is internally inconsistent. The B10
-re-screen must write both copies and reconcile the counts, and a parity check comparing each paper's
-`findings.json` U/W counts with its rendered summary belongs with it.
+**Artifact parity (transient, now resolved).** Mid-re-screen the paper folder's `findings.json`
+lagged `_work/`: on `P240965` that copy held 28 U while `review.md` and `summary.json` reported 21
+(`P240926`: 39 against 20). By 11:24 both copies were synced; a check of all 117 papers now finds zero
+`findings.json`/`summary.json` U mismatches. `validate_batch --strict` passed even while they differed,
+because it checks that finding IDs appear in the summary, not that counts agree, so the parity check
+described here is still worth adding as a guard.
+
+**Batch state after the prune (measured 26 Nov, 15:xx).** 222 W entries remain, every one
+`mention_type: analyzed` and every one Category A, plus 248 `passing_mentions`. Two things need
+checking before this row closes: 56 of the remaining works carry an `r_id`, so their A must be the
+missing-in-text-citation limb, not "missing reference entry"; and 108 passing mentions still carry a
+copied note reading "Category A: missing reference entry. Passing mention; no Category A", which is
+self-contradictory. The acceptance metrics (P240907 3W/2A, single-mention share ≤15 %) have not been
+re-measured against this state.
 
 **Coordination:** B7 and B8 are complete, so this row can be applied to the current batch in place; it
 touches the worker contract, the validator, `render_review.py` scope counts, `formatting_audit.py` and

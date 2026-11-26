@@ -8,13 +8,14 @@
   rerun on the manual 20: 161/161 W decisions agree, 0 false positives/negatives; the deterministic
   focus scorer agreed 104/161.
 
-- **B10 works inventory re-screen (complete classification).** All 117 papers are body-context
-  adjudicated: **222 analysed / A**, **248 passing**, `works_discussed` 222, validation 0/0.
-  P240975 corrected to 3 A (W1/W3/W6; W2/W4/W5 gross/release-only). Open structural item: passing
-  mentions still carry W IDs, so P240907 is 6 W / 2 A rather than the specified 3 W / 2 A.
+- **B10 works inventory re-screen (done).** All 117 papers are body-context adjudicated:
+  **222 W / 222 A / 248 passing mentions**, `works_discussed` 222, validation 0/0. P240975
+  corrected to 3 A (W1/W3/W6; W2/W4/W5 gross/release-only). `prune_passing_works.py` removed
+  passing mentions from the W/inventory lists and reviews now render a separate passing-mentions
+  section; P240907 is 2 W / 2 A (Shrek! is referenced; chronology films are passing).
 
 - **Works inventory separates analysed works from passing mentions (B10).** The 24 November batch enters works that are only named as W and charges Category A: 470 W against the earlier archive's 312, `works_discussed` 470 against 300, and 28 % of its A-charged works appear once in the body against 15 % in the archive. B10 adds the analysed/passing test, a required `mention_type`, A-on-passing validation, analysed-only counts and a no-re-review batch re-screen; see `docs/plans/batch-audit-repairs.md`.
-- **Re-screen artifact parity (found with B10).** The B7/B8 re-screen wrote filtered findings to `_work/<paper>/findings.json` but not to the paper folder: on `P240965` that copy still holds 28 U while `review.md` and `summary.json` report 21. `validate_batch --strict` passes because it checks finding IDs, not matching counts. The B10 re-screen must write both copies and reconcile, and a parity check belongs with it.
+- **Re-screen artifact parity.** Mid-rescreen the paper folder's findings lagged `_work/` (on `P240965`, 28 U against the rendered 21); both copies were synced by 11:24 and all 117 papers now reconcile. `validate_batch --strict` passed while they differed because it checks finding IDs, not matching counts, so a parity check is still worth adding.
 - **B8 re-screen and refresh.** All 117 papers re-rendered; 62 analysis-only U items dropped in 32
   papers with the new signals (uncited 1,363→1,301; P240965 28→21, P240926 39→20). Report diff is
   `batch_report.b8.diff`; `validate_batch --strict` passes 0/0.

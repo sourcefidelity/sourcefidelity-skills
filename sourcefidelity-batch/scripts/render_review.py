@@ -425,8 +425,10 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("")
     analyzed_works = [work for work in findings.get("works", [])
                       if work.get("mention_type", "analyzed") != "passing"]
-    passing_works = [work for work in findings.get("works", [])
-                     if work.get("mention_type") == "passing"]
+    passing_works = findings.get("passing_mentions")
+    if passing_works is None:
+        passing_works = [work for work in findings.get("works", [])
+                         if work.get("mention_type") == "passing"]
     if analyzed_works:
         lines.append("### Works discussed without a reference entry")
         lines.append("")
@@ -438,7 +440,8 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("### Passing mentions — no requirement")
         lines.append("")
         for work in passing_works:
-            lines.append(f"- **{work['id']} — {work.get('work', '')}** ({work.get('locator', '')}). "
+            label = work.get("locator") or work.get("legacy_id") or ""
+            lines.append(f"- **{label} — {work.get('work', '')}**. "
                          f"{work.get('discussion', '')}")
         lines.append("")
     lines.append("### Hyperlink audit")
@@ -582,8 +585,9 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
         },
         "works_discussed": len([w for w in findings.get("works", [])
                                 if w.get("mention_type", "analyzed") != "passing"]),
-        "passing_mentions": len([w for w in findings.get("works", [])
-                                 if w.get("mention_type") == "passing"]),
+        "passing_mentions": len(findings.get("passing_mentions") or
+                                 [w for w in findings.get("works", [])
+                                  if w.get("mention_type") == "passing"]),
         "uncited_passages": len(findings.get("uncited", [])),
         "category_a_findings": counts["A"],
         "finding_counts": counts,

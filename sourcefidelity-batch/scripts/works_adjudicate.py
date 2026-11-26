@@ -20,6 +20,7 @@ for path in (HERE, REVIEW):
     if path not in sys.path:
         sys.path.insert(0, path)
 import docx_text  # noqa: E402
+from prune_passing_works import prune_paper  # noqa: E402
 
 RENDER = os.path.join(HERE, "render_review.py")
 TOKEN = re.compile(r"\b[Ww]\d+\b")
@@ -115,6 +116,7 @@ def record(root, responses):
                     w["mention_type"] = by_id[w["id"]].get("mention_type")
                     w["category"] = by_id[w["id"]].get("category")
             inv_path.write_text(json.dumps(inv, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        prune_paper(root, pid)
         subprocess.run([sys.executable, "-I", RENDER, "--batch", str(root), "--paper", pid,
                         "--inventory", str(root / pid / "inventory.json"),
                         "--findings", str(fpath), "--strict-inventory", "--require-gate"],
