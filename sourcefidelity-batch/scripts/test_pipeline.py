@@ -80,6 +80,7 @@ import query_translate as qt  # noqa: E402
 import acceptance_cjk as acc  # noqa: E402
 import render_review as rr  # noqa: E402
 import validate_batch as vb  # noqa: E402
+import uncited_adjudicate as ua  # noqa: E402
 import fetch_web_sources as fws  # noqa: E402
 import works_rescreen as wr  # noqa: E402
 import formatting_audit as fa  # noqa: E402
@@ -9663,6 +9664,46 @@ class FormattingAuditTests(unittest.TestCase):
         self.assertEqual(body[0]["paragraph_id"], "P2")
         refs = [c for c in result["candidates"] if c["kind"].startswith("reference")]
         self.assertTrue(refs)
+
+
+class UncitedLedgerTests(unittest.TestCase):
+    def _row(self, **overrides):
+        row = {"key": "P1:0", "paragraph_id": "P1", "text": "The film earned 100 million dollars at the global box office.",
+               "signals": ["fact"], "outcome": "uncited", "disposition": "", "factual_span": "",
+               "expected_source": "", "citation_id": "", "reason": ""}
+        row.update(overrides)
+        return row
+
+    def _findings(self, statement):
+        return {"uncited": [{"id": "U1", "statement": statement,
+                             "expected_source": "Box Office Mojo"}]}
+
+    def test_clear_fact_candidate_routes_deterministically(self):
+        self.assertEqual(ua.suggested_disposition(self._row()), "fact")
+
+    def test_missing_disposition_is_an_error(self):
+        errors = ua.validate_ledger_rows([self._row(disposition="")], {"uncited": []})
+        self.assertTrue(any("no disposition" in error for error in errors))
+
+    def test_fact_candidate_needs_a_u_and_source(self):
+        row = self._row(disposition="fact", expected_source="Box Office Mojo")
+        errors = ua.validate_ledger_rows([row], {"uncited": []})
+        self.assertTrue(any("no U entry" in error for error in errors))
+        self.assertEqual(ua.validate_ledger_rows([row], self._findings(row["text"])), [])
+
+    def test_analysis_candidate_present_as_u_is_an_error(self):
+        row = self._row(disposition="analysis")
+        errors = ua.validate_ledger_rows([row], self._findings(row["text"]))
+        self.assertTrue(any("present as U" in error for error in errors))
+
+    def test_mixed_candidate_uses_factual_span(self):
+        row = self._row(text="The film earned 100 million dollars, a huge success.",
+                        disposition="mixed", factual_span="The film earned 100 million dollars.",
+                        expected_source="Box Office Mojo")
+        findings = {"uncited": [{"id": "U1",
+                                 "statement": "The film earned 100 million dollars.",
+                                 "expected_source": "Box Office Mojo"}]}
+        self.assertEqual(ua.validate_ledger_rows([row], findings), [])
 
 
 class ArtifactParityTests(unittest.TestCase):

@@ -391,6 +391,41 @@ work:
 The second pass also resolved the P240982/P240912/P240927 borderline statements. Rules,
 continuation dispositions, restoration set and parity guard remain in place.
 
+### B12 — Uncited candidate ledger — In progress
+
+The post-hoc sample audit is not the right control. The first pass must dispose of **every extracted
+candidate**, not sample the finished U. The deterministic extractor already emits
+`uncited_candidates` with signals and an outcome; the worker currently re-decides U freely, so a kept
+analysis item or a dropped fact has no audit record.
+
+**Design.** Add `uncited_adjudicate.py`:
+
+1. Every candidate gets a stable key `(paragraph_id, ordinal)` and exactly one disposition:
+   `fact`, `analysis`, `merged into C<n>`, `mixed`, `new content`, or `not substantive`.
+2. Deterministic routing handles clear fact candidates (source-like signals, at least eight words,
+   no analysis outcome). All other candidates go to one bounded per-paper model packet.
+3. The model returns the disposition, a factual span for `mixed`, and an `expected_source` where
+   needed. The combined ledger is `_work/<paper>/uncited-ledger.json`.
+4. The worker builds U from `fact`/`mixed`/`new content` only.
+5. `validate_inventory --strict` (or `validate_batch`) rejects a candidate without a disposition, a
+   `fact`/`mixed` disposition with no matching U, or an `analysis`/`merged`/`not substantive`
+   disposition with a matching U.
+
+**Acceptance:** a fixture set with a clear fact, a clear analysis, a mixed sentence, a continuation
+merge and a missing disposition fails/passes as specified; one real paper runs `emit` then `record`
+with a complete ledger; `validate_batch --strict` accepts the ledger and still reports 0/0; the batch
+addendum names the step and removes reliance on post-hoc sampling.
+
+**Implemented (26 Nov).** `uncited_adjudicate.py` has `emit` (stable `paragraph:ordinal` keys, advisory
+`suggested` route for clear fact candidates, one packet per paper for every candidate) and `record`
+(writes `_work/<paper>/uncited-ledger.json`). `validate_batch` rejects a ledger with an undisposed
+candidate, a `fact`/`mixed`/`new content` entry without a matching U or source, or an
+`analysis`/`merged`/`not substantive` entry that is present as U. Six `UncitedLedgerTests` fixtures
+cover deterministic suggestion, missing disposition, fact/U/source, analysis-present-as-U and mixed
+span. The deterministic route is advisory only; the model must confirm every candidate and supply the
+source. Remaining: run one full paper through emit/record, add the step to BATCH_ADDENDUM/SKILL, and
+record a real ledger. Status: In progress.
+
 ## Progress (25 Nov)
 
 - B0: per-paper authorship flags and report sections removed; `authorship_signals.py` became

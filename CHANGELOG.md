@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **B12 uncited candidate ledger (in progress).** Adds `uncited_adjudicate.py` so every extracted
+  candidate receives one disposition (`fact`, `analysis`, `merged`, `mixed`, `new content`, `not
+  substantive`) before U is written; clear facts route deterministically, ambiguous candidates use a
+  bounded per-paper model packet, and the validator rejects missing or contradictory dispositions.
+  This replaces post-hoc sampling as the primary first-pass control. Detail in B12.
+
 - **B11 uncited-passage residuals.** Bounded adjudication of the B7/B8 re-screen: 27 source-dependent
   statements restored and 67 dismissed with reasons (full 94-item removal set); 39 analysis items removed and 45 re-recorded as
   factual spans; continuation U now require `candidate_outcome`/`continuation_disposition` (58 merged

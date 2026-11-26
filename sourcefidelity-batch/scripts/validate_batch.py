@@ -20,7 +20,8 @@ if _BOOTSTRAP_HERE not in _bootstrap_sys.path:
     _bootstrap_sys.path.insert(0, _BOOTSTRAP_HERE)
 import paper_index  # noqa: E402
 import render_review  # noqa: E402
-from sourcefidelity_core import finding_counts  # noqa: E402
+from sourcefidelity_core import finding_counts
+import uncited_adjudicate  # noqa: E402
 import json
 import os
 import sys
@@ -155,6 +156,18 @@ def check_findings(root, pid):
             summary = json.load(open(summary_path, encoding="utf-8"))
         except ValueError:
             summary = {}
+        ledger_path = os.path.join(folder, "uncited-ledger.json")
+        if os.path.exists(ledger_path):
+            try:
+                _, grouped = uncited_adjudicate.load_candidates(
+                    os.path.join(folder, "candidates.json"))
+                ledger = json.load(open(ledger_path, encoding="utf-8"))
+                ledger_errors = uncited_adjudicate.validate_ledger_rows(
+                    ledger.get("candidates", []), f)
+                if ledger_errors:
+                    return [f"{pid} {message}" for message in ledger_errors], []
+            except (OSError, ValueError, KeyError) as exc:
+                return [f"{pid} uncited ledger unreadable: {exc}"], []
         counts = finding_counts.render_counts(f)
         if summary:
             errors = artifact_parity_errors(f, summary)
