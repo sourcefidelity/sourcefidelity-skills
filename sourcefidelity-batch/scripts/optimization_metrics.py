@@ -72,13 +72,35 @@ def paper_metrics(root, paper):
     }
 
 
+def usage_from_review_metrics(root, ids):
+    """Token totals from a rendered review's summary when no token-usage sidecar exists."""
+    for paper in ids:
+        folder = batch_paths.paper_folder(root, paper)
+        summary = load(os.path.join(folder, "summary.json"))
+        runs = ((summary.get("review_metrics") or {}).get("runs") or [])
+        if not runs:
+            continue
+        usage = runs[-1].get("usage") or {}
+        cached = int(usage.get("cache_read_tokens", 0) or 0)
+        prompt = int(usage.get("input_tokens", 0) or 0)
+        output = int(usage.get("output_tokens", 0) or 0)
+        if not (cached or prompt or output):
+            continue
+        return {"input_tokens": prompt, "cache_read_tokens": cached,
+                "output_tokens": output, "prompt_tokens": prompt + cached,
+                "total_tokens": int(usage.get("total_tokens", 0) or 0)
+                or prompt + cached + output,
+                "source": "review_metrics"}
+    return {}
+
 def collect(root, selected=None):
     ids = selected or papers(root)
     registry = load(os.path.join(root, "source_registry.json")).get("works", {})
     open_sources = load(os.path.join(root, "_work", "open_sources.json"))
     parallel = load(os.path.join(root, "_work", "parallel_metrics.json"))
     acquisition = load(os.path.join(root, "_work", "acquisition_metrics.json"))
-    usage = load(os.path.join(root, "_work", "token-usage.json"))
+    usage = (load(os.path.join(root, "_work", "token-usage.json"))
+             or usage_from_review_metrics(root, ids))
     rows = [paper_metrics(root, paper) for paper in ids]
     statuses = {}
     for record in registry.values():

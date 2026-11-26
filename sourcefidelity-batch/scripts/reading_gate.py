@@ -36,7 +36,7 @@ RENDER = os.path.join(HERE, "render_review.py")
 CHECK_PATTERNS = {
     "patchwriting": ("patchwriting", "close paraphrase"),
     "reported_viewpoint": ("reported viewpoint", "viewpoint", "causal claim reversed",
-                           "stance"),
+                           "reversed causal claim", "stance"),
     "lost_qualification": ("qualification", "qualifier", "source's qualifications omitted"),
     "quoted_term": ("quoted term", "quotation altered", "misquot"),
     "locator": ("page locator", "locator"),
@@ -86,7 +86,8 @@ def paths_for(root, paper):
     return {"folder": folder, "work": work,
             "task": os.path.join(work, "task.json"),
             "findings": findings, "inventory": inventory,
-            "gate": os.path.join(work, "reading-gate.json")}
+            "gate": os.path.join(work, "reading-gate.json"),
+            "rebuttals": os.path.join(folder, "gate-rebuttals.json")}
 
 
 def _extracted_sources(occurrence, task, limit=2):
@@ -170,13 +171,67 @@ def _issue_present(occurrence, finding):
     return any(pattern in text for pattern in CHECK_PATTERNS.get(check, ()))
 
 
-def apply(root, paper):
+def _rebuttal_index(rebuttals):
+    """Keyed rebuttals with a non-empty reason; an unexplained rebuttal does not count."""
+    rows = (rebuttals or {}).get("rebuttals", []) if isinstance(rebuttals, dict) else rebuttals
+    index = {}
+    for row in rows or []:
+        occurrence = str(row.get("occurrence", "")).strip()
+        check = str(row.get("check", "")).strip()
+        reason = str(row.get("reason", "")).strip()
+        if occurrence and check and reason:
+            index[(occurrence, check)] = row
+    return index
+
+
+def unadopted(gate, findings):
+    """Gate findings with no matching A/B issue on the review's occurrence."""
+    by_id = {str(item.get("id")): item for item in findings.get("occurrences", []) or []}
+    rows = []
+    for record in gate.get("occurrences", []) or []:
+        occurrence = by_id.get(str(record.get("occurrence")))
+        for finding in record.get("findings", []) or []:
+            if occurrence is not None and _issue_present(occurrence, finding):
+                continue
+            rows.append({"occurrence": record.get("occurrence"),
+                         "check": finding.get("check", ""),
+                         "category": finding.get("category", ""),
+                         "issue_type": finding.get("issue_type", "")})
+    return rows
+
+
+def check(gate, findings, rebuttals=None):
+    """Every gate finding must be adopted into findings or rebutted with a reason."""
+    index = _rebuttal_index(rebuttals)
+    rows = []
+    for row in unadopted(gate, findings):
+        key = (str(row["occurrence"]), str(row["check"]))
+        if key in index:
+            rows.append({**row, "status": "rebutted", "reason": index[key]["reason"]})
+        else:
+            rows.append({**row, "status": "missing"})
+    missing = [row for row in rows if row["status"] == "missing"]
+    total = sum(len(record.get("findings", []) or [])
+                for record in gate.get("occurrences", []) or [])
+    return {"schema": "reading-gate-adoption-v1",
+            "rows": rows,
+            "missing": missing,
+            "counts": {"gate_findings": total,
+                       "adopted": total - len(rows),
+                       "rebutted": sum(1 for row in rows if row["status"] == "rebutted"),
+                       "missing": len(missing)},
+            "ok": not missing}
+
+
+def apply(root, paper, rebuttals=None):
     paths = paths_for(root, paper)
     gate = load(paths["gate"], {})
     findings = load(paths["findings"], {})
     if not gate or not findings:
         raise SystemExit(f"{paper}: reading-gate.json or findings.json missing; run gate first")
     before = finding_counts.issue_counts(findings)
+    rebuttal_index = _rebuttal_index(rebuttals if rebuttals is not None
+                                     else load(paths["rebuttals"], {}))
     occurrences = {item.get("id"): item for item in findings.get("occurrences", []) or []}
     summary = findings.setdefault("summary", {})
     applied, existing = [], []
@@ -194,6 +249,8 @@ def apply(root, paper):
         added = []
         for finding in record.get("findings", []) or []:
             check = finding.get("check", "")
+            if (occurrence["id"], check) in rebuttal_index:
+                continue
             if _issue_present(occurrence, finding):
                 existing.append({"occurrence": occurrence["id"], "check": check})
                 continue
@@ -230,11 +287,15 @@ def apply(root, paper):
                      "reason": item.get("reason")}
                     for record in gate.get("occurrences", []) or []
                     for item in record.get("inconclusive", []) or []]
+    rebutted = [{"occurrence": key[0], "check": key[1],
+                 "reason": value.get("reason", "")}
+                for key, value in rebuttal_index.items()]
     findings["reading_gate"] = {
         "schema": reading_gate.VERSION,
         "counts": gate.get("counts", {}),
         "applied": applied,
         "existing": existing,
+        "rebutted": rebutted,
         "declined": declines,
         "inconclusive": inconclusive,
     }
@@ -343,6 +404,11 @@ def main(argv=None):
     apply_parser = sub.add_parser("apply")
     apply_parser.add_argument("--batch", required=True)
     apply_parser.add_argument("--paper", required=True)
+    apply_parser.add_argument("--rebuttals", default="")
+    check_parser = sub.add_parser("check")
+    check_parser.add_argument("--gate", required=True)
+    check_parser.add_argument("--findings", required=True)
+    check_parser.add_argument("--rebuttals", default="")
     status_parser = sub.add_parser("status")
     status_parser.add_argument("--batch", required=True)
     compare_parser = sub.add_parser("compare")
@@ -357,9 +423,16 @@ def main(argv=None):
                                  args.out),
                              ensure_ascii=False, indent=1))
         elif args.mode == "apply":
-            print(json.dumps(apply(root, args.paper), ensure_ascii=False, indent=1))
+            rebuttals = load(args.rebuttals, {}) if args.rebuttals else None
+            print(json.dumps(apply(root, args.paper, rebuttals),
+                             ensure_ascii=False, indent=1))
         elif args.mode == "status":
             print(json.dumps(status(root), ensure_ascii=False, indent=1))
+        elif args.mode == "check":
+            result = check(load(args.gate, {}), load(args.findings, {}),
+                           load(args.rebuttals, {}) if args.rebuttals else None)
+            print(json.dumps(result, ensure_ascii=False, indent=1))
+            return 0 if result["ok"] else 1
         else:
             print(json.dumps(compare(load(args.gate, {}), load(args.prior, {})),
                              ensure_ascii=False, indent=1))

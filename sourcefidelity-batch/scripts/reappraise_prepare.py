@@ -35,6 +35,7 @@ import make_task  # noqa: E402
 import prepare_source as prepare_source_module  # noqa: E402
 import source_scope  # noqa: E402
 from file_digest import sha256_file  # noqa: E402
+from sourcefidelity_core import admissibility  # noqa: E402
 from sourcefidelity_core import window_cache  # noqa: E402
 
 
@@ -273,8 +274,15 @@ def main():
         observation = scope_for(extraction, page_range)
         edition_text = (f"{identity.get('author', '')} ({identity.get('year', '')}). "
                         f"{identity.get('title', '')}.")
+        # The edition observation needs the copy's own head: without it every copy
+        # is "unknown" and an affirmative reappraisal is refused.
+        head = ""
+        if extraction and os.path.exists(extraction):
+            with open(extraction, encoding="utf-8", errors="replace") as handle:
+                head = handle.read(4000)
         observation["edition"] = source_scope.observe_edition(
-            edition_text, [], {}, identity_status=rec.get("identity_status", ""))
+            edition_text, [], {"first_page_head": head},
+            identity_status=rec.get("identity_status", ""))
         observation["absence_allowed"] = admissibility.decide(
             observation, "absence")["allowed"]
         text_cache = None

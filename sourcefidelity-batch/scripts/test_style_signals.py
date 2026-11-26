@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Offline tests for S5 style signals. Run: python3 -I scripts/test_style_signals.py"""
+"""Offline tests for the document profile (document metadata, headings, sentences).
+
+Formerly the S5 style-signal tests; the authorship/style scoring was removed from
+the batch skill. Run: python3 -I scripts/test_style_signals.py
+"""
 import importlib.util
 import pathlib
 import sys
+import tempfile
+import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location("a", HERE / "authorship_signals.py")
+spec = importlib.util.spec_from_file_location("dp", HERE / "document_profile.py")
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
@@ -18,136 +24,82 @@ def check(name, cond, detail=""):
         FAILS.append(name)
 
 
-def paras(*texts):
-    return [{"text": t, "style": "", "bold": False} for t in texts]
+def paras(*items):
+    out = []
+    for item in items:
+        if isinstance(item, tuple):
+            text, style, bold = item
+        else:
+            text, style, bold = item, "", False
+        out.append({"text": text, "style": style, "bold": bold})
+    return out
 
 
-# A passage dense in the documented markers, with uniform sentence lengths.
-AI_TEXT = (
-    "Additionally, the film serves as a pivotal testament to the evolving landscape. "
-    "Moreover, it underscores a vibrant tapestry of crucial themes. "
-    "Furthermore, the director delves into a multifaceted realm of meticulous detail. "
-    "Additionally, the narrative stands as a seamless blend of crucial form and vibrant content. "
-    "Moreover, the score functions as a multifaceted bridge between crucial scenes. "
-    "Furthermore, the visual design serves as a pivotal testament to the era. "
-    "Additionally, the ensemble boasts a vibrant tapestry of crucial performances. "
-    "Moreover, the editing acts as a seamless frame for crucial moments. "
-)
-
-PLAIN_TEXT = (
-    "The film was released in 1951. "
-    "Its budget came to roughly one million dollars, which was modest for the period and "
-    "reflected the studio's caution about a project with no established audience. "
-    "Wise had edited Citizen Kane. "
-    "The studio marketed the picture to science-fiction readers first, placing advertisements "
-    "in magazines that had never carried film advertising before, and the campaign cost more "
-    "than anyone at the studio had expected. "
-    "Critics disagreed. "
-    "It performed well in New York. "
-)
-
-# --- families fire on the marked passage
-ai = m._style_from_paras(paras(AI_TEXT * 10))
-plain = m._style_from_paras(paras(PLAIN_TEXT * 12))
-check("AI passage fires S5", ai["fires"], ai["families_firing"])
-check("AI passage fires >=2 families", len(ai["families_firing"]) >= 2, ai["families_firing"])
-check("AI vocabulary detected", ai["families"]["ai_vocabulary"]["fires"],
-      ai["families"]["ai_vocabulary"])
-check("plain passage does not fire", not plain["fires"], plain["families_firing"])
-
-# --- rule_of_three is supporting only
-check("rule_of_three never fires",
-      ai["families"]["rule_of_three"]["fires"] is False,
-      ai["families"]["rule_of_three"])
-check("rule_of_three marked supporting",
-      ai["families"]["rule_of_three"].get("supporting_only") is True)
-check("rule_of_three absent from firing list",
-      "rule_of_three" not in ai["families_firing"], ai["families_firing"])
-
-# --- quoted material is not counted
-quoted = "The student writes, \u201cAdditionally it serves as a pivotal testament to a vibrant tapestry of crucial ideas.\u201d That is all."
-q = m._style_from_paras(paras(quoted))
-check("quoted markers excluded", q["families"]["ai_vocabulary"]["count"] == 0,
-      q["families"]["ai_vocabulary"])
-check("strip_quotes removes the span", "serves as" not in m.strip_quotes(quoted))
-
-# --- reference list is excluded by split_body
-blocks = paras(
-    "This is ordinary prose about a film.",
+# --- reference boundary
+body, refs = m.split_body(paras(
+    "The film is the object of analysis.",
     "References",
-    "Delve, P. (2020). A pivotal tapestry of crucial and multifaceted vibrant testaments. "
-    "Journal of Seamless Landscapes, 1(1), 1-10.",
+    "Smith, J. (2020). A book. Publisher.",
+))
+check("split_body separates references", len(body) == 1 and len(refs) >= 1, (body, refs))
+
+# --- distinctive headings only
+blocks = paras(
+    ("Introduction", "Heading 1", False),
+    "Ordinary body text.",
+    ("Distribution Strategy", "Heading 1", False),
+    ("Discussion and Conclusion", "Heading 1", False),
 )
-body, refs = m.split_body(blocks)
-style = m._style_from_paras(body)
-check("reference list excluded", style["families"]["ai_vocabulary"]["count"] == 0, style["families"])
+headings = m.heading_set(blocks)
+check("heading_set keeps distinctive headings", "distribution strategy" in headings, headings)
+check("heading_set drops generic headings", "introduction" not in headings, headings)
 
-# --- burstiness is computed on quote-stripped sentences
-mixed = paras(
-    "Short one. A much longer sentence that runs on with many words in it and keeps going for a while. "
-    "\u201cA quoted sentence of moderate length that should not affect the calculation at all.\u201d Tiny."
-)
-s = m._style_from_paras(mixed)
-check("burstiness computed", "low_burstiness" in s["families"], s["families"].keys())
+# --- sentence and n-gram helpers
+sents = m.sentences(paras("First sentence here. Second sentence is longer than the first one."))
+check("sentences splits", len(sents) == 2, sents)
+grams = m.ngrams(["one", "two", "three", "four"], 2)
+check("ngrams", ("one", "two") in grams and ("three", "four") in grams, grams)
 
-# --- strong S4 needs an implausible editing time for a long paper
-long_profile = {"document_metadata": {"words": 1200, "total_editing_minutes": 1, "revision": "3"}}
-slow_profile = {"document_metadata": {"words": 1200, "total_editing_minutes": 40, "revision": "3"}}
-short_profile = {"document_metadata": {"words": 300, "total_editing_minutes": 1, "revision": "3"}}
-check("strong S4 for 1 minute", m.strong_s4(long_profile) is True)
-check("not strong for a normal editing time", m.strong_s4(slow_profile) is False)
-check("not strong below the word gate", m.strong_s4(short_profile) is False)
+# --- a real DOCX produces a profile
+DOC = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Distribution Strategy</w:t></w:r></w:p>
+<w:p><w:r><w:t>This is a body sentence about a film and its long distribution history.</w:t></w:r></w:p>
+<w:p><w:r><w:t>This is another body sentence about its release across several overseas markets.</w:t></w:r></w:p>
+</w:body></w:document>"""
+CORE = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+ xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>Student</dc:creator></cp:coreProperties>"""
+APP = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">
+<Application>Microsoft Office Word</Application><Words>12</Words></Properties>"""
+CT = """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+<Default Extension="xml" ContentType="application/xml"/>
+<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"""
+RELS = """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
 
+with tempfile.TemporaryDirectory() as tmp:
+    path = pathlib.Path(tmp) / "paper.docx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", CT)
+        z.writestr("_rels/.rels", RELS)
+        z.writestr("word/document.xml", DOC)
+        z.writestr("docProps/core.xml", CORE)
+        z.writestr("docProps/app.xml", APP)
+    profile = m.paper_profile(path)
+check("profile metadata", profile["document_metadata"]["creator"] == "Student",
+      profile["document_metadata"])
+check("profile headings", "distribution strategy" in profile["headings"], profile["headings"])
+check("profile sentences", len(profile["sentences"]) >= 2, profile["sentences"])
+check("profile ngrams", bool(profile["ngrams"]), profile["ngrams"][:3])
+check("no authorship fields", not any(key in profile for key in
+      ("generation", "style", "metadata_flags", "authorship_signals")), profile.keys())
 
-
-# --- generation signature rules
-def gen(app, rsid, zip_norm, placeholders=0, minutes=None, revision="1", words=1500):
-    pkg = {"rsid_attributes": rsid, "rsid_root": rsid >= 20,
-           "zip_normalized": zip_norm, "placeholders": placeholders}
-    meta = {"application": app, "totaltime": minutes, "revision": revision}
-    return m.generation_signature(pkg, meta, words)
-
-
-library = gen("", 0, False, placeholders=1)
-check("library package is a signature", library["signature"] and library["producer"] == "library", library)
-
-typed = gen("Microsoft Office Word", 80, True, minutes=30, revision="5")
-check("typed Word document is not a signature", not typed["signature"], typed)
-check("typed document reported as word", typed["producer"] == "word", typed)
-
-converted = gen("Microsoft Macintosh Word", 3, False, minutes=0, revision="1")
-check("converted package is a signature", converted["signature"], converted)
-
-gdocs = gen("Google Docs", 0, False, minutes=None, revision="1")
-check("Google Docs export is external, not a signature", not gdocs["signature"], gdocs)
-check("Google Docs producer is external_editor", gdocs["producer"] == "external_editor", gdocs)
-
-gdocs_placeholder = gen("Google Docs", 0, False, placeholders=2, minutes=None, revision="1")
-check("placeholders with no editing time do fire", gdocs_placeholder["signature"], gdocs_placeholder)
-
-short = gen("Microsoft Macintosh Word", 3, False, minutes=0, revision="1", words=400)
-check("short paper is below the word gate", not short["signature"], short)
-
-print("\nFAILURES:", FAILS if FAILS else "none")
+print("\nFAILURES:", FAILS or "none")
 sys.exit(1 if FAILS else 0)
-
-
-class FormulationClusterTests(unittest.TestCase):
-    def _grams(self, sentence, n=8):
-        tokens = sentence.split()
-        return {" ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)}
-
-    def test_one_shared_sentence_is_one_formulation(self):
-        grams = self._grams(
-            "stars are made for profit and function as part of the way films are sold today")
-        self.assertEqual(len(au.shared_formulations(grams)), 1)
-
-    def test_three_distinct_phrases_are_three_formulations(self):
-        grams = set()
-        grams |= self._grams(
-            "the classical hollywood studio era constructed stars as commercial products for sale")
-        grams |= self._grams(
-            "pressbooks and fan magazines extended the star image beyond the films themselves")
-        grams |= self._grams(
-            "studio contracts controlled the private lives of performers in the period")
-        self.assertEqual(len(au.shared_formulations(grams)), 3)

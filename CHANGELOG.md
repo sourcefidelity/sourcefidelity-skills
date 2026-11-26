@@ -2,6 +2,151 @@
 
 ## Unreleased
 
+- **Model-assisted W adjudication.** Added `works_adjudicate.py emit/record`: per-paper packets of
+  W entries and body context for a host model, with evidence-carrying decisions applied to findings,
+  summary and inventory. Used on the remaining 97 papers after the 20-paper manual sample. Blind
+  rerun on the manual 20: 161/161 W decisions agree, 0 false positives/negatives; the deterministic
+  focus scorer agreed 104/161.
+
+- **B10 works inventory re-screen (complete classification).** All 117 papers are body-context
+  adjudicated: **222 analysed / A**, **248 passing**, `works_discussed` 222, validation 0/0.
+  P240975 corrected to 3 A (W1/W3/W6; W2/W4/W5 gross/release-only). Open structural item: passing
+  mentions still carry W IDs, so P240907 is 6 W / 2 A rather than the specified 3 W / 2 A.
+
+- **Works inventory separates analysed works from passing mentions (B10).** The 24 November batch enters works that are only named as W and charges Category A: 470 W against the earlier archive's 312, `works_discussed` 470 against 300, and 28 % of its A-charged works appear once in the body against 15 % in the archive. B10 adds the analysed/passing test, a required `mention_type`, A-on-passing validation, analysed-only counts and a no-re-review batch re-screen; see `docs/plans/batch-audit-repairs.md`.
+- **Re-screen artifact parity (found with B10).** The B7/B8 re-screen wrote filtered findings to `_work/<paper>/findings.json` but not to the paper folder: on `P240965` that copy still holds 28 U while `review.md` and `summary.json` report 21. `validate_batch --strict` passes because it checks finding IDs, not matching counts. The B10 re-screen must write both copies and reconcile, and a parity check belongs with it.
+- **B8 re-screen and refresh.** All 117 papers re-rendered; 62 analysis-only U items dropped in 32
+  papers with the new signals (uncited 1,363→1,301; P240965 28→21, P240926 39→20). Report diff is
+  `batch_report.b8.diff`; `validate_batch --strict` passes 0/0.
+
+- **Uncited analysis exclusion (B7).** The worker contract now uses the operational U test and
+  requires `expected_source`; `validate_inventory --strict` rejects empty/analysis-valued sources;
+  the extractor adds an `analysis` signal, `possible_analysis`, conclusion continuations, mixed
+  clauses and a two-per-paragraph cap. Six fixtures cover the specified cases. Sample re-screen:
+  P240965 28→21, P240926 39→20, P241012 35→30, P240979 30→29; full batch re-screen is B8.
+
+- **Formatting audit (B9).** `docx_text.py` resolves italics/bold through direct, character-style
+  and paragraph-style chains; `formatting_audit.py` raised 2,193 `F#` candidates across 117 papers,
+  and `formatting_apply.py` disposed them (1,603 confirmed, 590 rejected). Confirmed formatting
+  issues are Category A and rendered; `batch_report.md` reports the coverage; validation is clean.
+
+- **B5 closed on the batch.** The Rowson PDF was fetched and extracted (38,750 chars), and P240946 C2
+  was re-judged from it as Supports at p. 36. The batch has no remaining `pdf_not_opened` references.
+
+- **Detail over a word cap.** `check_docs.py` no longer totals-word-budgets the reference and status
+  documents. `AGENTS.md` keeps its hard 1,200-word cap (brevity is compliance for a per-session
+  instruction file); `ARCHITECTURE.md` and `STATE.md` are bounded by per-section targets that warn at
+  80% and by a shape warning when a status document's verification section exceeds 40% of the file.
+  `PLAN.md` stays unbudgeted so its rows can carry diagnosis, evidence and acceptance instead of
+  being compressed to fit 3,840 words.
+- **`ARCHITECTURE.md` §2 split, and the changelog archive protected.** "Skills and entry points" (1,508 words) became §2 skills and §3 shared mechanisms, with the later sections renumbered; §2 is now 526 words and no longer near its target. `check_docs.py` now fails if the "Earlier verification" archive in `CHANGELOG.md` is missing, duplicated or moved inside `## Unreleased`, so the release ritual cannot prune it.
+- **`STATE.md` pruned to current truth.** The verification record held 77 rows and 2,829 words, of
+  which only a handful concerned work that is still open; 53 completed rows (2,143 words) moved
+  verbatim to "Earlier verification" here, taking `STATE.md` from 3,999 to about 1,900 words. The
+  maintenance rule in `AGENTS.md` now says to keep §1 short and §2 to current facts and open rows
+  and to move completed evidence to this file, instead of "keep it under 4,000 words".
+
+- **Body-title formatting audit planned (B9).** The 117-paper batch checked reference-list title
+  formatting (86 papers) but almost never body text: a mechanical audit found 56 of 67 papers with
+  analysed titles in the body rendering at least one roman, and none of the 56 carried an in-text
+  finding. B9 specifies a deterministic candidate class, a required disposition, a batch warning and
+  a "Formatting coverage" report line; see `docs/plans/batch-audit-repairs.md`.
+
+- **PDF URL evidence (B5).** `fetch_web_sources.py` fetches PDF bodies and extracts their text
+  through the PDF pipeline; the Rowson URL produced 38,750 characters of full text and is cached
+  for the batch. A PDF-only web source can now supply a window instead of a `pdf_not_opened`
+  limitation.
+
+- **`not_found_after_search` validated.** A synthetic dead web source with no archive and a host
+  search returning no match reached `not_found_after_search` with route evidence. Article/book
+  `not_found` remains unit-tested pending a live page-gap case.
+
+- **Nonexistence calibration.** 9/9 known fabricated sources detected and 0/10 false positives on
+  real controls. The first run flagged two real articles (Aleynikova, Allison); DOI-title matching
+  and markup/accent/hyphen normalisation were fixed before sign-off. See
+  `docs/plans/nonexistence-calibration.md`.
+
+- **Nonexistence pre-pass applied.** Confirmed and re-rendered nine sources: Johnson, Yalcinkaya,
+  Denison, Geraghty and Scott, Scolari and WBD, Barratt and Hills. The batch validates with 0 errors
+  and 0 warnings; P240946, P240953 and P240975 carry `fabrication_risk`.
+
+- **Nonexistence rules and pre-pass.** Confirmed the complete-search standard for books,
+  articles and websites, with four states (`confirmed_absent`, `not_found_after_search`,
+  `citation_conflict`, `search_incomplete`), a mandatory evidence block, and Category B
+  treatment for the first two. Added `confirm_nonexistence.py`: it runs the DOI, journal-issue,
+  catalogue, OpenAlex, link and Wayback checks, consumes host-search JSON, and writes the
+  registry status. Six new tests cover the classification.
+
+- **Batch report repairs (B1–B3).** `render_summary` now derives Category B from
+  the findings, so the summary count reconciles with the review Counts line
+  (497 in the 24 Nov batch, previously 116). HL takes the link-audit floor and
+  `validate_batch` errors on a shortfall. The report recognises schema 5 instead
+  of labelling every paper “schema 2”.
+
+- **Authorship signals removed; cohort overlap kept (B0).** Per-paper
+  authorship flags, S1–S5 scoring and their report sections are gone.
+  `authorship_signals.py` became `document_profile.py` (metadata, headings,
+  sentences, n-grams only) and the retained “Cohort text overlap” pass is
+  `text_overlap.py`; the report section is unchanged.
+
+- **Analyzed-media A repair (B4).** Eighteen papers whose own work notes called
+  a work “analysed media” now carry the Category A finding; 62 W entries were
+  recategorised and the affected reviews, ledgers and summaries re-rendered.
+  The batch revalidates with 0 errors and 0 warnings.
+
+- **Category A and U rules clarified (B4/B7).** An analysed film, programme or
+  game without a reference entry or first in-text citation is Category A, not a
+  formatting note. Workers must record one specific factual or interpretive
+  claim per U and exclude general analysis; 645 pipeline tests pass.
+
+- **Reappraisal preparation repairs.** `reappraise_prepare.py` now imports the
+  shared `admissibility` module (a missing import made the first run fail) and
+  passes the supplied copy's head to `observe_edition`, so a same-year copy can
+  support an affirmative reappraisal instead of being refused as `unknown`.
+  645 pipeline tests.
+
+- **Single-review default reverted (R58; R60 bar).** `SKILL.md` routes
+  `/sourcefidelity-review` through the direct review again: prepare, review the
+  paper in the conversation against targeted source excerpts, write the review
+  and ledger (or render validated records). The per-claim bounded path remains
+  behind `--bounded` as an opt-in experiment and returns to the default only
+  when it meets the R60 bar: at least 18/20 TV verdicts, a complete
+  bibliography and hyperlink section, measured cost at or below $0.10 and 16
+  minutes, and two consecutive runs within one verdict. The reading gate is
+  optional but, when used, still requires adoption or a reasoned rebuttal.
+  Batch and reappraisal changes are untouched.
+
+- **Bounded single review by default (R58a/R58b).** `SKILL.md` routes a prepared
+  single review through `one_paper --bounded`, per-claim worker responses and
+  `--collect-bounded`, keeping full source text out of the main context; the
+  direct long-context path is fallback-only. A content-blocked provider request
+  is explicitly non-retryable and resumes from `_work/` in a new session.
+
+- **Binding reading gate (R58c).** `reading_gate.py check` fails when a gate
+  finding is neither adopted in the findings nor rebutted in
+  `paper/gate-rebuttals.json` with a non-empty reason; `apply --rebuttals`
+  skips recorded rebuttals. The patchwriting check now catches a compressed
+  paraphrase that keeps a shared content-word run (the C1 failure), and the
+  reported-viewpoint check catches an author-emphasis attribution of a viewpoint
+  the source reports (the C11 failure). 641 pipeline tests.
+
+- **Open-text ingestion and window coverage (R58e).** `sourcefidelity-review/scripts/ingest_open.py`
+  stages `openfetch.py` texts under `_sources/<source_key>/text.txt`, records the extraction and a
+  confirmed identity on the registry work, and (with `--rebuild`) reruns `make_task.py`. On the TV
+  copy this raised window coverage from 4 to 16 of 20 citations and emitted 16 bounded packets
+  (max 3,999 bytes); the four remaining works are unavailable and carry recorded limitations.
+
+- **TV benchmark and token metrics (R59).** Added `_benchmarks/twf-gold.json`
+  and `scripts/benchmark_review.py`, which score verdicts, required findings,
+  uncited passages, counts and run metrics against the adjudicated reading.
+  `optimization_metrics.py` now takes token totals from `review_metrics` when
+  no token-usage sidecar exists. The stored 23 Nov run scores 19/20, missing
+  C1 patchwriting and the P1 thesis paraphrase, and exceeds the R58 limits.
+
+- **Reliability and optimization plan (R57–R59).** Added
+  `docs/plans/reliability-optimization-plan.md` for the DSH turn-failure
+  containment rows and the bounded-default acceptance thresholds.
+
 - **Long-run budget and resume status (R37).** `checkpoint.py --budget N
   --write-status` names the next N pending claims and writes a `partial`
   `run-status.json` with `budget_stop` when work remains, without turning an
@@ -517,3 +662,63 @@ decisions.
   evidence windows stay inside permitted pages; folio inference needs
   corroboration; cohort S1 uses the searched-reference denominator; dry run
   makes no calls or writes.
+
+## Earlier verification (archived from `docs/STATE.md`)
+
+**Archive — not release notes.** Do not prune, close, date or renumber this section when closing `## Unreleased`; `scripts/check_docs.py` fails if it is missing, duplicated or moved inside `## Unreleased`. Moved here on 26 November 2026 so `docs/STATE.md` stays a snapshot of current truth; rows are verbatim from that file, and git history holds the same content.
+
+| What | How it was verified | Result |
+|---|---|---|
+| Update detection | `update_check.py` against a file `latest.json`; fresh and stale state; persistent notice; minimum-version warning | Notices correct; no fetch while state is fresh; notice persists |
+| Installer check states | `--check` with current and newer `latest.json`, and with an unreachable URL | “up to date”, update notice, and “Could not check” respectively |
+| Source pack | Television run's supplied folder (`wilkins1991.pdf`) | Mapped, extracted in ~1 s, printed range 195–211; phrase search returned p. 201 |
+| Submitted links and fetch policy | Fixtures, five local DOCXs, public probes | 54 locators across 97 references. Peer checks passed. Crossref capped at 2,048 bytes. DOI landing returned HTTP 200. |
+| Page-aware open text and HTML | Running-head fixtures; real CORE text; local HTML mapping | Raw text reconstructs printed pages where headers exist; local HTML is matched, prepared and windowed with a recorded no-pagination limitation |
+| Portable evidence selection | Sentence-selection fixtures, CLI round trip and the real Television task | Numbered sentences bind only by fixed IDs; request/bind files let any host model supply selections; fallback rejects generic questions and weak overlap; 4 of 20 citations had windows, so 16 stayed empty rather than guessing |
+| Review judgment repairs | Protocol alignment and a live R9 redirect check | Running-head page rule, reported-viewpoint B rule and redirect-to-home link rule added to all three protocols; R9 now records `dead` (home page), not `ok`; 404 tests |
+| Controlled dev verification | Fresh install after R23/R24; one real paper run | 14m 02s vs stable 13m 51s; 14.28M vs 9.14M prompt tokens; $0.1291 vs $0.0906; link audit clean; C2/C4/U and R1 page range fixed, but C1 still p.503 and C11 lost its B finding |
+| Fetch transport | Real DOI/Cambridge link and full paper link audit | Auto mode follows the OS path: 8 reachable, 1 blocked, 0 `private_host`; literal private targets still refused; strict mode retained |
+| Chapter boundaries | Real Berry source pack | Index shows file pages 55-82 and cited pages 57-82 separately; scope kind is `chapter_edited_collection`; 401 tests |
+| Recoverable reappraisal | Stale, member and interrupted-commit fixtures | Binding checked even with unchanged judgments. Interrupted writes restore exact artifact bytes. Canonical occurrence counts and saved link observations update with the summary. |
+| Finding counts | Derived-count, mismatch and no-ID fixtures; protocol copies | Category/issue counts come from ID-bearing findings; a summary count mismatch is rejected; all three protocols carry the same hyperlink row and HL definition |
+| Academic checks | Positive, negative and abstention fixtures; real Berry quotation | Quote matched at span and page; locator `p. 63` matched; mismatches and short/empty inputs abstain rather than fail silently |
+| Retrieval benchmark | Real Berry/Mirrlees extraction fixture and a prepared Television task | Exact-quote fixture: 2/2 recall, coverage 1.0, 0 wrong-source windows, about 31 ms; task-term queries report lower recall |
+| Extraction provenance | Real Wilkins PDF, cache identity and reappraisal fixtures | Extraction records version, options and text/page hashes; cache hits require intact files; old, missing or tampered text re-extracts; a different `--key` is rejected; windows carry the binding fields |
+| Clause-level uncited | Partly cited paragraphs with a continuation and an independent claim | A pronoun-led continuation is `possible_continuation`; an independent factual sentence is `uncited`; a fully cited paragraph adds nothing |
+| Shared reference inventory | Wrapped reference fixture through link and extraction paths | Same `R1`/`R2` IDs, wrapped text and paragraph segments in both; extraction references now come from the link auditor's inventory |
+| Real batch chapter | Television paper with the supplied COM151 Berry book through `prep_single.py` | R1 is `chapter_edited_collection`, page range [57,82], scope `adequate` (1.0), source hash and mapping recorded; edition remains unknown |
+| Kind coverage | Mocked resolver and batch provider sets, cache replay | Article requires Crossref + OpenAlex; book/chapter requires Open Library plus an article index; resolver marks incomplete `search_incomplete`, batch marks it `partial`, and neither counts as a completed miss |
+| Copy-scope observation | Unit cases, supplied chapter, batch and reappraisal | pp. 57–82 adequate; previews/incomplete scans unresolved; edition observation separates later/translation copies and reappraisal rejects absence from them |
+| Local HTML source | `prepare_html.py`, registry mapping and `make_task.py` on a real reference | Local `.html` scanned, matched, prepared as one labelled page and attached to a citation window; no worker pass yet |
+| Website-source batch | Angry Birds case study with COM151, 3 fetched URLs | 13 citations, 2 Supports, 5 Qualified, 1 Not Supported, 5 Not Judged; C6 used the cached SmileyWorld web page; strict inventory and render passed |
+| Television preparation parity | Default `one_paper.py` versus one-paper batch, checked with `parity_check.py` | Both left R3 unresolved, mapped the same Berry and Mirrlees PDFs, and produced 10 references, 20 candidates and eight identical windows. The regression reproduces the old surname-only R3 false match. |
+| Shared supporting systems | Television replay through `one_paper.py`, `render_review.py`, `reappraise_apply.py` and `stage_receipt.py --verify` | Same judgments, one absent link and nine unchecked locators in both paths. Reports matched byte for byte; ledger and summary differed only in paths. Used a metrics fixture and bound no-change reappraisal. Both receipts verified offline. |
+| R35 sampling policy | `assess_claims.py record --sample N`, majority/split fixtures, synthetic render | Production remains one response per claim. Explicit samples are ordered separately; 2/3 majority is used when samples exist, a tie or Supports/Contradicts split becomes Not Judged. Three-sample render and split abstention passed. |
+| R35 generic search normalization | Offset-preserving search view; tests | NFKC/casefold, smart punctuation, hyphen/line-break joins, sentence completion, short-word phrases, US/UK spelling, number/percent, inflection variants and source acronyms; original offsets intact. |
+| R40-R42 batch integrity | reappraisal sync, extraction gate and source coverage | P240958 repair 3/8/1/1 and parity clean; P240914/P241006/P241028 recovery; batch coverage 191 works (21 identity, 17 full text/supplied, 17 blocked, 174 missing); 486 tests. |
+| R44 full-text recovery | `test_pipeline.py`; real batch queue/record; apply in a findings-consistent copy; batch report | 510 tests pass. Queued 21 of 23 full-text-unjudged occurrences; two were unbound. Recorded P240958 C9 Not Judged (`no_relevant_full_text`); P241004 C1 Qualified, C5 Not Judged (`no_relevant_full_text`), C12 Qualified. Apply added recovery windows, rerendered and kept pre-recovery copies on a findings-consistent copy; the original batch was refused because findings and summary disagree. Report totals: 21 unjudged, 21 queued, 2 judged, 2 no relevant, 17 pending. |
+| R45 reading gate | `reading_gate.py`; shared `reading_gate`; TV fixture; `render_review.py --require-gate` | 510 tests pass. Gate covered all 20 TV occurrences: C1 A+B, C2 B, C5 B, C9 B, C15 A+B, C16 B, C17 B, C18 A+B; 12 occurrences with findings, 15 findings (A7/B8), 2 pass, 5 declined and 1 inconclusive with reasons. Apply added only new A/B issues, preserved existing C16/C17 findings, rerendered and kept pre-gate copies. |
+| R44 packet and regression checks | `FullTextRecoveryTests`; synthetic batch | Page-range first, rare-term ranking, neighbours, passage/byte caps, provenance, no-relevant recording, apply refusal and unchanged normal packets pass. |
+| R47a Unicode/script foundation | generated CJK fixtures; PDF quality suite; test suites | 524 tests. Native CJK is no longer OCR'd; script-aware gate; OCR routes chi_sim+chi_tra/jpn/kor and reports missing packs; HTML charset fallback (GBK/Big5/Shift-JIS/EUC-KR); shared zh/ja/ko segmentation. No English regression. |
+| R47b CJK identity/retrieval | `acceptance_cjk.py`; real samples; one-claim model checks | 6/7 real samples (Korean government page hash changed); identity 1.0 on zh/ja/ko; three English→CJK model Supports with gloss; same-language Chinese Not Judged; query translation, gloss and CJK gate tests; 532 tests. |
+| R47c CJK indexes | `cjk_indexes.py`; `resolve_unsupplied.py --cjk-indexes`; tests | 538 tests. J-STAGE/CiNii live probes returned candidates; KISS/RISS fixture-tested; Chinese has no CNKI/Wanfang adapter; no network in unit tests. |
+| R47f Reference-native identity | `native_query.py`; reference signals; tests | 554 tests. Signals, native proposal, cross-script yes/no/unsure and route completion; absence and negative-cache reuse blocked until completed; CJK index completion is automatic, Chinese has no native adapter. No automatic pinyin. |
+| R47g Cross-language quotation | reading gate; recovery; tests | 554 tests. An English quotation of a CJK source is `source_language_differs`/inconclusive; gloss provenance hash and bounded whole-source fallback are marked, never forced. |
+| R47e Tier2 scripts | 10 real samples; query/identity tests | 567 tests. fr/ru/es/ar/hi/th/he assessed, including Arabic academic and Hebrew government; one Russian model Supports; Hebrew-academic/Hindi-academic gaps; no all-language claim. |
+| R34 preflight | tests, docs, parity, installer | 628 tests; style/PDF/docs pass; TV parity true; update/installer checks pass on 1.1.2. R37 settled; R39 source-limited. **Release postponed by user; do not bump/tag/publish.** |
+| R37 checkpoint/resume | `checkpoint.py`; synthetic 160; real 9.8k-word paper | 36/36 claims accounted; 3 model Not Judged, 33 source-unavailable Not Judged; checkpoint partial→complete; max packet 3,544 bytes. Synthetic 160 resume still passes. |
+| Current-code single review | Fresh Television session `aa3299a0…` | Reached source analysis at step 77, then provider `Content Exists Risk`; no `review.md`; artifacts remain partial |
+| One-paper orchestration | `one_paper.py` on the Angry Birds paper and a task fixture | The wrapper prepared 13 citations and attached shared assessment packets to all 13 (4 with windows); the task remains adjudication input, not a review |
+| Shared assessment and parity | Pipeline packet, judgment and parity CLI fixtures | Comparable runs in separate roots pass. Missing or invalid artifacts and differences in copy hashes, locators or spans fail. Full single/batch parity remains open. |
+| Shared acquisition plan | `docs/PLAN.md` R29–R34 | One acquired-source registry, one source-understanding layer, one assessment/rendering engine, thin single and batch interfaces, parity tests |
+| Open-access fallback | `openfetch.py` on the Television references | R2, R4, R6, R7, R8 and R9 saved from CORE; with the three supplied books, nine works had full text |
+| Provider pacing and DOI prefetch | Cross-process tests, request fixtures and live public DOI probe | Crossref returned two records in one cold request (1.527 s elapsed, no pacing wait). Warm prefetch made zero requests and the consent-paper reference remained confirmed. The pacing fixture waited 1 s for the same provider and zero for another. OpenAlex filter passed offline; live probe returned HTTP 429. |
+| Batch search outcomes and cache | Three `resolve_unsupplied.py` runs using a consent-paper reference and recorded Crossref data | A simulated 429 was recorded as incomplete. The retry matched the work, and a rebuilt registry reused that result with its provider trace. Two provider calls across three runs. The regression suite also covers rejected results, malformed refreshes, DOI handle failures, conflicting uses of a DOI and limit skips. |
+| Submitted DOI fallback | Dossier replay on a consent-paper reference, substituting a mismatched DOI and reusing recorded Crossref metadata for the intended work | Preserved the submitted link and mismatch while resolving a different DOI. Offline tests covered a missing DOI record, a wrong author, competing matches, failure handling and cache reuse. |
+| DOI open-access fallback | `resolve_copy` with a real 12-page public article PDF and replayed provider responses | An Unpaywall timeout advanced to OpenAlex; the saved PDF hash matched the input and later providers were skipped. Live provider coverage was not measured. |
+| Multi-source evidence binding | `make_task.py` on the Harlow consent DOCX; offline task and report regressions | All three explicit members at ¶P10 and both mixed-width members at ¶P16 reached the task. The fixtures retained same-page windows and a web companion, and rejected wrong-reference evidence. |
+| CORE adapter alignment | Live `openfetch.py --ref` for the O’Connell article, using CORE alone | The cleaned title query returned 10 results. A matched CORE output yielded 84,947 characters of text with the article title and author visible. The index records the attempted query and returned count. |
+| Source-pack mapping | `sourcepack.py` on the Television consent paper with the wrong supplied book and a separate extraction using a real article PDF renamed `8.pdf` | Television R3 stayed unmapped and the unused PDF appeared in the index. The opaque article mapped from first-page title and author evidence and extracted with printed pages 9–20. |
+| DOCX extraction and uncited candidates | `docx_text.py` and `extract_candidates.py` on the Harlow consent paper, plus offline regressions | The formatting dump read 53 paragraphs. The 11-word named assertion at ¶P6 now appears as an uncited candidate and ¶P24 still appears. The formatting and short-assertion tests fail on the previous code. |
+| Harlow uncited and issue-type decisions | Current protocol on the paper and candidate inventory | Five wholly uncited paragraphs; ¶P4/¶P13 preview later cited discussion, ¶P6 introduces film analysis, ¶P18/¶P24 synthesize earlier claims. A candidate count cannot establish the historical four vs two confirmed passages; the ledgers are needed for the 11 vs seven finding count. |
+| Third Television review | `reviews/sf-20261120-television-rerun-1.1.1` | 16/20 occurrences judged (12 Supports, 4 Qualified, 4 Not Judged); Category A 12, B 7; R10 landing only, R3 supplied file was the wrong work |

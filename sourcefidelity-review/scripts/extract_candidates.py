@@ -272,7 +272,15 @@ def reference_heading_index(paragraphs):
 CONTINUATION = re.compile(
     r"^(?:this|these|it|its|they|their|such|that|the same|accordingly|"
     r"consequently|however|moreover|furthermore|in addition|as a result|thus|"
-    r"therefore|meanwhile|but|and|which|who)\b", re.I)
+    r"therefore|meanwhile|but|and|which|who|ultimately|overall|in short|"
+    r"taken together|this shows|suggests that)\b", re.I)
+ANALYSIS_RE = re.compile(
+    r"\b(?:groundbreaking|profound|iconic|outstanding|formulaic|generic|weak|"
+    r"brilliant|masterpiece|disappointing|remarkable|impressive|flawed|"
+    r"phenomenal|stunning|exceptional|superb|terrible|poor|becoming|"
+    r"may|might|could|because|therefore|thus|stemmed from|led to|resulted in|"
+    r"ultimately|overall|in short|taken together|this shows|suggests that|"
+    r"reveals|demonstrates|I argue|we argue)\b", re.I)
 CLAUSE_SPLIT = re.compile(r"[^.!?;]+[.!?;]*")
 
 
@@ -288,7 +296,8 @@ def _clause_signals(text):
         r"\b(?:argues?|shows?|reveals?|demonstrates?|suggests?|states?|claims?"
         r"|explains?)\b", text, re.I))
     return [name for name, ok in (("fact", has_fact), ("name", has_name),
-                                  ("claim", has_claim)) if ok]
+                                  ("claim", has_claim),
+                                  ("analysis", bool(ANALYSIS_RE.search(text)))) if ok]
 
 
 def clause_uncited(paragraphs, citations, limit=None):
@@ -312,24 +321,34 @@ def clause_uncited(paragraphs, citations, limit=None):
             covered.append(hit)
         if all(covered):
             continue                      # every clause has its citation
+        emitted = 0
         for index, (start, end, text) in enumerate(spans):
             if covered[index]:
                 continue
             signals = _clause_signals(text)
             words = len(text.split())
             substantive = (words >= 8 and bool(signals)) or words >= 12
-            if not substantive:
+            if not substantive or emitted >= 2:
                 continue
             previous_cited = index > 0 and bool(covered[index - 1])
-            continuation = bool(CONTINUATION.match(text)) or (
-                previous_cited and not any(name in signals for name in ("fact", "name")))
+            factual = any(name in signals for name in ("fact", "name", "claim", "quote"))
+            analysis_only = "analysis" in signals and not factual
+            strong_continuation = bool(re.match(
+                r"^(?:this|these|such|that|the same)\b", text, re.I))
+            continuation = strong_continuation or ((not factual) and (
+                bool(CONTINUATION.match(text))
+                or (previous_cited and not any(name in signals for name in ("fact", "name")))))
+            outcome = ("possible_analysis" if analysis_only else
+                       "possible_continuation" if continuation else "uncited")
+            emitted += 1
             candidates.append({
                 "paragraph_id": paragraph["id"],
                 "start": start,
                 "end": end,
                 "text": text,
                 "signals": signals,
-                "outcome": "possible_continuation" if continuation else "uncited",
+                "mixed": bool("analysis" in signals and factual),
+                "outcome": outcome,
                 "citation_ids": [citation["id"] for hit in covered[index]
                                  for citation in hit],
             })
@@ -503,14 +522,19 @@ def build(path, paper_id):
             r"\b(?:is|are|was|were)\b", p["text"], re.I))
         if ((p["words"] >= 10 and short_assertion)
                 or (p["words"] >= 12 and (has_fact or has_quote or has_name or has_claim))):
+            has_analysis = bool(ANALYSIS_RE.search(p["text"]))
             signals = [name for name, ok in
                        (("fact", has_fact), ("quote", has_quote),
-                        ("name", has_name), ("claim", has_claim)) if ok]
+                        ("name", has_name), ("claim", has_claim),
+                        ("analysis", has_analysis)) if ok]
+            factual = any(name in signals for name in ("fact", "quote", "name", "claim"))
             uncited.append({
                 "id": f"U{len(uncited) + 1}",
                 "paragraph_id": p["id"],
                 "text": p["text"],
                 "signals": signals,
+                "mixed": bool(has_analysis and factual),
+                "outcome": "possible_analysis" if has_analysis and not factual else "uncited",
             })
 
     final_order = {p["id"]: index for index, p in enumerate(paragraphs)}
@@ -527,6 +551,11 @@ def build(path, paper_id):
 
 
     ambiguity = ambiguity_for(paragraphs, references, citations)
+    counts = {}
+    for item in uncited:
+        counts[item["paragraph_id"]] = counts.get(item["paragraph_id"], 0) + 1
+    if any(value > 2 for value in counts.values()):
+        ambiguity.setdefault("flags", []).append("many_uncited_fragments")
     return {
         "paper_id": paper_id,
         "year_mentions": year_mentions,

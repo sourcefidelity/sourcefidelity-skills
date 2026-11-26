@@ -26,7 +26,7 @@ sys.path.insert(0, REVIEW_SCRIPTS)
 import word_count  # noqa: E402
 import extract_candidates  # noqa: E402
 import file_digest  # noqa: E402
-import authorship_signals  # noqa: E402
+import document_profile  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -124,7 +124,7 @@ def main():
                               "flags": ["extraction_failed"], "score": 9,
                               "needs_extraction_pass": True}}
         try:
-            profile = authorship_signals.paper_profile(path)
+            profile = document_profile.paper_profile(path)
             metadata = profile.get("document_metadata", {})
             json.dump({"sha256": file_digest.sha256_file(path), "profile": profile},
                       open(os.path.join(folder, "profile.json"), "w", encoding="utf-8"),

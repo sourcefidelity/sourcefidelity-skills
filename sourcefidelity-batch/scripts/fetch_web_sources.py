@@ -14,12 +14,14 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import safe_fetch  # noqa: E402
 import web_cache  # noqa: E402
+import resolve_dois  # noqa: E402
 
 
 # Windows pipes stdout through the ANSI code page, which cannot encode CJK
@@ -51,6 +53,38 @@ def task_urls(root):
     return urls
 
 
+def pdf_result(result, root):
+    """Convert a fetched PDF body into cached evidence text."""
+    body = result.get("body") or b""
+    if not body[:4] == b"%PDF":
+        return result
+    handle, path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(handle, "wb") as out:
+            out.write(body)
+        extraction = resolve_dois.extract_pdf(path, root)
+        folder = extraction.get("dir") or ""
+        text = ""
+        if folder:
+            try:
+                with open(os.path.join(folder, "text.txt"), encoding="utf-8") as src:
+                    text = src.read()
+            except OSError:
+                text = ""
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    converted = dict(result)
+    converted["text"] = text
+    converted["bytes"] = len(text.encode("utf-8"))
+    converted["classification"] = "full_text" if text.strip() else "unreadable"
+    if not text.strip():
+        converted["limitation"] = "pdf_text_empty"
+    return converted
+
+
 def fetch_urls(root, urls, limit=0):
     fetched = {"fetched": 0, "cached": 0, "empty": 0, "blocked": 0}
     items = list(urls.items())[:limit] if limit else list(urls.items())
@@ -59,7 +93,8 @@ def fetch_urls(root, urls, limit=0):
         if text:
             fetched["cached"] += 1
             continue
-        result = safe_fetch.fetch(url)
+        result = pdf_result(safe_fetch.fetch(url, include_body=True,
+                                             max_bytes=5_000_000), root)
         web_cache.store(root, url, result)
         fetched["fetched"] += 1
         if result.get("limitation") or not result.get("text"):

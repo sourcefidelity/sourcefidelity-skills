@@ -69,13 +69,18 @@ Do not widen a restricted search. If the chapter's pages are missing from the ex
 
 If `provider_conflict` is non-empty, the catalogue record disagrees with the reference's form (for example, the student cites a chapter of a book the provider types as a monograph, or the cited page range differs from the provider's). Record that as a Category A reference-form finding and assess the source object, not the student's label. A provider that omits editors is `chapter_unknown_authorship`, not proof that the book is single-authored.
 
+If the registry's `identity_status` is `nonexistent`, the task's `sources[R].nonexistence` block carries the evidence: copy its `state`, `confidence`, `routes` and `decisive_signals` into the `findings.nonexistent` entry. The pre-pass established a decisive contradiction or a complete negative search. If the status is `unlocated`, put it in `findings.unverifiable`, never `nonexistent`. `bibliographic_conflict` means the work exists with a wrong locator: record a citation conflict, not a nonexistent source. Do not re-derive or override these statuses.
+
 If `identity_status` is `supplied_edition_mismatch`, the supplied file is a later edition than the cited year. You may use it for content only with an explicit version limitation; do not describe it as the cited edition. `supplied_identity_only` means the file was matched by title/author without independent confirmation.
 
 ## Categories
 
 - **A:** missing reference entry for an analysed work; title italics/case; alphabetisation; duplicate/truncated entry; missing hanging indent; quotation without a page/paragraph locator (or a PDF page where a printed page exists); edited collection cited instead of chapter; missing/wrong author, year, journal, volume, issue, pages, publisher, edition; missing DOI where one exists and a link is supplied; DOI to a different work.
 - **B:** quotation or substantive paraphrase without citation, missing quotation marks, patchwriting, copied paraphrase, misrepresentation, nonexistent source (affirmative evidence only), source cited but absent from references, secondary citation presented as direct, material lost qualification.
-- **Formatting notes:** spacing, `&` vs `and`, *et al.*, initials, heading wording, indent depth, dash style, place of publication, a missing in-text citation for analysed media. Never counted as A or B.
+- **Formatting notes:** spacing, `&` vs `and`, *et al.*, initials, heading wording, indent depth, dash style, place of publication. Never counted as A or B. An analysed film, programme or game without a reference entry, or without its first in-text citation, is **Category A**, not a formatting note.
+- **Works (W IDs):** a work is **analyzed** only where the paper examines its content, style, reception, cast, narrative or marketing strategy. A work that is merely named in a chronology, listed as a comparison, or carries only a box-office or release fact is a **passing mention**: do not create a W entry for it; record it on a “passing mentions — no requirement” line outside the W and A counts. Every W entry needs `mention_type: "analyzed"` or `"passing"`; a `passing` work cannot carry Category A.
+- **Formatting (F IDs):** `task.json` carries a `formatting` block with deterministic candidates. Adjudicate every `F#` as `confirmed`, `rejected` or `not_applicable` with a one-line reason in the inventory. `body-title-roman` means an analysed work's title in body prose was not italic; `reference-missing-italic-element`, `reference-hanging-indent-absent` and `reference-heading-wording` are bibliography checks. "The file contains no italic runs at all" is conclusive for a roman title; do not guess italics without the resolved evidence. A confirmed formatting issue is Category A; a rejected or inapplicable candidate still needs its disposition.
+- **Uncited passages (U IDs):** a U is a specific claim a reader would expect to see sourced: a figure, date, name, quotation, attributed view, or a claim about what a source says. The student's own analysis is not a U — a conclusion, evaluation, or causal inference drawn from material already cited or from common knowledge needs no citation. If a sentence mixes a new fact with the student's inference, record only the factual part. State the source that would be expected in `expected_source` (for example “Box Office Mojo China line”, “China Film Administration annual report”); if none comes to mind, the passage is analysis, not an uncited claim. Never use “none”, “analysis”, “student” or “not applicable”. Keep the existing bans (general argument, framing, signposting, opinion, repeated paraphrase) and the ban on sentence-per-paragraph lists.
 
 ## Output shape
 
@@ -106,7 +111,9 @@ If `identity_status` is `supplied_edition_mismatch`, the supplied file is a late
                                     "relevant section: '...'",
                     "identifiers": {"url": "https://example.org/item"},
                     "category": "none", "cited": true, "note": ""}],
-    "works": [], "uncited": [], "audit": {"checks": "", "services": "", "unresolved": ""},
+    "works": [], "uncited": [{"id": "U1", "paragraph_id": "P3", "text": "...",
+                "signals": ["fact"], "expected_source": "Box Office Mojo China line"}],
+    "audit": {"checks": "", "services": "", "unresolved": ""},
     "misrepresented": [], "nonexistent": [], "unverifiable": [], "limitations": ""
   }
 }

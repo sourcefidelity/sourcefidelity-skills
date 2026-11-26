@@ -1,6 +1,6 @@
 # Architecture
 
-**Last updated:** November 20, 2026
+**Last updated:** November 26, 2026
 **Authority:** This file owns the system design of the skill package: skill boundaries, data flow, invariants, verification and release. The review method is owned by `sourcefidelity-review/REVIEW_PROTOCOL.md`; current truth is `docs/STATE.md`; work order is `docs/PLAN.md`. Usage is in `README.md`.
 
 ## 1. System shape
@@ -61,6 +61,10 @@ judgments through the request/response files.
 
 `match_sources.py` and `scope.py` identify which references the new sources affect; `reappraise_apply.py` updates only those entries in the existing review and ledger and logs every changed judgment. It never re-runs a whole review silently. Reappraisal tasks carry the shared copy-scope observation, and the apply step rejects a judgment from an inadequate or unresolved copy.
 
+## 3. Shared mechanisms
+
+These run inside more than one skill: they are shared behaviour rather than separate entry points, and each is owned by one module or the shared core.
+
 ### full-text recovery
 
 A `Not Judged` occurrence is not closed while a cited source has a usable extracted copy. `recover_full_text.py` queues those occurrences from findings and the source registry, builds one page-aware paragraph index per extraction, ranks candidates with normalised claim terms, rare-term weighting and proximity, and prefers the cited page range, showing the cited page even when no term hits. At most three passages and the 4,000-byte request budget reach an isolated one-claim model call; the main context receives only the claim ID, judgment and record path. Each packet carries `full_text_recovery` provenance: source and extraction hashes, page range and whether it was applied, blocks searched, selected passages and any locator limitation. `apply` adds recovered windows to the task, updates findings, rerenders through `render_review.py` and keeps a pre-recovery copy; it refuses when findings and summary already disagree. No relevant passage is recorded as `no_relevant_full_text`, never converted into support. Recovery cannot create absence: a copy-scope or edition limitation excludes the source.
@@ -101,7 +105,7 @@ A quotation is compared only when the quotation's script matches a cited source'
 
 `http_cache.py` owns the page cache and host-state memory. `user_settings.py` reads optional keys from the user's DSH home or environment and never prints them. `page_map.py`, `prepare_source.py` and `detect_structure.py` provide the extraction layer. `prepare_source.py` binds an extraction to the source hash, extractor version, options and text/page-map hashes; consumers carry those fields with each window.
 
-## 3. Data flow
+## 4. Data flow
 
 ### One review
 
@@ -136,7 +140,7 @@ An existing review plus newly supplied sources. Matching identifies the affected
 
 Reports are snapshots. Correcting one is an explicit, logged edit or a reappraisal; nothing rewrites a delivered report in place.
 
-## 4. Invariants
+## 5. Invariants
 
 - **Evidence, not verdict.** A review reports what the sources say and how the paper uses them. It does not assign grades, sanctions or intent, and it never asserts that a reference is fabricated.
 - **No upload of student material.** Papers, supplied sources and extracted text stay local. Network calls send bibliographic identifiers, not student text; provider keys are optional and never printed.
@@ -161,7 +165,7 @@ Reports are snapshots. Correcting one is an explicit, logged edit or a reapprais
 - **One metrics write.** `record_metrics.py --review` replaces the scope line; a second run creates a duplicate sidecar.
 - **Instrument stamp.** Every report records the skill version and commit so it can be reproduced against the instrument that produced it.
 
-## 5. Verification and release
+## 6. Verification and release
 
 Ordinary work uses a development install (`install.sh --dev`, or `--link` for live symlinks) and does not bump `VERSION` or `latest.json`; releases are batched. `VERSION` may carry a `-dev` suffix whose base is ahead of `latest.json`, with changes under `## Unreleased`.
 
@@ -176,9 +180,11 @@ python scripts/check_docs.py
 
 CI runs the three suites on Ubuntu, macOS and Windows (`.github/workflows/tests.yml`). The docs check runs there too.
 
+`CHANGELOG.md` also holds the **Earlier verification (archived from `docs/STATE.md`)** section. It is an archive, not release notes: closing `## Unreleased` at a release must leave that section in place, and it is never renumbered, dated or pruned with a release.
+
 Release state is a set of files that must agree: `VERSION` (the source version), `latest.json` (`version`, `tag`, `url`, `sha256`, `min_supported`, `notes`), `CHANGELOG.md` (one entry per version) and the installer's `.sourcefidelity/installed.json`. `update_check.py` compares the installed version with `latest.json` at most once a week; `install.sh --update` verifies the SHA-256 and installs. No update is applied silently, and `--version` pins a checkout to a tag.
 
-## 6. Extension points and decisions
+## 7. Extension points and decisions
 
 - **New helper:** add it under the owning skill's `scripts/`, use the shared cache and settings helpers, and cover it in `test_pipeline.py` or the PDF suite. Review helpers must not depend on batch.
 - **New finding or state:** change `REVIEW_PROTOCOL.md` first, then the batch schema (`render_review.py`, `validate_batch.py`) and tests. A code change without the protocol change is incomplete.

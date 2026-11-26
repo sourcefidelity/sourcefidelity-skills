@@ -44,6 +44,15 @@ ATTRIBUTION_VERBS = re.compile(
     r"(?i)\b(oppose|opposed|worry|worries|fear|fears|argue|argues|argued|"
     r"claim|claims|claimed|contend|contends|observe|observes|observed|"
     r"according to|believe|believes|say|says|said|note|notes|noted)\b")
+AUTHOR_ATTRIBUTION = re.compile(
+    r"(?i)\bas\s+[a-z][\w'’-]+(?:\s+(?:et\s+al\.?|and\s+[a-z][\w'’-]+))?"
+    r"(?:\s*\(\d{4}[a-z]?\))?\s+"
+    r"(?:emphasi[sz]ed|argued|insisted|contended|asserted|argues|insists|contends|asserts|"
+    r"pointed out|made clear)\b")
+VIEWPOINT_MARKERS = re.compile(
+    r"(?i)\b(one viewpoint|another (?:view|viewpoint|argument)|"
+    r"some (?:argue|say|claim)|critics (?:argue|say)|proponents|opponents|"
+    r"it is (?:argued|said)|the (?:view|argument) that)\b")
 QUOTED = re.compile(r"[“\"]([^”\"]{2,200})[”\"]")
 MARKER_YEAR = re.compile(
     r"\(([A-Z][^,()]{1,40}?)\s*,\s*((?:19|20)\d{2})[a-z]?[^)]*\)")
@@ -191,13 +200,17 @@ def check_patchwriting(occurrence, sources):
     (overlap, bigrams, trigrams, lcs_ratio, distinctive), sentence, source, shared, _ = best
     strong = (overlap >= 0.42 and (bigrams >= 2 or trigrams >= 1))
     structured = lcs_ratio >= 0.28 and bigrams >= 1 and distinctive >= 3
-    if strong or structured:
+    # A shared run of five content words with several distinctive terms is a close
+    # paraphrase even when the claim compresses the rest of the sentence (C1: the
+    # clause order and "member ... viewed broadcasting ... national sovereignty" survive).
+    shared_run = lcs >= 5 and distinctive >= 4 and bigrams >= 2
+    if strong or structured or shared_run:
         return _finding(
             "patchwriting", CATEGORY_B, "close paraphrase retaining source wording and structure",
             sentence, source,
             metrics={"overlap": round(overlap, 2), "shared_bigrams": bigrams,
                      "shared_trigrams": trigrams, "lcs_ratio": round(lcs_ratio, 2),
-                     "distinctive_terms": distinctive,
+                     "shared_run": lcs, "distinctive_terms": distinctive,
                      "shared_terms": sorted(shared)[:12]})
     if overlap >= 0.32 and lcs_ratio >= 0.22:
         return _result("patchwriting", "inconclusive",
@@ -264,6 +277,17 @@ def check_reported_viewpoint(occurrence, sources):
         return _result("reported_viewpoint", "inconclusive",
                        "source language differs or CJK reading is required; semantic check needs the model")
     claim = normalize(statement)
+    full_statement = occurrence.get("statement", "") or statement
+    if AUTHOR_ATTRIBUTION.search(full_statement):
+        for source in sources:
+            passage = normalize(source.get("evidence", ""))
+            if not VIEWPOINT_MARKERS.search(passage):
+                continue
+            sentence, _ = _best_sentence(passage, content_words(statement))
+            return _finding(
+                "reported_viewpoint", CATEGORY_B,
+                "reported viewpoint attributed to the author",
+                sentence or passage[:400], source)
     claim_subjects = {match.casefold() for match in ATTRIBUTION_SUBJECTS.findall(claim)}
     if not claim_subjects:
         return _result("reported_viewpoint", "declined",

@@ -781,6 +781,8 @@ def main():
             "provider_pages": (rec.get("provider") or {}).get("pages", []),
             "identity": identity,
             "identity_status": obj.get("identity_status", rec.get("identity_status", "unresolved")),
+            "nonexistence": (obj.get("nonexistence")
+                             or rec.get("nonexistence") or {}),
             "search_status": rec.get("search_status", "not_searched"),
             "extraction": obj.get("extraction") or rec.get("extraction", ""),
             "page_map": obj.get("page_map", rec.get("page_map", {})),
@@ -855,6 +857,7 @@ def main():
         "ambiguity": cand.get("ambiguity", {}),
         "sources": sources,
         "uncited_screen": load(os.path.join(work, "uncited-screen.json"), {}),
+        "formatting": load(os.path.join(work, "formatting.json"), {}),
         "windows": windows_by_c,
         "window_status": window_status,
         "lookup_command": (

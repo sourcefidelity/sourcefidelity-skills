@@ -125,6 +125,27 @@ def validate(cand, inv, strict=False):
     if duplicates:
         fail(errors, f"duplicate IDs: {duplicates}")
 
+    invalid_expected = {"", "none", "analysis", "student", "not applicable", "n/a"}
+    for item in uncited:
+        uid = item.get("id", "?")
+        expected = str(item.get("expected_source") or "").strip().casefold()
+        if expected in invalid_expected:
+            message = f"{uid}: expected_source is missing or analysis-valued"
+            if strict:
+                fail(errors, message)
+            else:
+                warnings.append(message)
+
+    for work in works:
+        wid = work.get("id", "?")
+        mention = str(work.get("mention_type") or "").strip().lower()
+        if strict and mention not in ("analyzed", "passing"):
+            fail(errors, f"{wid}: mention_type must be 'analyzed' or 'passing'")
+        if mention == "passing":
+            categories = work.get("category") or work.get("summary_category") or ""
+            if "A" in str(categories).replace(" ", "").upper():
+                fail(errors, f"{wid}: passing mention cannot carry Category A")
+
     ref_ids = {r.get("id") for r in references}
     for occ in occurrences:
         oid = occ.get("id", "?")

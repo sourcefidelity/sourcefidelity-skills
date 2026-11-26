@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 from sourcefidelity_core import reading_gate as reading_gate_core  # noqa: E402
 from sourcefidelity_core import judgment_guard  # noqa: E402
 
-import authorship_signals  # noqa: E402
+import document_profile  # noqa: E402
 import file_digest  # noqa: E402
 import finding_counts  # noqa: E402
 import batch_paths  # noqa: E402
@@ -305,7 +305,8 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("Counts come from the pypdf fallback and may be partial.")
     lines.append(finding_counts.occurrence_line(occ_counts))
     lines.append(f"References: {len(findings.get('references', []))} entries. "
-                 f"Works discussed: {len(findings.get('works', []))}.")
+                 f"Works discussed: {len([w for w in findings.get('works', [])
+                                               if w.get('mention_type', 'analyzed') != 'passing'])}.")
     lines.append(f"Uncited substantive passages: {len(findings.get('uncited', []))}.")
     if findings.get("abstract_attention"):
         lines.append(f"Abstract-only topical attention: {len(findings['abstract_attention'])}.")
@@ -326,6 +327,13 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         lines.append("Category A academic integrity violation: " + "; ".join(summary["category_a"]) + ".")
     if summary.get("category_b"):
         lines.append("Category B academic integrity violation: " + "; ".join(summary["category_b"]) + ".")
+    nonexistent = findings.get("nonexistent", []) or []
+    if nonexistent:
+        refs_nonexistent = ", ".join(
+            f"{item.get('r_id') or item.get('source_key', '')} "
+            f"({item.get('state', '')}, {item.get('confidence', '')})"
+            for item in nonexistent)
+        lines.append(f"Nonexistent sources as cited: {refs_nonexistent}.")
     derived_counts = finding_counts.render_counts(findings)
     lines.append(
         f"Counts: Category A {derived_counts['A']}; "
@@ -334,6 +342,8 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
     lines.append("")
 
     refs = findings.get("references", [])
+    nonexistent_by_rid = {item.get("r_id"): item for item in findings.get("nonexistent", [])
+                          if item.get("r_id")}
 
     lines.append("## 2. Numbered citation entries, in paper order")
     lines.append("")
@@ -395,15 +405,41 @@ def render_md(paper, findings, occ_counts, registry, metrics=None):
         if ref.get("access_notes"):
             lines.append(f"**Access:** {ref['access_notes']}")
             lines.append("")
-        if ref.get("note"):
-            lines.append(f"**Finding:** {ref['note']}")
+        finding = ref.get("note") or ""
+        if ref["id"] in nonexistent_by_rid:
+            item = nonexistent_by_rid[ref["id"]]
+            finding = (f"Nonexistent as cited ({item.get('state', 'confirmed_absent')}, "
+                       f"{item.get('confidence', 'confirmed')}). {item.get('evidence', '')}")
+        if finding:
+            lines.append(f"**Finding:** {finding}")
             lines.append("")
-    if findings.get("works"):
+    if nonexistent_by_rid:
+        lines.append("### Sources not found")
+        lines.append("")
+        for item in findings.get("nonexistent", []):
+            if not item.get("r_id"):
+                continue
+            lines.append(f"- **{item['r_id']} — {item.get('source', '')}**. "
+                         f"State: `{item.get('state', '')}`; confidence: "
+                         f"`{item.get('confidence', '')}`. {item.get('evidence', '')}")
+        lines.append("")
+    analyzed_works = [work for work in findings.get("works", [])
+                      if work.get("mention_type", "analyzed") != "passing"]
+    passing_works = [work for work in findings.get("works", [])
+                     if work.get("mention_type") == "passing"]
+    if analyzed_works:
         lines.append("### Works discussed without a reference entry")
         lines.append("")
-        for work in findings["works"]:
+        for work in analyzed_works:
             lines.append(f"- **{work['id']} — {work.get('work', '')}** ({work.get('locator', '')}). "
                          f"{work.get('discussion', '')} {work.get('note', '')}")
+        lines.append("")
+    if passing_works:
+        lines.append("### Passing mentions — no requirement")
+        lines.append("")
+        for work in passing_works:
+            lines.append(f"- **{work['id']} — {work.get('work', '')}** ({work.get('locator', '')}). "
+                         f"{work.get('discussion', '')}")
         lines.append("")
     lines.append("### Hyperlink audit")
     lines.append("")
@@ -531,6 +567,7 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
     nonexistent = as_records(findings.get("nonexistent", []), "nonexistent")
     unverifiable = as_records(findings.get("unverifiable", []), "unverifiable")
     folder = os.path.join(root, paper["paper_id"])
+    counts = finding_counts.render_counts(findings)
     result = {
         "schema_version": "5",
         "paper_id": paper["paper_id"],
@@ -543,13 +580,16 @@ def _render_summary(paper, findings, occ_counts, registry, profile, root, metric
             "missing_links": len(findings.get("summary", {}).get("hyperlinks_missing", []) or []),
         "link_states": (findings.get("summary") or {}).get("hyperlinks"),
         },
-        "works_discussed": len(findings.get("works", [])),
+        "works_discussed": len([w for w in findings.get("works", [])
+                                if w.get("mention_type", "analyzed") != "passing"]),
+        "passing_mentions": len([w for w in findings.get("works", [])
+                                 if w.get("mention_type") == "passing"]),
         "uncited_passages": len(findings.get("uncited", [])),
-        "category_a_findings": finding_counts.render_counts(findings)["A"],
-        "finding_counts": finding_counts.render_counts(findings),
+        "category_a_findings": counts["A"],
+        "finding_counts": counts,
         "derived_issue_counts": finding_counts.issue_counts(findings),
         "category_b": {
-            "citation_findings": len(findings.get("summary", {}).get("category_b_citation", []) or []),
+            "citation_findings": counts["B"],
             "uncited_passages": len(findings.get("uncited", [])),
         },
         "abstract_attention": len(findings.get("abstract_attention", []) or []),
@@ -635,7 +675,7 @@ def render_ledger(paper, findings, occ_counts):
 
 
 def paper_profile_for(root, paper):
-    """The authorship profile for this exact paper file, from cache or fresh."""
+    """The document profile for this exact paper file, from cache or fresh."""
     paper_path = paper.get("path", "")
     cache_path = os.path.join(root, "_work", paper.get("paper_id", ""), "profile.json")
     stored = load(cache_path, {})
@@ -646,7 +686,7 @@ def paper_profile_for(root, paper):
     if stored.get("sha256") == digest:
         return stored.get("profile") or {}
     try:
-        profile = authorship_signals.paper_profile(paper_path)
+        profile = document_profile.paper_profile(paper_path)
     except Exception:
         return {}
     if profile:
@@ -689,7 +729,13 @@ def main():
     summary = findings.setdefault("summary", {})
     observations = summary.get("hyperlinks") or link_states.load_cached(root, args.paper)
     if observations:
-        summary["hyperlinks"] = {**observations, "hl_total": finding_counts.render_counts(findings)["HL"]}
+        derived = finding_counts.render_counts(findings)["HL"]
+        # The link audit is the floor: a work shown missing, non-permanent or
+        # wrong cannot have an HL total below that count, even when the worker
+        # recorded no (or fewer) HL findings.
+        floor = sum(int(observations.get(key, 0) or 0) for key in
+                    ("absent", "non_permanent", "wrong_work"))
+        summary["hyperlinks"] = {**observations, "hl_total": max(derived, floor)}
     inventory = load(args.inventory, {}) if args.inventory else None
     task = load(os.path.join(work, "task.json"), {})
     if args.strict_inventory:

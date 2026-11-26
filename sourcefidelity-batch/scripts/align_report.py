@@ -42,7 +42,7 @@ _utf8_streams()
 HEADER = (
     "| Paper | Total words | Text words | Ref words | C | Supports | Qualified | "
     "Contradicts | Not supported | Not judged | Misrep. sources | Nonexistent | "
-    "Unverifiable | Not searched | Link findings | Links unverified | Formatting notes | Signals | Flag |"
+    "Unverifiable | Not searched | Link findings | Links unverified | Formatting notes | Flag |"
 )
 SEPARATOR = "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 
@@ -63,15 +63,10 @@ def load_rows(root):
     return rows
 
 
-def row_line(record, signals):
+def row_line(record, signals=None):
     occurrences = record["occurrences"]
     references = record["references"]
     pid = record["paper_id"]
-    signal = signals.get(pid, {})
-    classes = signal.get("classes", [])
-    # The per-paper summary owns the authorship flag; the cohort file can lag
-    # behind a reappraisal or a manual correction.
-    auth = bool((record.get("flags") or {}).get("authorship_signal_risk"))
     mis, fab = br.flags(record)
     unsearched = sum(1 for s in record.get("sources", [])
                      if s.get("search_status") == "not_searched")
@@ -84,8 +79,7 @@ def row_line(record, signals):
             f"{len(record['nonexistent_sources'])} | "
             f"{len(record.get('unverifiable_sources', []))} | {unsearched} | "
             f"{references['missing_links']} | {record.get('formatting_notes', 0)} | "
-            f"{','.join(classes) if classes else '—'} | "
-            f"{br.flag_label(mis, fab, auth)} |")
+            f"{br.flag_label(mis, fab)} |")
 
 
 def main():

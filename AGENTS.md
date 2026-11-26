@@ -73,15 +73,16 @@ Run the suites and `scripts/check_docs.py` after changes. Keep work under `## Un
 ## Documentation maintenance
 
 - Update a document when its owned fact changes: `STATE.md` for status, test counts, measured results or limitations; `ARCHITECTURE.md` for a design decision or a changed boundary; `PLAN.md` for work order, acceptance or a superseded row; `CHANGELOG.md` and the release files for a release.
-- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep it under 4,000 words.
+- Replace the affected row in `STATE.md`; do not append a dated entry or a session log. Keep `§1 Current status` short and `§2 Verification record` to current facts and open rows; move completed evidence to `CHANGELOG.md`.
 - Maintain in place. Do not prepend dated overrides or leave two competing instructions; rewrite the owning section and let git carry the history.
 - Do not mark work complete because code exists. Record the command and the observed result.
-- Run `python scripts/check_docs.py` after a substantive documentation change. It checks links, budgets, required headings, version agreement between `VERSION`, `latest.json` and `CHANGELOG.md`, and referenced repo paths. Passing it does not establish that the text is true.
+- Run `python scripts/check_docs.py` after a substantive documentation change. It checks links, one hard budget (`AGENTS.md`) plus per-section targets, required headings, version agreement between `VERSION`, `latest.json` and `CHANGELOG.md`, and referenced repo paths. Passing it does not establish that the text is true.
 
 ## Verification and release
 
 - Verify proportionally: the three suites for code, `scripts/check_docs.py` for docs, and a real-document check when the change affects extraction, retrieval or review output.
 - Release state must agree across `VERSION`, `latest.json` (`version`, `tag`, `url`, `sha256`, `min_supported`, `notes`) and `CHANGELOG.md`; the installer records `version`, `commit`, `channel` and `installed_at` in `<skills>/.sourcefidelity/installed.json`.
+- When closing `## Unreleased`, leave the "Earlier verification" archive in `CHANGELOG.md` in place; it is history, not release notes.
 - Do not apply updates silently. `update_check.py` checks at most weekly and prints one line; `install.sh --update` verifies the checksum; `--version` pins a tag.
 - Do not stage, commit, push or publish unless the user asks.
 

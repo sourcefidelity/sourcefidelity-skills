@@ -196,6 +196,33 @@ def _restates_source(reason, passages):
     return False
 
 
+def _merge_evidence(evidence):
+    """Merge repeated passage slices into one contribution before validation."""
+    if not isinstance(evidence, list):
+        return evidence
+    merged, index = [], {}
+    for item in evidence:
+        if not isinstance(item, dict):
+            merged.append(item)
+            continue
+        passage_id = item.get("passage_id")
+        previous = index.get(passage_id)
+        if previous is None:
+            clone = dict(item)
+            merged.append(clone)
+            index[passage_id] = clone
+            continue
+        if isinstance(previous.get("start"), int) and isinstance(item.get("start"), int):
+            previous["start"] = min(previous["start"], item["start"])
+            previous["end"] = max(previous.get("end", 0), item.get("end", 0))
+        contribution = " ".join(str(previous.get("contribution", "")).split())
+        extra = " ".join(str(item.get("contribution", "")).split())
+        if extra and extra not in contribution:
+            contribution = (contribution + "; " + extra).strip("; ")
+        previous["contribution"] = contribution[:MAX_CONTRIBUTION_CHARS]
+    return merged
+
+
 def response_evidence(packet, response, judgments=None):
     """Validate a response and reconstruct exact excerpts and locators from the packet.
 
@@ -212,6 +239,7 @@ def response_evidence(packet, response, judgments=None):
     if response["packet_sha256"] != digest(packet):
         raise ValueError("judgment does not match the current packet")
     judgment, reason, evidence = (response[k] for k in ("judgment", "reason", "evidence"))
+    evidence = _merge_evidence(evidence)
     if (judgment not in allowed or not isinstance(reason, str) or not reason.strip()
             or not isinstance(evidence, list) or len(evidence) > MAX_PASSAGES
             or bool(evidence) == (judgment == "Not Judged")):

@@ -4,8 +4,11 @@
     python scripts/check_docs.py
 
 Checks required files and headings, local links, last-updated/authority lines,
-word budgets, STATE snapshot hygiene, version consistency and referenced repo
-paths. It cannot check whether the documents are true; review them at release.
+one hard word budget (AGENTS.md, the per-session instruction file), per-section
+targets that warn before a reference document becomes unusable, a shape warning
+when a status document turns into a log, STATE snapshot hygiene, version
+consistency and referenced repo paths. It cannot check whether the documents
+are true; review them at release.
 """
 
 import json
@@ -26,19 +29,37 @@ REQUIRED = [
     "README.md",
 ]
 AUTHORITY_DOCS = ["docs/ARCHITECTURE.md", "docs/STATE.md", "docs/PLAN.md"]
-BUDGETS = {
-    "AGENTS.md": 1200,
-    "docs/ARCHITECTURE.md": 3500,
-    "docs/STATE.md": 4000,
-    "docs/PLAN.md": 3840,
+# Only the per-session instruction file is hard-capped: brevity is compliance
+# there. Reference and status documents are bounded by section and by shape, so
+# they can hold the detail they need without turning into append-only logs.
+HARD_BUDGETS = {"AGENTS.md": 1200}
+SECTION_TARGETS = {
+    "docs/ARCHITECTURE.md": {
+        "## 1. System shape": 300,
+        "## 2. Skills and entry points": 700,
+        "## 3. Shared mechanisms": 1300,
+        "## 4. Data flow": 900,
+        "## 5. Invariants": 900,
+        "## 6. Verification and release": 400,
+        "## 7. Extension points and decisions": 300,
+    },
+    "docs/STATE.md": {
+        "## 1. Current status": 250,
+        "## 2. Verification record": 1200,
+        "## 3. Known limitations and risks": 1200,
+        "## 4. Maintenance": 150,
+    },
 }
+# A status document is becoming a log when its history section dominates it.
+SHAPE_SECTIONS = {"docs/STATE.md": ("## 2. Verification record", 0.50)}
+SECTION_WARN_RATIO = 0.8
 HEADINGS = {
     "AGENTS.md": ["## Documentation map", "## Sources of truth",
                   "## Documentation maintenance", "## Verification and release"],
     "docs/ARCHITECTURE.md": [
-        "## 1. System shape", "## 2. Skills and entry points", "## 3. Data flow",
-        "## 4. Invariants", "## 5. Verification and release",
-        "## 6. Extension points and decisions"],
+        "## 1. System shape", "## 2. Skills and entry points",
+        "## 3. Shared mechanisms", "## 4. Data flow", "## 5. Invariants",
+        "## 6. Verification and release", "## 7. Extension points and decisions"],
     "docs/STATE.md": ["## 1. Current status", "## 2. Verification record",
                       "## 3. Known limitations and risks", "## 4. Maintenance"],
     "docs/PLAN.md": ["## 1. Active work order", "## 2. Acceptance rules",
@@ -87,10 +108,41 @@ def main():
         if text.count("**Authority:**") != 1:
             errors.append(f"{path}: expected one **Authority:** line")
 
-    for path, limit in BUDGETS.items():
+    for path, limit in HARD_BUDGETS.items():
         words = word_count(docs.get(path, ""))
         if words > limit:
             errors.append(f"{path}: {words} words exceeds the {limit}-word budget")
+
+    for path, sections in SECTION_TARGETS.items():
+        text = docs.get(path, "")
+        for heading, limit in sections.items():
+            if heading not in text:
+                continue
+            body = text.split(heading, 1)[1]
+            following = body.find("\n## ")
+            body = body if following == -1 else body[:following]
+            words = word_count(body)
+            if words > limit:
+                warnings.append(
+                    f"{path}: {heading[3:]} is {words} words, over its {limit}-word "
+                    "section target; move detail to the owning document")
+            elif words > limit * SECTION_WARN_RATIO:
+                warnings.append(
+                    f"{path}: {heading[3:]} is {words} words, within 20% of its "
+                    f"{limit}-word section target")
+
+    for path, (heading, share) in SHAPE_SECTIONS.items():
+        text = docs.get(path, "")
+        total = word_count(text)
+        if heading in text and total:
+            body = text.split(heading, 1)[1]
+            following = body.find("\n## ")
+            body = body if following == -1 else body[:following]
+            portion = word_count(body) / total
+            if portion > share:
+                warnings.append(
+                    f"{path}: {heading[3:]} is {portion:.0%} of the file "
+                    f"(> {share:.0%}); a status document is turning into a log")
 
     for path, required in HEADINGS.items():
         text = docs.get(path, "")
@@ -142,6 +194,20 @@ def main():
         warnings.append("latest.json: no sha256; --update will refuse this release")
     if changelog.count("\n## Unreleased") > 1:
         errors.append("CHANGELOG.md: more than one Unreleased section")
+    archive_heading = "## Earlier verification (archived from `docs/STATE.md`)"
+    archive_count = changelog.count(archive_heading)
+    if archive_count == 0:
+        errors.append("CHANGELOG.md: missing the Earlier verification archive; do not delete it "
+                      "when closing a release")
+    elif archive_count > 1:
+        errors.append(f"CHANGELOG.md: {archive_count} Earlier verification sections; keep one")
+    else:
+        unreleased = changelog.find("## Unreleased")
+        release = re.search(r"(?m)^## \d+\.\d+", changelog)
+        archive_at = changelog.find(archive_heading)
+        if unreleased != -1 and release and unreleased < archive_at < release.start():
+            errors.append("CHANGELOG.md: the Earlier verification archive sits inside ## Unreleased; "
+                          "it is an archive, not release notes")
     if "check_docs.py" not in docs.get("AGENTS.md", ""):
         errors.append("AGENTS.md: verification section does not run scripts/check_docs.py")
     if "check_docs.py" not in docs.get("docs/ARCHITECTURE.md", ""):

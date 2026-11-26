@@ -69,6 +69,9 @@ def _items(findings):
     for item in findings.get("uncited", []) or []:
         if item.get("id"):
             yield item, _categories(item, "B"), "uncited"
+    for item in findings.get("formatting", []) or []:
+        if item.get("id"):
+            yield item, _categories(item), "formatting"
 
 
 def issue_counts(findings):

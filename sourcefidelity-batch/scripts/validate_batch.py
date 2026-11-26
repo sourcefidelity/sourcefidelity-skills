@@ -20,6 +20,7 @@ if _BOOTSTRAP_HERE not in _bootstrap_sys.path:
     _bootstrap_sys.path.insert(0, _BOOTSTRAP_HERE)
 import paper_index  # noqa: E402
 import render_review  # noqa: E402
+from sourcefidelity_core import finding_counts  # noqa: E402
 import json
 import os
 import sys
@@ -79,8 +80,8 @@ def check_summary(path):
             elif total is not None and counts:
                 expected = counts.get("absent", 0) + counts.get("non_permanent", 0)
                 if total < expected:
-                    warns.append(f"hyperlinks.hl_total {total} is below "
-                                 f"absent+non_permanent {expected}")
+                    errs.append(f"hyperlinks.hl_total {total} is below "
+                                f"absent+non_permanent {expected}")
     if d.get("schema_version") not in ("2", "3", "4", "5"):
         warns.append(f"schema_version {d.get('schema_version')!r} is not known")
     wc = d.get("word_counts") or {}
@@ -132,7 +133,71 @@ def check_findings(root, pid):
                                render_review.load(os.path.join(folder, "task.json")))
     except SystemExit as exc:
         return [f"{pid} {exc}"], []
+    summary_path = os.path.join(root, pid, "summary.json")
+    if os.path.exists(summary_path):
+        try:
+            summary = json.load(open(summary_path, encoding="utf-8"))
+        except ValueError:
+            summary = {}
+        counts = finding_counts.render_counts(f)
+        if summary:
+            if summary.get("category_a_findings") != counts["A"]:
+                return [f"summary A {summary.get('category_a_findings')} != findings A "
+                        f"{counts['A']}"], []
+            found_b = (summary.get("category_b") or {}).get("citation_findings")
+            if found_b != counts["B"]:
+                return [f"summary B {found_b} != findings B {counts['B']}"], []
     return [], []
+
+
+def check_formatting(root, pid):
+    """Formatting candidates must be visible and disposed."""
+    path = os.path.join(root, "_work", pid, "formatting.json")
+    if not os.path.exists(path):
+        return [f"formatting.json missing for {pid}"]
+    try:
+        block = json.load(open(path, encoding="utf-8"))
+    except ValueError:
+        return [f"formatting.json unreadable for {pid}"]
+    candidates = block.get("candidates") or []
+    if not candidates:
+        return []
+    findings_path = os.path.join(root, "_work", pid, "findings.json")
+    findings = {}
+    if os.path.exists(findings_path):
+        try:
+            findings = json.load(open(findings_path, encoding="utf-8"))
+        except ValueError:
+            findings = {}
+    disposed = findings.get("formatting_dispositions") or {}
+    missing = [c.get("id") for c in candidates if c.get("id") not in disposed]
+    return [f"{len(missing)} formatting candidate(s) lack a disposition"] if missing else []
+def check_nonexistence(root, pid, summary, registry):
+    """Every claimed nonexistent source needs a registry block and a findings entry."""
+    errors = []
+    works = (registry or {}).get("works") or {}
+    findings = {}
+    findings_path = os.path.join(root, "_work", pid, "findings.json")
+    if os.path.exists(findings_path):
+        try:
+            findings = json.load(open(findings_path, encoding="utf-8"))
+        except ValueError:
+            findings = {}
+    recorded = {item.get("source_key") for item in findings.get("nonexistent", []) or []}
+    for item in summary.get("nonexistent_sources", []) or []:
+        key = item.get("source_key") or item.get("source", "")
+        block = (works.get(key) or {}).get("nonexistence") or {}
+        if not block:
+            errors.append(f"nonexistent source {key!r} has no registry nonexistence block")
+            continue
+        state = block.get("state")
+        if state not in ("confirmed_absent", "not_found_after_search"):
+            errors.append(f"nonexistent source {key!r} has state {state!r}")
+        if not block.get("routes"):
+            errors.append(f"nonexistent source {key!r} has no route evidence")
+        if findings and key not in recorded:
+            errors.append(f"nonexistent source {key!r} is absent from findings.nonexistent")
+    return errors
 
 
 def main():
@@ -147,12 +212,25 @@ def main():
         print("no paper-*/summary.json found")
         return 2
     errors, warnings = [], []
+    registry = {}
+    registry_path = os.path.join(root, "source_registry.json")
+    if os.path.exists(registry_path):
+        try:
+            registry = json.load(open(registry_path, encoding="utf-8"))
+        except ValueError:
+            registry = {}
     for path in files:
         pid = os.path.basename(os.path.dirname(path))
         errs, warns = check_summary(path)
         ferrs, fwarns = check_findings(root, pid)
-        errors += [f"{pid}: {e}" for e in errs + ferrs]
-        warnings += [f"{pid}: {w}" for w in warns + fwarns]
+        try:
+            summary = json.load(open(path, encoding="utf-8"))
+        except ValueError:
+            summary = {}
+        nerrs = check_nonexistence(root, pid, summary, registry) if summary else []
+        format_warns = check_formatting(root, pid) if summary else []
+        errors += [f"{pid}: {e}" for e in errs + ferrs + nerrs]
+        warnings += [f"{pid}: {w}" for w in warns + fwarns + format_warns]
     print(json.dumps({"papers": len(files), "errors": errors, "warnings": warnings,
                       "ok": not errors}, ensure_ascii=False, indent=1))
     return 0 if not errors or not args.strict else 1

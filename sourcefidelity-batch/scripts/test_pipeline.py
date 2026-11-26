@@ -8,6 +8,7 @@ No network, no PDFs, no OCR. Uses unittest so pytest can also collect it.
 from __future__ import annotations
 
 import io
+import contextlib
 import hashlib
 import json
 import os
@@ -32,10 +33,13 @@ REVIEW = os.path.join(os.path.dirname(os.path.dirname(HERE)),
                       "sourcefidelity-review", "scripts")
 sys.path.insert(0, HERE)
 sys.path.insert(0, REVIEW)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "scripts"))
 
 import acquisition_list as al  # noqa: E402
 import audit_tasks as at  # noqa: E402
-import authorship_signals as ats  # noqa: E402
+import document_profile as ats  # noqa: E402
+import text_overlap as overlap  # noqa: E402
+import confirm_nonexistence as cn  # noqa: E402
 import batch_paths as bp  # noqa: E402
 import batch_status as bs  # noqa: E402
 import checkpoint as cp  # noqa: E402
@@ -53,9 +57,11 @@ import evidence_window as ew  # noqa: E402
 import fetch_web_sources as fw  # noqa: E402
 import file_digest as fd  # noqa: E402
 import finding_counts as fc  # noqa: E402
+import ingest_open as ingest_open_mod  # noqa: E402
 import extract_candidates as ec  # noqa: E402
 import academic_checks as ac  # noqa: E402
 import benchmark_retrieval as bm  # noqa: E402
+import benchmark_review as bref  # noqa: E402
 import make_task as mt  # noqa: E402
 import prepare_html as ph  # noqa: E402
 import prepare_source as ps  # noqa: E402
@@ -73,6 +79,10 @@ import reading_gate as rgt  # noqa: E402
 import query_translate as qt  # noqa: E402
 import acceptance_cjk as acc  # noqa: E402
 import render_review as rr  # noqa: E402
+import validate_batch as vb  # noqa: E402
+import fetch_web_sources as fws  # noqa: E402
+import works_rescreen as wr  # noqa: E402
+import formatting_audit as fa  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
 import link_states as ls  # noqa: E402
@@ -1989,11 +1999,11 @@ class CohortOverlapTests(unittest.TestCase):
             os.makedirs(os.path.join(tmp, "P1"))
             json.dump(self._summary(), open(os.path.join(tmp, "P1", "summary.json"),
                                             "w", encoding="utf-8"))
-            data = ats.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
+            data = overlap.cohort(pathlib.Path(tmp), pathlib.Path(tmp))
         self.assertEqual(set(data["papers"]["P1"]), {"S3"})
         for absent in ("duplicates", "venue_patterns", "venue_observations", "profiles"):
             self.assertNotIn(absent, data)
-        self.assertIn("Cohort text overlap", ats.markdown(data))
+        self.assertIn("Cohort text overlap", overlap.markdown(data))
 
 
 class PageMapOffsetTests(unittest.TestCase):
@@ -5233,6 +5243,24 @@ class DocxFormattingTests(unittest.TestCase):
                 archive.writestr("word/_rels/document.xml.rels", relationships)
         return path
 
+    def test_style_applied_italics_are_resolved(self):
+        styles = ('<w:styles xmlns:w="' + dt.W[1:-1] + '">'
+                  '<w:style w:type="character" w:styleId="ItalicChar">'
+                  '<w:rPr><w:i/></w:rPr></w:style></w:styles>')
+        body = ('<w:p><w:r><w:rPr><w:rStyle w:val="ItalicChar"/></w:rPr>'
+                '<w:t>Styled title</w:t></w:r></w:p>')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "paper.docx")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("word/document.xml",
+                                 f'<w:document xmlns:w="{dt.W[1:-1]}"><w:body>{body}'
+                                 f'</w:body></w:document>')
+                archive.writestr("word/styles.xml", styles)
+            data = dt.build(path)
+        run = data["paragraphs"][0]["runs"][0]
+        self.assertTrue(run["italic"])
+        self.assertEqual(run["italic_from"], "style")
+
     def test_docx_dump_preserves_formatting_separators_tables_and_links(self):
         body = (
             '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:ind w:hanging="720"/>'
@@ -5257,8 +5285,10 @@ class DocxFormattingTests(unittest.TestCase):
         self.assertEqual((first["style"], first["align"], first["indent"]),
                          ("Heading1", "center", {"hanging": "720"}))
         self.assertEqual(first["runs"][:2], [
-            {"text": "Journal\t", "italic": True, "bold": False},
-            {"text": "Title\n", "italic": False, "bold": True},
+            {"text": "Journal\t", "italic": True, "bold": False,
+             "italic_from": "direct", "bold_from": "direct"},
+            {"text": "Title\n", "italic": False, "bold": True,
+             "italic_from": "none", "bold_from": "direct"},
         ])
         self.assertIn("_Journal", dt.markdown(data))
 
@@ -5552,7 +5582,9 @@ class SingleReviewRenderingTests(unittest.TestCase):
         self.assertEqual(summary["hyperlinks"]["dead"], 1)
         self.assertEqual(summary["hyperlinks"]["unchecked"], 1)
         self.assertEqual(summary["hyperlinks"]["full_text"], 0)
-        self.assertEqual(summary["hyperlinks"]["hl_total"], 0)
+        # No HL finding was adjudicated, so the missing-link works from the
+        # audit are the floor: absent 1 + wrong-work 1.
+        self.assertEqual(summary["hyperlinks"]["hl_total"], 2)
         self.assertEqual(summary["references"]["link_states"], summary["hyperlinks"])
         single_review = (self.output / "review.md").read_text()
         self.assertIn(rm.scope_line(metrics), single_review)
@@ -6458,6 +6490,64 @@ class FullTextRecoveryTests(unittest.TestCase):
         self.assertEqual(core_recovery.locator_page_range("P8"), [])
 
 
+
+class IngestOpenTests(unittest.TestCase):
+    def _root(self, tmp):
+        root = Path(tmp)
+        work = root / "_work" / "paper"
+        work.mkdir(parents=True)
+        open_dir = root / "_work" / "open" / "R1"
+        open_dir.mkdir(parents=True)
+        (open_dir / "article.txt").write_text("full text", encoding="utf-8")
+        (root / "_work" / "open" / "index.json").write_text(json.dumps([
+            {"ref": "R1", "status": "saved_text", "file": "./_work/open/R1/article.txt",
+             "source": "core", "url": "https://example.test/article"},
+        ]), encoding="utf-8")
+        (work / "task.json").write_text(json.dumps({
+            "sources": {"R1": {"source_key": "key-1"}},
+            "candidates": {"citations": [{"id": "X1"}]},
+            "windows": {},
+        }), encoding="utf-8")
+        (root / "source_registry.json").write_text(json.dumps({"works": {
+            "key-1": {"source_key": "key-1", "identity_status": "unresolved",
+                      "identity": {"title": "Article"}},
+        }}), encoding="utf-8")
+        return root
+
+    def test_saved_text_is_staged_and_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            result = ingest_open_mod.ingest(str(root))
+            target = root / "_sources" / "key-1" / "text.txt"
+            self.assertTrue(target.exists())
+            self.assertEqual(result["registered"][0]["ref"], "R1")
+            registry = json.loads((root / "source_registry.json").read_text(encoding="utf-8"))
+            work = registry["works"]["key-1"]
+            self.assertEqual(work["extraction"], str(target))
+            self.assertEqual(work["identity_status"], "confirmed")
+            self.assertEqual(work["acquired"]["source"], "core")
+            self.assertTrue((root / "_sources" / "key-1" / "pages.csv").exists())
+            self.assertTrue(work["page_map"].endswith("pages.csv"))
+            self.assertTrue(target.read_text(encoding="utf-8").startswith("=== PDF p1"))
+
+    def test_dry_run_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            result = ingest_open_mod.ingest(str(root), dry_run=True)
+            self.assertTrue(result["dry_run"])
+            self.assertFalse((root / "_sources" / "key-1" / "text.txt").exists())
+            registry = json.loads((root / "source_registry.json").read_text(encoding="utf-8"))
+            self.assertEqual(registry["works"]["key-1"]["identity_status"], "unresolved")
+
+    def test_coverage_lists_citations_without_windows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._root(tmp)
+            coverage = ingest_open_mod.coverage(str(root))
+            self.assertEqual(coverage["citations"], 1)
+            self.assertEqual(coverage["with_windows"], 0)
+            self.assertEqual(coverage["missing"], ["X1"])
+
+
 class ReadingGateTests(unittest.TestCase):
     def _occurrence(self, statement, marker, cited=("R1",), sources=None):
         return {"id": "C1", "paragraph_id": "P1", "marker": marker,
@@ -6535,6 +6625,37 @@ class ReadingGateTests(unittest.TestCase):
         self.assertIn(("citation_form", "B"), categories)
         self.assertIn(("citation_form", "A"), categories)
 
+    def test_compressed_paraphrase_keeps_the_shared_run(self):
+        statement = ("Historically, member states viewed broadcasting as an essential aspect of "
+                     "national sovereignty, with governments exerting control over elements such "
+                     "as news content; however, this control was challenged by the growing global "
+                     "trade and Europe-wide technological shifts (O’Connell, 1996, p.503).")
+        evidence = ("“Since the early days of television, Member States had viewed broadcasting "
+                    "as an integral attribute of their national sovereignty, controlling "
+                    "everything from broadcast frequencies to news programs.”")
+        occurrence = self._occurrence(statement, "(O’Connell, 1996, p.503)", sources=[{
+            "r_id": "R7", "source_key": "oconnell", "locator": "printed p. 502",
+            "evidence": evidence}])
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        finding = next(item for item in record["findings"] if item["check"] == "patchwriting")
+        self.assertEqual(finding["category"], "B")
+        self.assertGreaterEqual(finding["metrics"]["shared_run"], 5)
+
+    def test_author_emphasis_of_a_reported_viewpoint_is_flagged(self):
+        statement = ("As Middleton (2003) emphasized, “Liberalization is the only way to "
+                     "compete”.")
+        evidence = ("“One viewpoint is that the audiovisual sector need only be nurtured under "
+                    "European Union regulation in order for it to become more competitive. "
+                    "Another is that liberalization is the only way to compete.”")
+        occurrence = self._occurrence(statement, "As Middleton (2003)", sources=[{
+            "r_id": "R4", "source_key": "middleton", "locator": "Part I (Introduction)",
+            "evidence": evidence}])
+        record = core_gate.analyze(occurrence, [], occurrence["sources"])
+        finding = next(item for item in record["findings"]
+                       if item["check"] == "reported_viewpoint")
+        self.assertEqual(finding["category"], "B")
+        self.assertIn("liberalization", finding["evidence"].casefold())
+
     def test_unavailable_source_is_declined_with_a_reason(self):
         occurrence = self._occurrence("A substantive claim (Smith, 2020, p. 5).",
                                       "(Smith, 2020, p. 5)")
@@ -6559,6 +6680,52 @@ class ReadingGateTests(unittest.TestCase):
                 for row in result["rows"]}
         self.assertEqual(rows[("C1", "patchwriting")], "confirmed")
         self.assertEqual(rows[("C2", "locator")], "current_missed")
+
+
+
+class ReadingGateAdoptionTests(unittest.TestCase):
+    def _gate(self):
+        return {"occurrences": [{"occurrence": "C2", "findings": [{
+            "check": "lost_qualification", "category": "B",
+            "issue_type": "source qualification omitted"}]}]}
+
+    def _findings(self, practice=None):
+        return {"occurrences": [{"id": "C2",
+                                 "summary_category": "B" if practice else "A",
+                                 "academic_practice": practice or [],
+                                 "apa": ["Incorrect page locator"]}]}
+
+    def test_adopted_gate_finding_passes(self):
+        result = rgt.check(self._gate(), self._findings(["Lost qualification"]))
+        self.assertTrue(result["ok"], result["missing"])
+        self.assertEqual(result["counts"]["adopted"], 1)
+
+    def test_unadopted_finding_fails(self):
+        result = rgt.check(self._gate(), self._findings())
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["missing"][0]["occurrence"], "C2")
+        self.assertEqual(result["counts"]["missing"], 1)
+
+    def test_rebuttal_with_a_reason_passes(self):
+        result = rgt.check(self._gate(), self._findings(), {"rebuttals": [{
+            "occurrence": "C2", "check": "lost_qualification",
+            "reason": "The sentence states no absolute claim, so the qualifier is not lost."}]})
+        self.assertTrue(result["ok"], result["missing"])
+        self.assertEqual(result["counts"]["rebutted"], 1)
+
+    def test_rebuttal_without_a_reason_does_not_count(self):
+        result = rgt.check(self._gate(), self._findings(), {"rebuttals": [{
+            "occurrence": "C2", "check": "lost_qualification", "reason": "  "}]})
+        self.assertFalse(result["ok"])
+
+    def test_check_counts_every_gate_finding(self):
+        gate = self._gate()
+        gate["occurrences"][0]["findings"].append(
+            {"check": "locator", "category": "A", "issue_type": "page locator differs"})
+        result = rgt.check(gate, self._findings(["Lost qualification"]))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["counts"]["gate_findings"], 2)
+        self.assertEqual(result["counts"]["adopted"], 2)
 
 
 class ReadingGateApplyTests(unittest.TestCase):
@@ -6615,6 +6782,21 @@ class ReadingGateApplyTests(unittest.TestCase):
             (self.work / path).write_text(json.dumps(data), encoding="utf-8")
         for path, data in (("inventory.json", inventory), ("findings.json", findings)):
             (self.folder / path).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_apply_skips_rebutted_gate_findings(self):
+        rgt.run(self.root, "paper")
+        rebuttals = {"rebuttals": [{
+            "occurrence": "C1", "check": "locator",
+            "reason": "The observed printed page is the cited page; the locator is correct."}]}
+        rgt.apply(self.root, "paper", rebuttals)
+        findings = json.loads((self.folder / "findings.json").read_text(encoding="utf-8"))
+        occurrence = findings["occurrences"][0]
+        practice = " ".join(occurrence.get("academic_practice", [])).casefold()
+        apa = " ".join(occurrence.get("apa", [])).casefold()
+        self.assertIn("close paraphrase", practice)
+        self.assertNotIn("page locator", apa)
+        self.assertEqual([row["check"] for row in findings["reading_gate"]["rebutted"]],
+                         ["locator"])
 
     def test_gate_run_apply_and_require_gate_render(self):
         initial = subprocess.run(
@@ -7865,6 +8047,20 @@ class O5TerseOutputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             core_claim.response_evidence(packet, response)
 
+    def test_repeated_passage_slices_are_merged(self):
+        packet, response = self._packet_response()
+        response["evidence"] = [
+            {"passage_id": "P1", "start": 0, "end": 12,
+             "contribution": "States the common-market finding."},
+            {"passage_id": "P1", "start": 20, "end": 40,
+             "contribution": "Adds the services scope."},
+        ]
+        sources = core_claim.response_evidence(packet, response)
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["evidence"],
+                         packet["passages"][0]["text"][0:40])
+        self.assertIn("services scope", sources[0]["contribution"])
+
     def test_short_quote_is_still_allowed(self):
         packet, response = self._packet_response()
         response["reason"] = 'The source says "common market" and therefore supports the claim.'
@@ -8518,6 +8714,21 @@ class OptimizationMetricsTests(unittest.TestCase):
         self.assertEqual(data["citations"]["with_windows"], 1)
         self.assertEqual(data["retries"], 1)
         self.assertEqual(data["sources"]["cited"], 1)
+
+    def test_tokens_come_from_review_metrics_when_no_sidecar(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_work" / "paper").mkdir(parents=True)
+            (root / "paper").mkdir()
+            (root / "paper" / "summary.json").write_text(json.dumps({
+                "review_metrics": {"runs": [{"usage": {
+                    "input_tokens": 10, "cache_read_tokens": 90,
+                    "output_tokens": 5, "total_tokens": 105}}]},
+            }), encoding="utf-8")
+            data = om.collect(str(root))
+        self.assertEqual(data["tokens"]["prompt_tokens"], 100)
+        self.assertEqual(data["tokens"]["source"], "review_metrics")
+
 
 
 class EvidenceBenchmarkTests(unittest.TestCase):
@@ -9257,5 +9468,277 @@ class ReviewPipelineRegressionTests(unittest.TestCase):
 
 
 
+class BenchmarkReviewTests(unittest.TestCase):
+    def _gold(self):
+        return {
+            "occurrences": [
+                {"id": "C1", "verdict": "Supports", "accept": ["Supports"],
+                 "required": [{"category": "B", "contains": "close paraphrase"}]},
+                {"id": "C2", "verdict": "Qualified or Mixed", "accept": ["Qualified or Mixed"],
+                 "required": [{"category": "B", "contains": "qualification"}]},
+            ],
+            "uncited": [{"id": "U1", "contains": "opening phrase"}],
+            "minimum_counts": {"A": 1, "B": 1, "HL": 0},
+            "thresholds": {"max_prompt_tokens": 1000, "max_wall_seconds": 60},
+        }
+
+    def _findings(self, c2_verdict="Qualified or Mixed", c2_practice=None,
+                  uncited=True):
+        return {
+            "occurrences": [
+                {"id": "C1", "judgment": "Supports", "summary_category": "A+B",
+                 "academic_practice": ["Close paraphrase retaining the source's structure"],
+                 "apa": ["Incorrect page locator"]},
+                {"id": "C2", "judgment": c2_verdict, "summary_category": "B" if c2_practice else "A",
+                 "academic_practice": c2_practice or [],
+                 "apa": ["Incorrect page locator"]},
+            ],
+            "uncited": ([{"statement": "The opening phrase is paraphrased."}] if uncited else []),
+            "summary": {"category_a": ["locator"], "category_b": ["patchwriting"],
+                        "hyperlinks_missing": []},
+        }
+
+    def test_matching_findings_pass(self):
+        result = bref.evaluate(self._findings(c2_practice=["Lost qualification"]), self._gold(),
+                               {"prompt_tokens": 100, "wall_seconds": 10})
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["verdicts"]["agree"], 2)
+
+    def test_verdict_mismatch_and_missing_finding_fail(self):
+        result = bref.evaluate(self._findings(c2_verdict="Supports"), self._gold(),
+                               {"prompt_tokens": 100, "wall_seconds": 10})
+        self.assertFalse(result["ok"])
+        self.assertEqual([row["id"] for row in result["verdicts"]["rows"] if not row["ok"]], ["C2"])
+        self.assertIn("C2", [row["id"] for row in result["required"]["missing"]])
+
+    def test_missing_uncited_passage_fails(self):
+        result = bref.evaluate(self._findings(c2_practice=["Lost qualification"], uncited=False),
+                               self._gold(), {"prompt_tokens": 100, "wall_seconds": 10})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["uncited"]["present"], 0)
+
+    def test_metric_threshold_fails(self):
+        result = bref.evaluate(self._findings(c2_practice=["Lost qualification"]), self._gold(),
+                               {"prompt_tokens": 2000, "wall_seconds": 10})
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["metrics"]["prompt_tokens"]["ok"])
+
+
+
+class ConfirmNonexistenceTests(unittest.TestCase):
+    def _record(self, kind="article", title="A fabricated article", author="Doe, J",
+                year="2019"):
+        return {"source_key": "k", "identity": {"kind": kind, "title": title,
+                "author": author, "year": year, "verbatim": ""},
+                "work_kind": kind}
+
+    def _eval(self, record, resolver=None, openalex=None, host=None, link=None, archive=None):
+        return cn.evaluate(record, resolver or {}, openalex or {}, host, link, archive)
+
+    def test_confirmed_resolver_absence(self):
+        out = self._eval(self._record(), {"identity": "nonexistent_as_cited"})
+        self.assertEqual(out["state"], "confirmed_absent")
+
+    def test_complete_negative_search_flags_not_found(self):
+        out = self._eval(
+            self._record(),
+            {"identity": "unlocated_after_search",
+             "contents": {"status": "vacant_gap"}},
+            {"found": False, "limitation": ""},
+            {"ran": True, "queries": [{"query": "x", "results": []}], "results": []})
+        self.assertEqual(out["state"], "not_found_after_search")
+
+    def test_missing_host_search_is_incomplete(self):
+        out = self._eval(self._record(), {"identity": "unlocated_after_search",
+                                          "contents": {"status": "vacant_gap"}},
+                         {"found": False, "limitation": ""})
+        self.assertEqual(out["state"], "search_incomplete")
+
+    def test_possible_title_match_is_never_absence(self):
+        out = self._eval(self._record(title="Media conglomerates and vertical integration"),
+                         {"identity": "unlocated_after_search",
+                          "contents": {"status": "vacant_gap"}},
+                         {"found": False, "limitation": ""},
+                         {"ran": True, "results": [
+                             {"title": "Media conglomerates and horizontal integration",
+                              "author": "Doe"}]})
+        self.assertEqual(out["state"], "citation_conflict")
+
+    def test_web_dead_without_archive_or_hit_is_not_found(self):
+        out = self._eval(self._record(kind="web"), link={"state": "dead"},
+                         archive={"found": False}, host={"ran": True, "results": []})
+        self.assertEqual(out["state"], "not_found_after_search")
+
+    def test_web_blocked_is_incomplete(self):
+        out = self._eval(self._record(kind="web"), link={"state": "blocked"},
+                         archive={"found": False}, host={"ran": True, "results": []})
+        self.assertEqual(out["state"], "search_incomplete")
+
+
+class NonexistenceIntegrationTests(unittest.TestCase):
+    def test_review_renders_nonexistent_section(self):
+        findings = {"references": [{"id": "R1", "verbatim": "Doe (2020). X.",
+                                    "note": "Unverifiable as cited."}],
+                    "nonexistent": [{"source_key": "k", "r_id": "R1",
+                                     "source": "Doe (2020). X.",
+                                     "state": "confirmed_absent",
+                                     "confidence": "confirmed",
+                                     "evidence": "DOI resolves elsewhere."}],
+                    "occurrences": [], "uncited": [], "summary": {}}
+        text = rr.render_md({"paper_id": "P1", "path": "p.docx", "word_counts": {}},
+                            findings, rr.counts(findings), {})
+        self.assertIn("Nonexistent as cited", text)
+        self.assertIn("Sources not found", text)
+        self.assertIn("Nonexistent sources as cited: R1", text)
+
+    def test_validator_requires_registry_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "P1"))
+            os.makedirs(os.path.join(tmp, "_work", "P1"))
+            summary = {"nonexistent_sources": [{"source_key": "k", "source": "X"}]}
+            with open(os.path.join(tmp, "P1", "summary.json"), "w") as f:
+                json.dump(summary, f)
+            with open(os.path.join(tmp, "_work", "P1", "findings.json"), "w") as f:
+                json.dump({"nonexistent": [{"source_key": "k"}]}, f)
+            errors = vb.check_nonexistence(tmp, "P1", summary, {"works": {}})
+            self.assertTrue(any("no registry nonexistence block" in e for e in errors))
+            registry = {"works": {"k": {"nonexistence": {
+                "state": "confirmed_absent", "confidence": "confirmed",
+                "routes": [{"route": "doi", "status": "match"}]}}}}
+            self.assertEqual(vb.check_nonexistence(tmp, "P1", summary, registry), [])
+
+    def test_plan_writes_host_query_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = {"works": {"k": {
+                "source_key": "k", "papers": ["P1"], "identity_status": "unresolved",
+                "supplied_file": "", "selected_representation": "",
+                "identity": {"kind": "article", "title": "A title", "author": "Doe, J",
+                             "year": "2020", "container_title": "Journal", "volume": "1"}}}}
+            with open(os.path.join(tmp, "source_registry.json"), "w") as f:
+                json.dump(registry, f)
+            out = os.path.join(tmp, "queries.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                cn.main(["--batch", tmp, "--keys", "k", "--plan", "--out", out])
+            data = json.load(open(out))
+            self.assertIn("sources", data)
+            self.assertTrue(data["sources"]["k"]["queries"])
+
+
+class WebPdfFetchTests(unittest.TestCase):
+    def test_pdf_body_becomes_cached_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = os.path.join(tmp, "extraction")
+            os.makedirs(folder)
+            with open(os.path.join(folder, "text.txt"), "w", encoding="utf-8") as f:
+                f.write("Extracted PDF evidence text.")
+            result = {"body": b"%PDF-1.4 fake", "content_type": "application/pdf",
+                      "truncated": False, "limitation": ""}
+            with mock.patch.object(fws.resolve_dois, "extract_pdf",
+                                   return_value={"dir": folder}):
+                out = fws.pdf_result(result, tmp)
+        self.assertEqual(out["text"], "Extracted PDF evidence text.")
+        self.assertEqual(out["classification"], "full_text")
+
+
+class FormattingAuditTests(unittest.TestCase):
+    def test_body_title_roman_and_reference_candidates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "P1"))
+            os.makedirs(os.path.join(tmp, "_work", "P1"))
+            doc = ('<w:document xmlns:w="' + dt.W[1:-1] + '"><w:body>'
+                   '<w:p><w:r><w:rPr><w:i/></w:rPr><w:t>The Matrix</w:t></w:r></w:p>'
+                   '<w:p><w:r><w:t>The Matrix is discussed here.</w:t></w:r></w:p>'
+                   '<w:p><w:r><w:t>References</w:t></w:r></w:p>'
+                   '<w:p><w:r><w:t>Doe, J. (2020). A book. Publisher.</w:t></w:r></w:p>'
+                   '</w:body></w:document>')
+            with zipfile.ZipFile(os.path.join(tmp, "P1", "paper-masked.docx"), "w") as z:
+                z.writestr("word/document.xml", doc)
+            with open(os.path.join(tmp, "_work", "P1", "paper.json"), "w") as f:
+                json.dump({"paper_id": "P1", "reference_heading": "References"}, f)
+            with open(os.path.join(tmp, "_work", "P1", "findings.json"), "w") as f:
+                json.dump({"works": [{"title": "The Matrix"}]}, f)
+            result = fa.audit("P1", tmp)
+        body = [c for c in result["candidates"] if c["kind"] == "body-title-roman"]
+        self.assertEqual(len(body), 1)
+        self.assertEqual(body[0]["paragraph_id"], "P2")
+        refs = [c for c in result["candidates"] if c["kind"].startswith("reference")]
+        self.assertTrue(refs)
+
+
+class UncitedAnalysisTests(unittest.TestCase):
+    def _paragraph(self, text, cid="C1", end=None):
+        return {"id": "P1", "text": text}
+
+    def _citation(self, end):
+        return {"id": "C1", "paragraph_id": "P1", "start": 0, "end": end}
+
+    def _clauses(self, text, cited_end):
+        return ec.clause_uncited([self._paragraph(text)], [self._citation(cited_end)])
+
+    def test_analytic_conclusion_after_citation_is_not_uncited(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "Ultimately, its failure stemmed from lost audiences and weak marketing.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertEqual(out[-1]["outcome"], "possible_analysis")
+
+    def test_evaluative_sentence_without_facts_is_not_uncited(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "Its visual beauty is truly groundbreaking and iconic.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertEqual(out[-1]["outcome"], "possible_analysis")
+
+    def test_factual_claim_after_citation_is_uncited(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "It grossed $466 million worldwide in 2021 and 2022.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertEqual(out[-1]["outcome"], "uncited")
+
+    def test_mixed_sentence_keeps_fact_and_marks_analysis(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "It grossed $466 million worldwide in 2021, becoming a phenomenal dark horse.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertTrue(out[-1]["mixed"])
+        self.assertEqual(out[-1]["outcome"], "uncited")
+
+    def test_paragraph_yields_at_most_two_fragments(self):
+        text = ("The film earned $100 million (Box Office Mojo, 2020). "
+                "It grossed $466 million. It opened in 2021. It ran 148 minutes. "
+                "It sold 3 million tickets.")
+        out = self._clauses(text, text.index(")") + 1)
+        self.assertLessEqual(len(out), 2)
+
+    def test_validator_rejects_analysis_valued_expected_source(self):
+        candidate = {"paragraphs": [{"id": "P1", "text": "The film earned $100 million."}]}
+        inventory = {"occurrences": [], "references": [], "works": [],
+                     "uncited": [{"id": "U1", "paragraph_id": "P1",
+                                  "text": "The film earned $100 million.",
+                                  "expected_source": "analysis"}]}
+        result = vi.validate(candidate, inventory, strict=True)
+        errors = result["errors"]
+        self.assertTrue(any("expected_source" in error for error in errors))
+
+
+class WorksMentionTests(unittest.TestCase):
+    def test_chronology_named_work_is_passing(self):
+        self.assertEqual(wr.classify({"discussion": "Named as the second film."}, 1), "passing")
+
+    def test_comparison_named_work_is_passing(self):
+        self.assertEqual(wr.classify({"discussion": "Listed as a comparison point only."}, 1), "passing")
+
+    def test_box_office_fact_only_is_passing(self):
+        self.assertEqual(wr.classify({"discussion": "Domestic gross is reported."}, 1), "passing")
+
+    def test_reception_discussion_is_analyzed(self):
+        self.assertEqual(wr.classify({"discussion": "The film's reception is discussed through P15-P17."}, 1), "analyzed")
+
+    def test_validator_rejects_passing_with_a_or_missing_type(self):
+        candidate = {"paragraphs": [{"id": "P1", "text": "A film."}]}
+        inventory = {"occurrences": [], "references": [], "uncited": [],
+                     "coverage": {"paragraphs_scanned": ["P1"]},
+                     "works": [{"id": "W1", "mention_type": "passing", "category": "A"}]}
+        result = vi.validate(candidate, inventory, strict=True)
+        self.assertTrue(any("passing mention cannot carry" in e for e in result["errors"]))
+
+
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

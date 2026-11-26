@@ -408,7 +408,6 @@ def render_summary_data(data, task, judgments, day):
     data["flags"] = {
         "misrepresentation": len({m.get("source_key") for m in mis}) >= 3,
         "fabrication_risk": len(data.get("nonexistent_sources", []) or []) >= 2,
-        "authorship_signal_risk": bool(data.get("flags", {}).get("authorship_signal_risk")),
     }
     return data
 
