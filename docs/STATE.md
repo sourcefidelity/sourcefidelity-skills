@@ -44,7 +44,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | Single-review default reverted (R58/R60) | `SKILL.md`, TV benchmark | Direct 13–16 min review is the default; `--bounded` stays opt-in with the R60 bar (18/20, complete bibliography/HL, ≤$0.10, ≤16 min). |
 | Post-batch pass (24 Nov) | VPN-on acquisition and reappraisal | P240919 C19 Not Judged→Supports; P240955 blocked (translation); awaiting-copy 103→102. |
 | R59 TV benchmark (26 Nov) | `benchmark_review.py` on stored runs | Direct 19/20, missing C1/C2 B; bounded 15/20, missing C4/C16; R60 bar not met. |
-| Audit repairs (B1–B12) | renderer/validator/report patched; 117 papers | B/HL reconcile; A repaired; formatting disposed; B8 re-screen; B10 222 W / 222 A / 248 passing; B11 U 1,301→934; B12 candidate ledger in progress (27 restored, 67 dismissed, 297 analysis removed, 149 rewritten, 58 continuation merges, 111 continuation-new); final blind sample 0/300 analysis; parity guard; model holdout 161/161; 674 tests. |
+| Audit repairs (B1–B12) | renderer/validator/report patched; 117 papers | B/HL reconcile; A repaired; formatting disposed; B8 re-screen; B10 222 W / 222 A / 248 passing; B11 U 1,301→933; B12 candidate ledger done (P240975 real run, validate 0/0) (27 restored, 67 dismissed, 297 analysis removed, 149 rewritten, 58 continuation merges, 111 continuation-new); final blind sample 0/300 analysis; parity guard; model holdout 161/161; 674 tests. |
 
 Evidence for completed rows has moved to `CHANGELOG.md` under "Earlier verification (archived from `docs/STATE.md`)" and to git history; this section keeps only current facts and the evidence for open rows (R6, R39, R46, R58/R60) and the batch audit repairs (B1–B9).
 

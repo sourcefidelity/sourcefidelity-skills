@@ -391,7 +391,7 @@ work:
 The second pass also resolved the P240982/P240912/P240927 borderline statements. Rules,
 continuation dispositions, restoration set and parity guard remain in place.
 
-### B12 — Uncited candidate ledger — In progress
+### B12 — Uncited candidate ledger — Done
 
 The post-hoc sample audit is not the right control. The first pass must dispose of **every extracted
 candidate**, not sample the finished U. The deterministic extractor already emits
@@ -416,15 +416,19 @@ merge and a missing disposition fails/passes as specified; one real paper runs `
 with a complete ledger; `validate_batch --strict` accepts the ledger and still reports 0/0; the batch
 addendum names the step and removes reliance on post-hoc sampling.
 
-**Implemented (26 Nov).** `uncited_adjudicate.py` has `emit` (stable `paragraph:ordinal` keys, advisory
-`suggested` route for clear fact candidates, one packet per paper for every candidate) and `record`
-(writes `_work/<paper>/uncited-ledger.json`). `validate_batch` rejects a ledger with an undisposed
-candidate, a `fact`/`mixed`/`new content` entry without a matching U or source, or an
+**Implemented (26 Nov).** `uncited_adjudicate.py` has `emit` (stable `paragraph:ordinal` keys,
+advisory `suggested` route for clear fact candidates, one packet per paper for every candidate) and
+`record` (writes `_work/<paper>/uncited-ledger.json`). `validate_batch` rejects a ledger with an
+undisposed candidate, a `fact`/`mixed`/`new content` entry without a matching U or source, or an
 `analysis`/`merged`/`not substantive` entry that is present as U. Six `UncitedLedgerTests` fixtures
 cover deterministic suggestion, missing disposition, fact/U/source, analysis-present-as-U and mixed
-span. The deterministic route is advisory only; the model must confirm every candidate and supply the
-source. Remaining: run one full paper through emit/record, add the step to BATCH_ADDENDUM/SKILL, and
-record a real ledger. Status: In progress.
+span. The step is in `BATCH_ADDENDUM.md` (`3c-adjudicate`) and `SKILL.md`.
+
+**Real-paper run (P240975).** `emit` produced 26 candidates; the model disposed 7 fact, 2 mixed,
+1 new content, 4 merged, 11 analysis and 1 not-substantive. `record` completed the ledger and U was
+rebuilt from it: 11 U entries (plus the legacy U27 that the extractor does not re-emit). The paper
+re-rendered and `validate_batch --strict` passed 0/0. Batch U is now 933; the B11 final sample
+(0/300) remains the quality record for the other papers. Status: Done.
 
 ## Progress (25 Nov)
 

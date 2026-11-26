@@ -2,11 +2,12 @@
 
 ## Unreleased
 
-- **B12 uncited candidate ledger (in progress).** Adds `uncited_adjudicate.py` so every extracted
-  candidate receives one disposition (`fact`, `analysis`, `merged`, `mixed`, `new content`, `not
-  substantive`) before U is written; clear facts route deterministically, ambiguous candidates use a
-  bounded per-paper model packet, and the validator rejects missing or contradictory dispositions.
-  This replaces post-hoc sampling as the primary first-pass control. Detail in B12.
+- **B12 uncited candidate ledger.** `uncited_adjudicate.py emit/record` gives every extracted
+  candidate one disposition (`fact`, `analysis`, `merged`, `mixed`, `new content`, `not
+  substantive`) before U is written; clear facts get an advisory deterministic route, every candidate
+  uses a bounded per-paper model packet, and `validate_batch` rejects missing or contradictory
+  dispositions. The step is wired into `BATCH_ADDENDUM.md`/`SKILL.md`. Real run: P240975 26
+  candidates, 11 U rebuilt, validate 0/0; batch U 933. Detail in B12.
 
 - **B11 uncited-passage residuals.** Bounded adjudication of the B7/B8 re-screen: 27 source-dependent
   statements restored and 67 dismissed with reasons (full 94-item removal set); 39 analysis items removed and 45 re-recorded as
