@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **R48 host-search acquisition exercise.** `search_plan` → host `web_search` → `search_acquire`
+  fetched and identity-checked real candidates. Niantic press release reached identity-high but was
+  identity-only (short HTML); Tanaka PDF was correctly rejected for a wrong cited author. Fixed a
+  false `abstract_only` rejection of a multi-page CJK PDF; pipeline suite now 681 tests. No complete
+  evidence-eligible admission yet; R48 stays in progress.
+
 - **R47d real-batch CJK acceptance.** Four papers, ten claims, three CJK languages (Chinese, Korean,
   Japanese), with government, newspaper, city-government, academic-journal and industry sources read
   at their native URLs. Judgments: 6 Supports, 3 Qualified or Mixed, 1 Not Supported, 0 Not Judged;

@@ -41,6 +41,24 @@ def _result(accept, identity, completeness, quality, reason, **extra):
             "reason": reason, "version": VERSION, **extra}
 
 
+def _abstract_only_page(front: str, page_count: int) -> bool:
+    """True only for a short front page that has an abstract and no article sections.
+
+    Whitespace word counts undercount CJK text, so a long Japanese article with an
+    English abstract can look "short". Page count and character length keep a
+    multi-page article from being rejected as an abstract-only page.
+    """
+    if len(front.split()) >= 1500:
+        return False
+    if page_count > 3 and len(re.findall(
+            r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", front)) >= 200:
+        return False
+    if not re.search(r"\babstract\b", front, re.I):
+        return False
+    return not re.search(
+        r"\b(introduction|method|results|discussion|references)\b", front, re.I)
+
+
 def validate_pdf(content, expected):
     """Validate a retrieved PDF; never accept a scan-only or listing page."""
     if not bytes(content).startswith(b"%PDF"):
@@ -96,10 +114,7 @@ def validate_pdf(content, expected):
                        page_count=len(pages), observed_kind=observed_kind,
                        source_kind_verdict=kind_verdict)
     listing = _BAD_PAGE.search(front)
-    abstract_only = (re.search(r"\babstract\b", front, re.I)
-                     and words < 1500
-                     and not re.search(r"\b(introduction|method|results|discussion|references)\b",
-                                       front, re.I))
+    abstract_only = _abstract_only_page(front, len(pages))
     if listing and words < 1500:
         return _result(False, "rejected", completeness, quality,
                        f"non-work page: {listing.group(1).lower()}", page_count=len(pages))

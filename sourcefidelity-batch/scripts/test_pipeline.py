@@ -8344,6 +8344,14 @@ class SourceValidatorTests(unittest.TestCase):
         doc.close()
         return data
 
+    def test_multipage_cjk_abstract_is_not_abstract_only(self):
+        front = "Abstract: " + "日本語の本文。" * 200
+        self.assertFalse(source_validator._abstract_only_page(front, 12))
+
+    def test_short_abstract_page_is_abstract_only(self):
+        front = "Abstract: " + "A short summary. " * 80
+        self.assertTrue(source_validator._abstract_only_page(front, 1))
+
     def test_complete_identity_matching_pdf_is_accepted(self):
         body = self._pdf("A Distinctive Work by Smith 2024. " + "Body text. " * 300)
         result = source_validator.validate_pdf(body, {
