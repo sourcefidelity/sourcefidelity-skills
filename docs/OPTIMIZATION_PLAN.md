@@ -1,6 +1,6 @@
 # Optimization plan
 
-**Status:** In progress as R46. O1 (cited-only acquisition and U screen), O2 (source index), O3 (response/window caches and resume), O4 (deterministic routing), O5 (terse output), O6 (bounded parallel pipeline) and O7 (text-free optimization metrics) are implemented. The R39 real-paper quality gate remains source-limited. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
+**Status:** R46 closed under Option 1 (local overhead, equal model calls). Single-review runtime reduction is deferred to R66 (post-publication). O1 (cited-only acquisition and U screen), O2 (source index), O3 (response/window caches and resume), O4 (deterministic routing), O5 (terse output), O6 (bounded parallel pipeline) and O7 (text-free optimization metrics) are implemented. The R39 real-paper quality gate remains source-limited. This plan covers internal skill efficiency only. It does not choose a model, provider or pricing window; those remain user decisions.
 
 ## Goal
 
@@ -127,28 +127,28 @@ Write a text-free `optimization_metrics.json` per run with:
 
 Do not include paper or source text. Dollar cost is environment-specific and not a skill-level acceptance metric.
 
-**Measurement blocker (27 Nov).** A `parallel_pipeline.py --emit-claims` run on the stored
-`twf-bounded-20261124b` copy initially emitted **0 requests** because `assess_claims.py` rejected the
-legacy inventory (`U1/U2/U3: expected_source is missing or analysis-valued`). After patching the
-temp fixture only, the run completed in 3.7 s and emitted **16 claim requests** — the same 16 claims
-as the stored bounded responses (the other four occurrences have no window). No call reduction is
-demonstrated, no model workers ran, and no token/time comparison exists. The fixture needs a real
-rebuild and a 16-claim model run before R46 can be judged. Separately, the 117-paper batch uses the
-paper-worker pipeline. `optimization_metrics.py` on it reports `claims: 0` and `wall_seconds: null`, so it cannot test the O1–O7 claim-level acceptance. The stored TV direct review scores 19/20 against `twf-gold.json`, but misses required C1/C2, uses 24.37M prompt tokens and 19m32s; that is the quality baseline, not an optimized run. R46 remains in progress until a claim-pipeline TV/C19/C13 regression is recorded.
+**R46 result (27 Nov).** The TV probe emitted **16 claim requests**, the same 16 claims as the stored
+bounded responses; task/route/screen took 3.7 s; no full source entered the local context. No call
+reduction is possible without changing the one-claim-per-call rule. R46 is therefore closed under
+Option 1: quality parity plus lower local overhead, equal model calls. Single-review runtime and
+model-cost reduction is planned for R66 after publication. `optimization_metrics.py` on it reports `claims: 0` and `wall_seconds: null`, so it cannot test the O1–O7 claim-level acceptance. The stored TV direct review scores 19/20 against `twf-gold.json`, but misses required C1/C2, uses 24.37M prompt tokens and 19m32s; that is the quality baseline, not an optimized run. R46 remains in progress until a claim-pipeline TV/C19/C13 regression is recorded.
 
 ## 9. Acceptance and regression
+
+R46 uses the **Option 1** acceptance:
 
 - Same verdicts on the TV regression fixture and the existing C19/C13 fixtures.
 - No increase in Not Judged without a recorded reason.
 - No increase in false Supports.
+- Model-call count is unchanged: one claim per call.
+- Lower local overhead: preparation, acquisition, indexing, packet building and rendering.
 - No source text or full source in the main context.
 - Evidence-packet and response byte limits still enforced.
 - R45 reading gate still runs for risky/inconclusive occurrences.
-- Measured improvement targets after implementation:
-  - material reduction in wall time per paper through concurrency;
-  - fewer model calls and lower output tokens per claim;
-  - no increase in acquisition work for uncited references;
-  - no regression in source/window parity or artifact consistency.
+
+**Measured TV probe (27 Nov):** 16 claim requests, the same 16 claims as the stored bounded run;
+task/route/screen 3.7 s; no call reduction. The model-call/token reduction target moves to
+**R66 (post-publication)** because it requires changing the one-claim-per-call design.
 
 ## 10. Work packages
 

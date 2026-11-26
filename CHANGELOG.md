@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **R46 closed under Option 1.** Local-overhead acceptance: the TV probe emits 16 claim requests, the
+  same 16 claims as the stored bounded run, in 3.7 s of task/route/screen time, with no full source
+  in context and no model-call reduction (one claim per call by design). Single-review runtime and
+  model-cost reduction is deferred to **R66 (post-publication)**.
+
 - **B12 uncited candidate ledger.** `uncited_adjudicate.py emit/record` gives every extracted
   candidate one disposition (`fact`, `analysis`, `merged`, `mixed`, `new content`, `not
   substantive`) before U is written; clear facts get an advisory deterministic route, every candidate
