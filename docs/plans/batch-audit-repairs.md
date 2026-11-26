@@ -348,7 +348,7 @@ touches the worker contract, the validator, `render_review.py` scope counts, `fo
 the batch re-screen, not the judgment definitions.
 
 
-### B11 — Uncited-passage residuals — Done (bounded adjudication; parity guard)
+### B11 — Uncited-passage residuals — In progress (sample verification failed)
 
 Measurement record: [uncited-continuation-residuals.md](uncited-continuation-residuals.md). This is a
 B7 follow-up, not a re-open of the analysis test; it covers the 82 statements the B7/B8 re-screen
@@ -379,6 +379,16 @@ rendered summary; two tests cover it. Re-introducing the P240965 mismatch
 Final batch: **1,231 U** (from 1,301), 27 restored / 67 dismissed, 39 analysis removed, 58 continuation
 merges, 111 continuation-new items. All 117 papers re-rendered; `validate_batch --strict` 0/0; 674
 tests.
+
+**Final sample verification (26 Nov) — FAILED.** A blind 300-item random sample (seed 20261126) of the
+current 1,231 U was re-read without prior dispositions by three independent reviewers: **68/300
+(22.7%) were the student's analysis**, not source-dependent claims (groups 20/20/28; 95% CI roughly
+18–28%). Target is at most 1%. Examples: P240995 U1 (intro thesis/roadmap), P240930 U3 ("This case
+study analyses… and argues…"), P240958 U2 (intro/roadmap), P240941 U25 (transition), P240965 U1
+(evaluative framing). The B11 analysis pass was marker-limited: it removed 39 marker hits, but most
+analysis U carry no analysis-marker vocabulary, so the retained set is still roughly one-fifth
+analysis. The 68 sampled items (and their non-sampled equivalents) need the same remove-or-factual-span
+treatment before B11 can close. Rules, continuation dispositions and parity guard remain in place.
 
 ## Progress (25 Nov)
 
