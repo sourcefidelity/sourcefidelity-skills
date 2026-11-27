@@ -48,6 +48,22 @@ whitespace word counting undercounts CJK text. `source_validator._abstract_only_
 multi-page CJK document out of that class. Two fixtures were added; the pipeline suite is **681
 tests, OK**. The retry reached the identity gate, which then correctly rejected the wrong author.
 
+## Real-page CJK verification (28 Nov)
+
+Real page bytes were fetched with `curl` and passed directly to `web_page.validate` and
+`admission.admit`; the host `search_acquire` fetch path was not re-run because its public fetch
+returned `http_0` for the Korean page.
+
+| Language | Source | Identity | Completeness | Admission |
+| --- | --- | --- | --- | --- |
+| Chinese | National Film Administration, “2017年中国电影票房559亿元” | high | complete | complete, evidence-eligible, html |
+| Korean | Incheon Metropolitan City, Pokémon GO Safari Zone release | high | complete | complete, evidence-eligible, html |
+| Japanese | SEGA, “ホグワーツ・レガシー” 12-million sales release | high | complete | complete, evidence-eligible, html |
+
+All three now return `accept: true`; before the fixes the same pages were `identity_only` or
+`not_the_work`. Effective word counts were 570, 791 and 847, which is why the `web` kind must use the
+500-word threshold.
+
 ## Follow-ups fixed (28 Nov)
 
 - CJK HTML identity: `web_page._norm` keeps Unicode letters, so a spaceless CJK title can match;

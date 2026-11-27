@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 VERSION = "web-page-validation-v1"
 MIN_WORDS = {"article": 1000, "journal_article": 1000, "book_section": 1500,
              "chapter": 1500, "book": 25000, "monograph": 25000,
-             "webpage": 1000, "news_article": 1000, "blog_post": 1000}
+             "webpage": 500, "web": 500, "news_article": 500, "blog_post": 500}
 _CUTOFF = re.compile(
     r"\b(continue reading|read the full (?:article|story|essay)|to read (?:more|the rest)|"
     r"(?:subscribe|sign in|log in|register) to (?:continue|read|view|access)|already a subscriber|"
@@ -132,7 +132,8 @@ def validate(body, expected, kind=""):
         author_ok = True
     expected_doi = str(expected.get("doi") or "").replace("https://doi.org/", "").strip()
     doi_match = bool(expected_doi and expected_doi.casefold() in page.casefold())
-    material_title_conflict = bool(title and _ratio(title, expected_title) < 0.5)
+    material_title_conflict = bool(title and _ratio(title, expected_title) < 0.5
+                                   and title_overlap < 0.8)
     if material_title_conflict:
         identity = "rejected"
     elif doi_match or (title_overlap >= 0.8 and author_ok and year_ok):

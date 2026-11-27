@@ -8266,6 +8266,18 @@ class WebPageValidatorTests(unittest.TestCase):
             "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
         self.assertFalse(paginated["accept"])
 
+    def test_cjk_body_title_beats_weak_page_title(self):
+        text = "인천에서 펼쳐지는 글로벌 게임 축제 포켓몬 GO로 물들다 " * 120
+        body = ("<html><head><title>시정뉴스 | 인천광역시</title>"
+                "<meta name='citation_publication_date' content='2024-07-23'>"
+                "</head><body><h1>인천에서 펼쳐지는 글로벌 게임 축제, 포켓몬 GO로 물들다</h1>"
+                "<p>" + text + "</p></body></html>").encode()
+        result = web_page.validate(body, {
+            "title": "인천에서 펼쳐지는 글로벌 게임 축제, 포켓몬 GO로 물들다 [A global game festival]",
+            "author": "Incheon Metropolitan City", "year": "2024"})
+        self.assertEqual(result["identity_confidence"], "high")
+        self.assertTrue(result["accept"])
+
     def test_cjk_title_and_publisher_identity(self):
         cyr = "인천에서 펼쳐지는 글로벌 게임 축제 포켓몬 GO로 물들다 " * 400
         body = ("<html><head><meta name='citation_title' content='인천에서 펼쳐지는 글로벌 게임 축제, "
