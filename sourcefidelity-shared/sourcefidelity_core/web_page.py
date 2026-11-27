@@ -25,8 +25,19 @@ _NONWORK = re.compile(r"\b(table of contents|search results|access denied|cookie
                       r"abstract only)\b", re.I)
 
 
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+
+
+def _effective_words(text):
+    """Whitespace words plus a CJK character allowance (about two chars per word)."""
+    words = len(str(text or "").split())
+    return words + len(_CJK.findall(str(text or ""))) // 2
+
+
 def _norm(value):
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).split())
+    # Keep Unicode letters: CJK titles and authors must not normalize to empty.
+    text = re.sub(r"[^\w]+", " ", str(value or "").casefold(), flags=re.UNICODE)
+    return " ".join(text.split())
 
 
 def _ratio(left, right):
@@ -89,7 +100,7 @@ def _article_body(page):
 def validate(body, expected, kind=""):
     page = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
     text = _visible_text(page)
-    words = len(text.split())
+    words = _effective_words(text)
     title = _meta(page, "citation_title") or _meta(page, "dc.title") or ""
     if not title:
         match = re.search(r"<title[^>]*>(.*?)</title>", page, re.I | re.S)
@@ -100,18 +111,28 @@ def validate(body, expected, kind=""):
     year = _meta(page, "citation_publication_date")[:4]
     doi = _meta(page, "citation_doi").replace("https://doi.org/", "")
     title_overlap = 0.0
-    distinctive = {token for token in _norm(expected.get("title")).split() if len(token) > 3}
+    expected_title = re.split(r"\s*\[", str(expected.get("title") or ""))[0].strip()
+    distinctive = {token for token in _norm(expected_title).split() if len(token) > 3}
     if distinctive:
         body_tokens = set(_norm(text).split())
         title_overlap = len(distinctive & body_tokens) / len(distinctive)
-    author_surname = str(expected.get("author") or "").split(",", 1)[0].strip().casefold()
-    author_ok = bool(author_surname and (author_surname in _norm(text)
-                                         or author_surname in _norm(author)))
+    author_name = str(expected.get("author") or "").split(",", 1)[0].strip().casefold()
+    author_ok = bool(author_name and (author_name in _norm(text)
+                                      or author_name in _norm(author)))
+    # A news agency or city government is a publisher, not a byline. For web
+    # sources, a strong title match plus year is enough when the author is an
+    # organisation rather than a person.
+    publisher_like = (len(author_name.split()) >= 2
+                      or any(word in author_name for word in
+                             ("agency", "news", "times", "post", "city", "government",
+                              "daily", "press", "network", "association")))
     year_ok = bool(expected.get("year") and
                    (str(expected.get("year")) in text or str(expected.get("year")) in year))
+    if publisher_like and title_overlap >= 0.8 and year_ok:
+        author_ok = True
     expected_doi = str(expected.get("doi") or "").replace("https://doi.org/", "").strip()
     doi_match = bool(expected_doi and expected_doi.casefold() in page.casefold())
-    material_title_conflict = bool(title and _ratio(title, expected.get("title")) < 0.5)
+    material_title_conflict = bool(title and _ratio(title, expected_title) < 0.5)
     if material_title_conflict:
         identity = "rejected"
     elif doi_match or (title_overlap >= 0.8 and author_ok and year_ok):

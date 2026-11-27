@@ -48,10 +48,16 @@ whitespace word counting undercounts CJK text. `source_validator._abstract_only_
 multi-page CJK document out of that class. Two fixtures were added; the pipeline suite is **681
 tests, OK**. The retry reached the identity gate, which then correctly rejected the wrong author.
 
-## Remaining follow-ups
+## Follow-ups fixed (28 Nov)
 
-- CJK HTML identity: spaceless titles and news-agency authors still need the R47 native-identity
-  route before admission.
-- After any future admission, queue the affected paper for re-review/reappraisal; do not apply a
-  rebuilt task over unchanged findings.
-- R48 does not make a reviewed paper’s old judgments valid against a newly acquired copy.
+- CJK HTML identity: `web_page._norm` keeps Unicode letters, so a spaceless CJK title can match;
+  a bracketed English translation is stripped before comparison; organisation authors (news agency,
+  city government) count as a publisher when title and year are strong; CJK text uses an effective
+  word count (two characters ≈ one word). Synthetic Korean-page fixture passes identity-high and
+  complete.
+- Reviewed paper guard: `search_apply.py` now writes
+  `_work/<paper>/acquisition-review-queue.json` and returns `queued_for_review` instead of rebuilding
+  the task when findings already exist. The old task is not touched. A fixture verifies this.
+- Live re-test of the Incheon page returned `http_0` from the public-fetch path; the synthetic fixture
+  covers the identity/complete path, and a live retry remains a network check.
+- Pipeline suite: 684 tests.

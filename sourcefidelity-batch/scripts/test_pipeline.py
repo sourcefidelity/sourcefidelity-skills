@@ -8071,6 +8071,27 @@ class O5TerseOutputTests(unittest.TestCase):
 
 
 class SearchApplyTests(unittest.TestCase):
+    def test_reviewed_paper_is_queued_not_rebuilt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_work" / "paper").mkdir(parents=True)
+            source = root / "candidate.pdf"
+            source.write_bytes(b"%PDF-1.4")
+            (root / "_work" / "paper" / "findings.json").write_text(
+                json.dumps({"occurrences": [{"id": "C1"}]}), encoding="utf-8")
+            task = root / "_work" / "paper" / "task.json"
+            task.write_text("old task", encoding="utf-8")
+            (root / "source_registry.json").write_text(json.dumps({"works": {}}),
+                                                       encoding="utf-8")
+            (root / "_work" / "admissions.json").write_text(json.dumps({
+                "records": [{"source_key": "s1", "outcome": "complete",
+                             "staged_path": str(source)}]}), encoding="utf-8")
+            result = search_apply_cli.run(str(root), "paper")
+            self.assertEqual(result["status"], "queued_for_review")
+            self.assertEqual(task.read_text(encoding="utf-8"), "old task")
+            self.assertTrue((root / "_work" / "paper" /
+                             "acquisition-review-queue.json").exists())
+
     def test_preparation_runs_only_for_admitted_complete_copies(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -8244,6 +8265,20 @@ class WebPageValidatorTests(unittest.TestCase):
         paginated = web_page.validate(self._page("<link rel='next' href='/2'>"), {
             "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
         self.assertFalse(paginated["accept"])
+
+    def test_cjk_title_and_publisher_identity(self):
+        cyr = "인천에서 펼쳐지는 글로벌 게임 축제 포켓몬 GO로 물들다 " * 400
+        body = ("<html><head><meta name='citation_title' content='인천에서 펼쳐지는 글로벌 게임 축제, "
+                "포켓몬 GO로 물들다'><meta name='citation_author' content='인천광역시'>"
+                "<meta name='citation_publication_date' content='2024-07-23'>"
+                "</head><body><h1>인천에서 펼쳐지는 글로벌 게임 축제, 포켓몬 GO로 물들다</h1>"
+                "<p>" + cyr + "</p></body></html>").encode()
+        result = web_page.validate(body, {
+            "title": "인천에서 펼쳐지는 글로벌 게임 축제, 포켓몬 GO로 물들다 [A global game festival]",
+            "author": "Incheon Metropolitan City", "year": "2024"})
+        self.assertEqual(result["identity_confidence"], "high")
+        self.assertEqual(result["completeness"], "complete")
+        self.assertTrue(result["accept"])
 
     def test_material_title_conflict_is_rejected(self):
         body = self._page().replace(b"A Distinctive Work", b"An Unrelated Subject")

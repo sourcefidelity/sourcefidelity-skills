@@ -27,6 +27,21 @@ def load(path, default=None):
         return {} if default is None else default
 
 
+def _reviewed(root, paper):
+    for path in (os.path.join(root, "_work", paper, "findings.json"),
+                 os.path.join(root, paper, "findings.json")):
+        if not os.path.exists(path):
+            continue
+        try:
+            findings = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if any(findings.get(key) for key in
+               ("occurrences", "references", "works", "uncited")):
+            return True
+    return False
+
+
 def run(root, paper, dry_run=False):
     admissions = load(os.path.join(root, "_work", "admissions.json"))
     complete = [row for row in admissions.get("records", [])
@@ -36,6 +51,20 @@ def run(root, paper, dry_run=False):
     if not complete:
         return {"schema": "search-prepare-v1", "prepared": 0,
                 "reason": "no_admitted_complete_copies"}
+    if _reviewed(root, paper):
+        queue = {"schema": "acquisition-review-queue-v1",
+                 "paper": paper,
+                 "keys": [row["source_key"] for row in complete],
+                 "reason": "new complete copy cannot be applied over existing findings; "
+                           "re-review or reappraise the affected claims",
+                 "next": ["re-review", "reappraise"]}
+        target = os.path.join(root, "_work", paper, "acquisition-review-queue.json")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as handle:
+            json.dump(queue, handle, ensure_ascii=False, indent=1)
+        return {"schema": "acquisition-review-queue-v1",
+                "status": "queued_for_review", "paper": paper,
+                "keys": queue["keys"], "queue": target}
     command = [sys.executable, "-I", os.path.join(HERE, "prepare_matched.py"),
                "--batch", root]
     rebuild = [sys.executable, "-I", os.path.join(HERE, "make_task.py"),
