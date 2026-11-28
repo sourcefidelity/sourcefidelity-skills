@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **R67 formatting audit wired into the batch pipeline.** `BATCH_ADDENDUM.md` step 6g and `SKILL.md`
+  now run `formatting_audit.py` and `formatting_apply.py` before the final render. A fixture verifies
+  every `F#` receives a disposition and only deterministic A cases are confirmed. Pipeline suite:
+  687 tests.
+
 - **R48 host-search acquisition bridge.** `search_plan` → host `web_search` → `search_acquire` →
   admission now admits a complete evidence-eligible PDF: the Flitcroft DiGRA paper was staged with
   identity high and quality digital. `search_apply` rebuilt the P240966 task, but unchanged findings

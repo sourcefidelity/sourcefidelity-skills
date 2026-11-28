@@ -84,6 +84,7 @@ import uncited_adjudicate as ua  # noqa: E402
 import fetch_web_sources as fws  # noqa: E402
 import works_rescreen as wr  # noqa: E402
 import formatting_audit as fa  # noqa: E402
+import formatting_apply as fap  # noqa: E402
 import resolve_unsupplied as ru  # noqa: E402
 import review_metrics as rm  # noqa: E402
 import link_states as ls  # noqa: E402
@@ -9743,6 +9744,35 @@ class FormattingAuditTests(unittest.TestCase):
         self.assertEqual(body[0]["paragraph_id"], "P2")
         refs = [c for c in result["candidates"] if c["kind"].startswith("reference")]
         self.assertTrue(refs)
+
+
+class FormattingApplyTests(unittest.TestCase):
+    def test_every_candidate_is_disposed_and_only_a_cases_are_confirmed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            (work / "formatting.json").write_text(json.dumps({"candidates": [
+                {"id": "F1", "kind": "body-title-roman", "paragraph_id": "P2",
+                 "text": "The Matrix", "observed": "roman"},
+                {"id": "F2", "kind": "body-title-roman", "paragraph_id": "P1",
+                 "text": "The Matrix", "observed": "roman"},
+                {"id": "F3", "kind": "reference-hanging-indent-absent",
+                 "paragraph_id": "P3", "text": "Reference entry", "observed": "absent"},
+                {"id": "F4", "kind": "reference-missing-italic-element",
+                 "paragraph_id": "P3", "text": "Reference entry", "observed": "roman"},
+            ]}), encoding="utf-8")
+            (work / "findings.json").write_text(json.dumps({
+                "works": [], "summary": {"category_a": []}}), encoding="utf-8")
+            (work / "candidates.json").write_text(json.dumps({"paragraphs": [
+                {"id": "P1", "text": "Title page"},
+                {"id": "P2", "text": "The film The Matrix is discussed at length in this detailed paragraph today."},
+                {"id": "P3", "text": "Doe, J. (2020). A book. Publisher."},
+            ]}), encoding="utf-8")
+            result = fap.dispose("P1", str(root), dry_run=True)
+        self.assertEqual(result["candidates"], 4)
+        self.assertEqual(result["confirmed"], 2)
+        self.assertEqual(result["rejected"], 2)
 
 
 class UncitedLedgerTests(unittest.TestCase):
