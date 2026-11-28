@@ -9774,6 +9774,43 @@ class FormattingApplyTests(unittest.TestCase):
         self.assertEqual(result["confirmed"], 2)
         self.assertEqual(result["rejected"], 2)
 
+    def test_confirmed_formatting_candidates_are_applied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            (work / "formatting.json").write_text(json.dumps({"candidates": [
+                {"id": "F1", "kind": "body-title-roman", "paragraph_id": "P2",
+                 "text": "The Matrix", "observed": "roman"},
+                {"id": "F3", "kind": "reference-hanging-indent-absent",
+                 "paragraph_id": "P3", "text": "Reference entry", "observed": "absent"},
+            ]}), encoding="utf-8")
+            (work / "findings.json").write_text(json.dumps({
+                "works": [], "summary": {"category_a": []}}), encoding="utf-8")
+            (work / "candidates.json").write_text(json.dumps({"paragraphs": [
+                {"id": "P2", "text": "The film The Matrix is discussed at length in this detailed paragraph today."},
+                {"id": "P3", "text": "Doe, J. (2020). A book. Publisher."},
+            ]}), encoding="utf-8")
+            result = fap.dispose("P1", str(root), dry_run=False)
+            findings = json.loads((work / "findings.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["confirmed"], 2)
+        self.assertEqual(findings["formatting_dispositions"]["F1"]["disposition"], "confirmed")
+        self.assertEqual(findings["formatting_dispositions"]["F3"]["disposition"], "confirmed")
+        self.assertTrue(any("The Matrix" in line for line in findings["summary"]["category_a"]))
+
+    def test_undisposed_formatting_candidate_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            (work / "formatting.json").write_text(json.dumps({"candidates": [
+                {"id": "F1", "kind": "body-title-roman", "paragraph_id": "P2",
+                 "text": "The Matrix"}
+            ]}), encoding="utf-8")
+            (work / "findings.json").write_text(json.dumps({}), encoding="utf-8")
+            errors = vb.check_formatting(str(root), "P1")
+        self.assertTrue(any("lack a disposition" in error for error in errors))
+
 
 class UncitedLedgerTests(unittest.TestCase):
     def _row(self, **overrides):
@@ -9786,6 +9823,40 @@ class UncitedLedgerTests(unittest.TestCase):
     def _findings(self, statement):
         return {"uncited": [{"id": "U1", "statement": statement,
                              "expected_source": "Box Office Mojo"}]}
+
+    def test_emit_and_record_produce_a_complete_ledger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "_work" / "P1"
+            work.mkdir(parents=True)
+            (root / "P1").mkdir()
+            (work / "candidates.json").write_text(json.dumps({
+                "paragraphs": [{"id": "P1", "text": "The film earned 100 million dollars at the box office."}],
+                "uncited_candidates": [
+                    {"id": "U1", "paragraph_id": "P1",
+                     "text": "The film earned 100 million dollars at the box office.",
+                     "signals": ["fact"], "outcome": "uncited"},
+                    {"id": "U2", "paragraph_id": "P1",
+                     "text": "Therefore the film was a success.",
+                     "signals": [], "outcome": "possible_analysis"},
+                ]}), encoding="utf-8")
+            ua.emit(root, str(root / "_work" / "packets"))
+            ledger = json.loads((work / "uncited-ledger.json").read_text(encoding="utf-8"))
+            self.assertTrue(all(not row["disposition"] for row in ledger["candidates"]))
+            responses = root / "responses.json"
+            responses.write_text(json.dumps({"papers": {"P1": {"candidates": {
+                "P1:0": {"disposition": "fact", "expected_source": "Box Office Mojo"},
+                "P1:1": {"disposition": "analysis", "reason": "inference"}}}}},
+                ), encoding="utf-8")
+            ua.record(root, str(responses))
+            ledger = json.loads((work / "uncited-ledger.json").read_text(encoding="utf-8"))
+            by_key = {row["key"]: row["disposition"] for row in ledger["candidates"]}
+            self.assertEqual(by_key["P1:0"], "fact")
+            self.assertEqual(by_key["P1:1"], "analysis")
+            findings = {"uncited": [{"id": "U1",
+                                     "statement": "The film earned 100 million dollars at the box office.",
+                                     "expected_source": "Box Office Mojo"}]}
+            self.assertEqual(ua.validate_ledger_rows(ledger["candidates"], findings), [])
 
     def test_clear_fact_candidate_routes_deterministically(self):
         self.assertEqual(ua.suggested_disposition(self._row()), "fact")

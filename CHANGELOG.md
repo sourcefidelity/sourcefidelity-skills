@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **R70 ledger and formatting-apply tests.** Added an end-to-end `uncited_adjudicate` emit/record
+  fixture (complete response → fully disposed ledger → validator-clean U), formatting apply/dry-run
+  fixtures, and an undisposed-candidate rejection test. Pipeline suite: 690 tests.
+
 - **R69 dead-code cleanup.** Deleted the unused `sentence_split.py` duplicate, the report-only B10
   prototypes (`works_focus.py`, `works_hybrid.py`, `works_sustained.py`) and the one-off
   `rescreen_uncited.py`. Retained `works_rescreen.py`, `parity_check.py` and `blind_audit.py` as
