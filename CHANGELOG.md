@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **R72 efficiency measured, no rewrite.** On the 117-paper batch, `validate_batch` takes 0.40–0.66 s,
+  `source_registry --no-auto` 0.63–0.79 s, `batch_report` 0.48–0.55 s and `search_plan` 0.19 s.
+  Parallel/incremental rewrites would add risk for sub-second savings, so no code changed. Revisit if a
+  stage becomes multi-second.
+
 - **R71 acquisition efficiency.** `search_acquire.py` now reuses the shared raw HTTP cache and dispatches
   candidate fetches on a bounded 3-worker pool while preserving request order. Live sample on three
   real CJK pages: sequential 8.522/3.649 s vs parallel 2.504/2.085 s, all 200 with the same bytes.
