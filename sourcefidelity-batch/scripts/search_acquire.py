@@ -10,6 +10,7 @@ only persists each record through registry_ingest.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
@@ -22,6 +23,7 @@ sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-review", "scripts"))
 sys.path.insert(0, os.path.join(SKILLS, "sourcefidelity-shared"))
 import public_fetch  # noqa: E402
 import registry_ingest  # noqa: E402
+import web_cache  # noqa: E402
 from sourcefidelity_core import admission  # noqa: E402
 from sourcefidelity_core import source_validator  # noqa: E402
 
@@ -35,12 +37,36 @@ def load(path, default=None):
 
 
 def _fetch(url):
+    cached = web_cache.raw_get(url)
+    if cached and cached.get("state") == "ok" and cached.get("body"):
+        return (cached.get("status") or 0, cached.get("final") or url,
+                cached.get("content_type") or "", cached.get("body") or b"")
     result = public_fetch.fetch(
         url, timeout=20, max_bytes=50 * 1024 * 1024, include_body=True,
         headers={"Accept": "application/pdf,text/html;q=0.9"},
         mode=public_fetch.policy_mode())
-    return (result.get("status") or 0, result.get("final_url") or url,
-            result.get("content_type") or "", result.get("body") or b"")
+    status = result.get("status") or 0
+    final = result.get("final_url") or url
+    content_type = result.get("content_type") or ""
+    body = result.get("body") or b""
+    if status and status < 400 and body:
+        web_cache.raw_put(url, "ok", status, final, content_type, body)
+    return (status, final, content_type, body)
+
+
+def _fetch_many(urls):
+    if not urls:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(3, len(urls))) as pool:
+        futures = [pool.submit(_fetch, url) for url in urls]
+        out = []
+        for future in futures:
+            try:
+                out.append(future.result())
+            except Exception as exc:  # network failure is one rejected candidate
+                out.append(exc)
+        return out
 
 
 def _write_json(path, value):
@@ -66,18 +92,18 @@ def run(root, results_path):
         ordered = source_validator.rank_candidates(
             [item for item in candidates if isinstance(item, dict)]
             if isinstance(candidates, list) else [], identity)
-        for candidate in ordered:
-            url = candidate.get("url") if isinstance(candidate, dict) else ""
-            if not url:
-                continue
+        prepared = [(candidate, candidate.get("url") if isinstance(candidate, dict) else "")
+                    for candidate in ordered]
+        prepared = [(candidate, url) for candidate, url in prepared if url]
+        fetched = _fetch_many([url for _candidate, url in prepared])
+        for (candidate, url), result in zip(prepared, fetched):
             provenance = {"url": url, "provider": "host_search",
                           "route": "host_search", "title": candidate.get("title", "")}
-            try:
-                status, final, content_type, body = _fetch(url)
-            except Exception as exc:
+            if isinstance(result, Exception):
                 rejected.append({"source_key": key, "url": url,
-                                 "reason": type(exc).__name__})
+                                 "reason": type(result).__name__})
                 continue
+            status, final, content_type, body = result
             provenance.update({"final_url": final, "content_type": content_type})
             if status >= 400 or not body:
                 rejected.append({"source_key": key, "url": url,

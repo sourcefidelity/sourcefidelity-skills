@@ -8180,6 +8180,34 @@ class AdmissionTests(unittest.TestCase):
 
 
 class SearchAcquireTests(unittest.TestCase):
+    def test_fetch_reuses_cached_raw_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = http_cache.cache_dir()
+            http_cache.set_cache_dir(tmp)
+            http_cache.set_disabled(False)
+            result = {"status": 200, "final_url": "https://example.org/a",
+                      "content_type": "text/html", "body": b"<html>cached</html>"}
+            try:
+                with mock.patch.object(search_acquire_cli.public_fetch, "fetch",
+                                       return_value=result) as fetch:
+                    first = search_acquire_cli._fetch("https://example.org/a")
+                    second = search_acquire_cli._fetch("https://example.org/a")
+                self.assertEqual(fetch.call_count, 1)
+                self.assertEqual(first[3], second[3])
+            finally:
+                http_cache.set_cache_dir(original or "")
+
+    def test_parallel_fetch_preserves_request_order(self):
+        def fake(url):
+            return (200, url, "text/html", url.encode())
+        with mock.patch.object(search_acquire_cli, "_fetch", side_effect=fake):
+            rows = search_acquire_cli._fetch_many(
+                ["https://example.org/1", "https://example.org/2",
+                 "https://example.org/3"])
+        self.assertEqual([row[1] for row in rows],
+                         ["https://example.org/1", "https://example.org/2",
+                          "https://example.org/3"])
+
     def test_only_identity_verified_search_copy_is_saved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

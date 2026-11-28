@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **R71 acquisition efficiency.** `search_acquire.py` now reuses the shared raw HTTP cache and dispatches
+  candidate fetches on a bounded 3-worker pool while preserving request order. Identity, admission and
+  rejection results are unchanged; cache and ordering fixtures added. Pipeline suite: 692 tests.
+
 - **R70 ledger and formatting-apply tests.** Added an end-to-end `uncited_adjudicate` emit/record
   fixture (complete response → fully disposed ledger → validator-clean U), formatting apply/dry-run
   fixtures, and an undisposed-candidate rejection test. Pipeline suite: 690 tests.

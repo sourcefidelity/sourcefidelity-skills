@@ -31,6 +31,10 @@ from http_cache import (  # noqa: E402,F401
     text_dir,
     text_for,
     text_store,
+    cache_get as raw_get,
+    cache_put as raw_put,
 )
 
 store = text_store
+raw_get = raw_get
+raw_put = raw_put

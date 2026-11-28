@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 690 passed |
+| Pipeline regressions | `test_pipeline.py` | 692 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |
@@ -34,6 +34,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 | R46 O4 claim routing | `fast_paths.py`; `route_claims.py`; tests | 574 tests. Routes no-evidence claims away from a model call and identical validated records to reuse; marks risky/inconclusive R45 cases for the gate model. A gate pass never skips the claim judgment; exact quotations are flagged but still judged. |
 | R46 O5 terse output | schema caps; tests | 577 tests. Reasons capped at 400 characters, contributions at 240; a reason that repeats an 8-word source shingle is rejected; short quotations remain allowed. Response byte cap unchanged. |
 | R43 abstract-only attention | `fetch_abstracts.py`; `abstract_scope.py`; real R37; positive calibration | 616 tests. 7 identity abstracts; 4 real calls/6 claims produced 0 marks; positive calibration produced 1 high-confidence different-subject mark. No Supports/Contradicts and no claim-record change. |
+| R71 acquisition efficiency | `search_acquire.py`, `web_cache.py` | Raw HTTP cache reuse, bounded 3-worker candidate fetch, order-preserving; same admission results; live wall-time sample pending. |
 | R70 ledger/apply tests | `test_pipeline.py` | End-to-end emit/record ledger, formatting apply and undisposed-candidate fixtures. |
 | R69 dead-code cleanup | BATCH_ADDENDUM developer-only tools | Deleted unused sentence_split duplicate and B10 report prototypes; retained works_rescreen/parity_check/blind_audit with documented purpose. |
 | R48 queue handoff | `sourcefidelity-review/SKILL.md` | Names `search_apply`, `queued_for_review`, the queue file and re-review/reappraise; no behavior change. |
