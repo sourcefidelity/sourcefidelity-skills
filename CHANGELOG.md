@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **R69 dead-code cleanup.** Deleted the unused `sentence_split.py` duplicate, the report-only B10
+  prototypes (`works_focus.py`, `works_hybrid.py`, `works_sustained.py`) and the one-off
+  `rescreen_uncited.py`. Retained `works_rescreen.py`, `parity_check.py` and `blind_audit.py` as
+  developer-only tools documented in `BATCH_ADDENDUM.md`. No production import changes.
+
 - **R68 acquisition queue documented.** The review handoff now states that `search_apply.py` returns
   `queued_for_review`, writes `_work/<paper>/acquisition-review-queue.json`, leaves the task
   unchanged, and requires re-review or reappraisal instead of reuse of old findings.

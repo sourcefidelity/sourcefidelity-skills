@@ -340,3 +340,17 @@ Acquiring a source does not by itself change a completed review. Use the compani
 ## What the batch report is not
 
 It is not a grade, a misconduct determination, or a substitute for the individual reviews. It is an aggregate of independently produced evidence-based reviews. The flags identify papers and sources for human verification; the individual review entries contain the evidence and limitations.
+
+## Developer-only tools
+
+These are not part of the normal batch sequence:
+
+- `works_rescreen.py` — legacy B10 strict keyword classifier. Kept for comparison and tests; the
+  body-context ledger/worker path is authoritative.
+- `parity_check.py` — compares source/window snapshots between two roots. The release gate is
+  `validate_batch.artifact_parity_errors`; this is a deeper diagnostic.
+- `blind_audit.py` — optional second-pass audit over bounded packets; it never edits findings.
+
+Deleted in R69: `sentence_split.py` duplicate, and the report-only B10 prototypes
+`works_focus.py`, `works_hybrid.py`, `works_sustained.py` and the one-off `rescreen_uncited.py`.
+
