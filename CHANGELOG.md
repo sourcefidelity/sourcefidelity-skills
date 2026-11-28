@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **R68 acquisition queue documented.** The review handoff now states that `search_apply.py` returns
+  `queued_for_review`, writes `_work/<paper>/acquisition-review-queue.json`, leaves the task
+  unchanged, and requires re-review or reappraisal instead of reuse of old findings.
+
 - **R67 formatting audit wired into the batch pipeline.** `BATCH_ADDENDUM.md` step 6g and `SKILL.md`
   now run `formatting_audit.py` and `formatting_apply.py` before the final render. A fixture verifies
   every `F#` receives a disposition and only deterministic A cases are confirmed. Pipeline suite:
