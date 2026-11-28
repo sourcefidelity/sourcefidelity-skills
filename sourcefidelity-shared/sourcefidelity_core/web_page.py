@@ -56,6 +56,22 @@ def _meta(page, name):
     return html_module.unescape(match.group(1)).strip() if match else ""
 
 
+def _decode_page(body):
+    if isinstance(body, str):
+        return body
+    raw = bytes(body or b"")
+    head = raw[:4096].decode("ascii", "ignore")
+    match = re.search(r"charset\s*=\s*[\"']?([A-Za-z0-9_-]+)", head, re.I)
+    encodings = [match.group(1)] if match else []
+    encodings += ["utf-8", "gb18030", "shift_jis", "euc-kr"]
+    for encoding in encodings:
+        try:
+            return raw.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return raw.decode("utf-8", "replace")
+
+
 def _visible_text(page):
     page = re.sub(r"<(script|style|nav|header|footer|aside)\b[^>]*>.*?</\1>", " ",
                   page, flags=re.I | re.S)
@@ -98,7 +114,7 @@ def _article_body(page):
 
 
 def validate(body, expected, kind=""):
-    page = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body or "")
+    page = _decode_page(body)
     text = _visible_text(page)
     words = _effective_words(text)
     title = _meta(page, "citation_title") or _meta(page, "dc.title") or ""
@@ -116,13 +132,15 @@ def validate(body, expected, kind=""):
     if distinctive:
         body_tokens = set(_norm(text).split())
         title_overlap = len(distinctive & body_tokens) / len(distinctive)
-    author_name = str(expected.get("author") or "").split(",", 1)[0].strip().casefold()
+    raw_author = str(expected.get("author") or "").strip()
+    author_name = raw_author.split(",", 1)[0].strip().casefold()
     author_ok = bool(author_name and (author_name in _norm(text)
                                       or author_name in _norm(author)))
     # A news agency or city government is a publisher, not a byline. For web
     # sources, a strong title match plus year is enough when the author is an
     # organisation rather than a person.
     publisher_like = (len(author_name.split()) >= 2
+                      or raw_author.isupper()
                       or any(word in author_name for word in
                              ("agency", "news", "times", "post", "city", "government",
                               "daily", "press", "network", "association")))

@@ -48,21 +48,22 @@ whitespace word counting undercounts CJK text. `source_validator._abstract_only_
 multi-page CJK document out of that class. Two fixtures were added; the pipeline suite is **681
 tests, OK**. The retry reached the identity gate, which then correctly rejected the wrong author.
 
-## Real-page CJK verification (28 Nov)
+## Real-page live verification (28 Nov)
 
-Real page bytes were fetched with `curl` and passed directly to `web_page.validate` and
-`admission.admit`; the host `search_acquire` fetch path was not re-run because its public fetch
-returned `http_0` for the Korean page.
+The host path was re-run live through `search_acquire.py` against real pages in all three languages.
 
-| Language | Source | Identity | Completeness | Admission |
-| --- | --- | --- | --- | --- |
-| Chinese | National Film Administration, “2017年中国电影票房559亿元” | high | complete | complete, evidence-eligible, html |
-| Korean | Incheon Metropolitan City, Pokémon GO Safari Zone release | high | complete | complete, evidence-eligible, html |
-| Japanese | SEGA, “ホグワーツ・レガシー” 12-million sales release | high | complete | complete, evidence-eligible, html |
+| Language | Source | Outcome |
+| --- | --- | --- |
+| Chinese | CCTV, “《海盗3》本周公映 中国内地版删20分钟6月上映” | **complete**, identity high, evidence-eligible |
+| Korean | Incheon Metropolitan City, Pokémon GO Safari Zone release | **complete**, identity high, evidence-eligible |
+| Japanese | SEGA, “ホグワーツ・レガシー” 12-million sales release | **complete**, identity high, evidence-eligible |
 
-All three now return `accept: true`; before the fixes the same pages were `identity_only` or
-`not_the_work`. Effective word counts were 570, 791 and 847, which is why the `web` kind must use the
-500-word threshold.
+All three were admitted and staged under `_acquired/<source_key>/source.html`. The Chinese government
+page (`chinafilm.gov.cn`) still returns 403 from the public-fetch path; the CCTV page in the same
+language succeeds and was used for the live check.
+
+`search_apply --paper P240920` returned `queued_for_review` and wrote
+`_work/P240920/acquisition-review-queue.json`; it did not touch the task.
 
 ## Follow-ups fixed (28 Nov)
 

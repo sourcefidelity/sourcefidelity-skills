@@ -22,7 +22,7 @@ The package now contains the review, batch and reappraisal skills, the dossier-f
 
 | What | How it was verified | Result |
 |---|---|---|
-| Pipeline regressions | `test_pipeline.py` | 685 passed |
+| Pipeline regressions | `test_pipeline.py` | 686 passed |
 | Style and PDF suites | `test_style_signals.py`, `test_pdf_quality.py` | No failures |
 | Installed stamp | `update_check.py --stamp` in `~/.dsh/skills` | `sourcefidelity-review v1.1.2` |
 | Release metadata | `install.sh --check` against the default `latest.json` URL | `1.1.2` notice from `1.1.1`; version, tag and checksum agree |

@@ -8266,6 +8266,18 @@ class WebPageValidatorTests(unittest.TestCase):
             "title": "A Distinctive Work", "author": "Smith, A", "year": "2024"})
         self.assertFalse(paginated["accept"])
 
+    def test_charset_declared_page_uses_declared_encoding(self):
+        text = "《海盗3》本周公映 中国内地版删20分钟6月上映 " * 120
+        page = ("<html><head><meta charset='gb2312'><title>《海盗3》本周公映 中国内地版删20分钟6月上映</title>"
+                "<meta name='citation_publication_date' content='2007-05-23'></head>"
+                "<body><h1>《海盗3》本周公映 中国内地版删20分钟6月上映</h1><p>" + text +
+                "</p></body></html>")
+        result = web_page.validate(page.encode("gb18030"), {
+            "title": "《海盗3》本周公映 中国内地版删20分钟6月上映",
+            "author": "CCTV", "year": "2007"})
+        self.assertEqual(result["identity_confidence"], "high")
+        self.assertTrue(result["accept"])
+
     def test_cjk_body_title_beats_weak_page_title(self):
         text = "인천에서 펼쳐지는 글로벌 게임 축제 포켓몬 GO로 물들다 " * 120
         body = ("<html><head><title>시정뉴스 | 인천광역시</title>"

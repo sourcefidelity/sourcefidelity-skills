@@ -10,8 +10,9 @@
   blocks. Fixed the multi-page CJK `abstract_only` false rejection. CJK HTML identity now keeps
   Unicode titles, strips bracketed translations, accepts publisher authors for strong title+year
   matches and uses a CJK-aware effective word count; `search_apply` queues reviewed papers instead
-  of rebuilding their task. Real Chinese, Korean and Japanese pages now pass identity-high +
-  complete + evidence-eligible admission. Pipeline suite: 685 tests.
+  of rebuilding their task. Live host acquisition: real Chinese, Korean and Japanese pages now pass
+  identity-high + complete + evidence-eligible admission, and P240920 was correctly queued for
+  review. Pipeline suite: 686 tests.
 
 - **R48 host-search acquisition exercise.** `search_plan` → host `web_search` → `search_acquire`
   fetched and identity-checked real candidates. Niantic press release reached identity-high but was
