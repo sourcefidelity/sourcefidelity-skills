@@ -8748,24 +8748,23 @@ class ParallelPipelineTests(unittest.TestCase):
         lock = threading.Lock()
         active = 0
         maximum = 0
+        # A barrier proves that two workers run at the same time without a
+        # wall-clock threshold that varies on slow CI machines.
+        barrier = threading.Barrier(2, timeout=2)
 
         def worker(paper):
             nonlocal active, maximum
             with lock:
                 active += 1
                 maximum = max(maximum, active)
-            time.sleep(0.05)
+            barrier.wait()
             with lock:
                 active -= 1
             return {"paper": paper, "ok": True, "stages": []}
 
-        started = time.monotonic()
         results = pp.run_papers(["P1", "P2", "P3", "P4"], 2, worker)
-        elapsed = time.monotonic() - started
         self.assertEqual(len(results), 4)
-        self.assertLessEqual(maximum, 2)
-        self.assertGreaterEqual(maximum, 2)
-        self.assertLess(elapsed, 0.35)
+        self.assertEqual(maximum, 2)
 
     def test_stage_retry_is_recorded(self):
         calls = {"task": 0}
